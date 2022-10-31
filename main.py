@@ -12,7 +12,8 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 ##GUILD = os.getenv('DISCORD_GUILD')
 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or('/'))
+bot = discord.Client(intents=discord.Intents.default())
+
 
 wilderness_event = [
     'Spider Swarm', 'Unnatural Outcrop', 'Demon Stragglers', 'Butterfly Swarm',
