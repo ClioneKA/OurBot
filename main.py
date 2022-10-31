@@ -1,20 +1,14 @@
 import os
 import random
 import asyncio
-import keep_alive
 import time
 from datetime import datetime, timedelta
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+import logging
 
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
 
-intents = discord.Intents.default()
-intents.members = True
-
-bot = commands.Bot(command_prefix='/', intents=intents)
 
 
 wilderness_event = [
@@ -24,6 +18,14 @@ wilderness_event = [
     'Displaced Energy', 'Evil Bloodwood Tree'
 ]
 
+
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
+
+intents = discord.Intents.default()
+intents.members = True
+
+bot = commands.Bot(command_prefix=commands.when_mentioned_or('!'), intents=intents)
 
 @bot.command()
 @commands.is_owner()
@@ -91,12 +93,25 @@ async def before():
     await bot.wait_until_ready()
     print("Finished waiting")
 
-async def main():
-    async with bot:
+async def run():
+    '''
+    Where the bot gets started. If you wanted to create a database connection pool or other session for the bot to use,
+    it's recommended that you create it here and pass it to the bot as a kwarg.
+    '''
+
+
+
+    try:
+        await called_once_an_hour_at_55()
         await load_extensions()
         await bot.start(TOKEN)
-        #await called_once_an_hour_at_55.start()
-asyncio.run(main())
+    except KeyboardInterrupt:
+        await bot.logout()
 
+if __name__ == '__main__':
+    logging.basicConfig(filename='log.txt')
+
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(run())
 
 

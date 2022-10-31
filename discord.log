@@ -1,0 +1,2 @@
+[2022-10-31 17:25:16] [WARNING ] discord.ext.commands.bot: Privileged message content intent is missing, commands may not work as expected.
+[2022-10-31 17:25:16] [INFO    ] discord.client: logging in using static token

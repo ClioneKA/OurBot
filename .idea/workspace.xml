@@ -3,9 +3,6 @@
   <component name="ChangeListManager">
     <list default="true" id="5f3652b1-16d5-428a-ad17-24b13eca9ddc" name="Changes" comment="Fix await">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmds/event.py" beforeDir="false" afterPath="$PROJECT_DIR$/cmds/event.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmds/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/cmds/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmds/minigame.py" beforeDir="false" afterPath="$PROJECT_DIR$/cmds/minigame.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
