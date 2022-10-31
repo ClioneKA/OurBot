@@ -52,7 +52,7 @@ async def reload(ctx, extension):
 
 for filename in os.listdir('./cmds'):
     if filename.endswith('.py'):
-        bot.load_extension(f'cmds.{filename[:-3]}')
+        await bot.load_extension(f'cmds.{filename[:-3]}')
 
 
 def seconds_until_event():

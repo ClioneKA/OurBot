@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="5f3652b1-16d5-428a-ad17-24b13eca9ddc" name="Changes" comment="Fix intent">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    <list default="true" id="5f3652b1-16d5-428a-ad17-24b13eca9ddc" name="Changes" comment="Fix await">
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -74,7 +73,14 @@
       <option name="project" value="LOCAL" />
       <updated>1667249375943</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Fix await">
+      <created>1667249575598</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1667249575598</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -90,6 +96,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Fix intent" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix intent" />
+    <MESSAGE value="Fix await" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix await" />
   </component>
 </project>
