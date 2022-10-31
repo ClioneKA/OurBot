@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="5f3652b1-16d5-428a-ad17-24b13eca9ddc" name="Changes" comment="">
+    <list default="true" id="5f3652b1-16d5-428a-ad17-24b13eca9ddc" name="Changes" comment="Fix intent">
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -36,6 +36,14 @@
       <option name="presentableId" value="Default" />
       <updated>1667248002800</updated>
     </task>
+    <task id="LOCAL-00001" summary="Fix intent">
+      <created>1667249263836</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1667249263836</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -48,5 +56,9 @@
         </entry>
       </map>
     </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Fix intent" />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix intent" />
   </component>
 </project>

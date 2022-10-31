@@ -12,7 +12,10 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 ##GUILD = os.getenv('DISCORD_GUILD')
 
-bot = discord.Client(intents=discord.Intents.default())
+intents = discord.Intents.default()
+intents.members = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 
 wilderness_event = [
