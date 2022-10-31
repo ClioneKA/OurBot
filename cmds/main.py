@@ -20,5 +20,5 @@ class Main(Cog_Extension):
         await ctx.channel.send('<:Goose:714794396096135248>')
 
 
-def setup(bot):
-    bot.add_cog(Main(bot))
+async def setup(bot):
+    await bot.add_cog(Main(bot))

@@ -10,12 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-##GUILD = os.getenv('DISCORD_GUILD')
 
 intents = discord.Intents.default()
 intents.members = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='/', intents=intents)
 
 
 wilderness_event = [
@@ -49,10 +48,10 @@ async def reload(ctx, extension):
     await ctx.send(f'Reloaded {extension}.')
     await ctx.message.delete()
 
-
-for filename in os.listdir('./cmds'):
-    if filename.endswith('.py'):
-        await bot.load_extension(f'cmds.{filename[:-3]}')
+async def load_extensions():
+    for filename in os.listdir('./cmds'):
+        if filename.endswith('.py'):
+            await bot.load_extension(f'cmds.{filename[:-3]}')
 
 
 def seconds_until_event():
@@ -92,6 +91,12 @@ async def before():
     await bot.wait_until_ready()
     print("Finished waiting")
 
+async def main():
+    async with bot:
+        await load_extensions()
+        await bot.start(TOKEN)
+        #await called_once_an_hour_at_55.start()
+asyncio.run(main())
 
-called_once_an_hour_at_55.start()
-bot.run(TOKEN)
+
+

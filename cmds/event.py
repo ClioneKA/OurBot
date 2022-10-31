@@ -27,5 +27,5 @@ class Event(Cog_Extension):
     #         await ctx.send('Missing parameters!')
 
 
-def setup(bot):
-    bot.add_cog(Event(bot))
+async def setup(bot):
+    await bot.add_cog(Event(bot))

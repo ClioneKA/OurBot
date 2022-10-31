@@ -137,5 +137,5 @@ class Minigame(Cog_Extension):
         print(responseHost.content + responseTarget.content)
 
 
-def setup(bot):
-    bot.add_cog(Minigame(bot))
+async def setup(bot):
+    await bot.add_cog(Minigame(bot))
