@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
+TOKEN = os.environ['DISCORD_TOKEN']
 ##GUILD = os.getenv('DISCORD_GUILD')
 
 bot = commands.Bot(command_prefix=commands.when_mentioned_or('/'))
@@ -57,9 +57,9 @@ def seconds_until_event():
     diff = (target - now).total_seconds()
     print(f"{target} - {now} = {diff}")
 
-    if diff<0:
-      diff+=3600
-      
+    if diff < 0:
+        diff += 3600
+
     return diff
 
 
@@ -72,12 +72,15 @@ async def called_once_an_hour_at_55():
     hours = int(ts / 3600) % 13
     rotation = hours - 4
 
-    if (wilderness_event[rotation] == 'King Black Dragon Rampage' or wilderness_event[rotation] == 'Infernal Star' or wilderness_event[rotation] == 'Evil Bloodwood Tree'):
-      await message_channel.send("<@&1036645844964888668> Event Coming!! Next event: " +
-                               wilderness_event[rotation])
+    if (wilderness_event[rotation] == 'King Black Dragon Rampage'
+            or wilderness_event[rotation] == 'Infernal Star'
+            or wilderness_event[rotation] == 'Evil Bloodwood Tree'):
+        await message_channel.send(
+            "<@&1036645844964888668> Event Coming!! Next event: " +
+            wilderness_event[rotation])
     else:
-      await message_channel.send("Event Coming!! Next event: " +
-                                 wilderness_event[rotation])
+        await message_channel.send("Event Coming!! Next event: " +
+                                   wilderness_event[rotation])
 
 
 @called_once_an_hour_at_55.before_loop
