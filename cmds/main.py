@@ -3,10 +3,12 @@ from discord.ext import commands
 import random
 from core.classes import Cog_Extension
 
+goose_emoji = ['<:goose_suck:1021737115412860988>', '<:goose_suck2:1021737380312535130>',
+               '<a:goosepat:847511782121799730>', '<:fkgoose:909346840351227904>', '<:Goose:714794396096135248>']
+
 
 class Main(Cog_Extension):
 
-    goose_emoji = ['<:goose_suck:1021737115412860988>', '<:goose_suck2:1021737380312535130>', '<a:goosepat:847511782121799730>', '<:fkgoose:909346840351227904>', '<:Goose:714794396096135248>']
     #respond
     @commands.command(name='wake', help='wake [@Mention]')
     @commands.is_owner()
