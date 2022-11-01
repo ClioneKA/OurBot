@@ -88,6 +88,10 @@ async def called_once_an_hour_at_55():
                                    wilderness_event[rotation])
 
 
+@bot.event
+async def on_ready():
+    await called_once_an_hour_at_55()
+
 @called_once_an_hour_at_55.before_loop
 async def before():
     await bot.wait_until_ready()
@@ -102,7 +106,6 @@ async def run():
 
 
     try:
-        await called_once_an_hour_at_55()
         await load_extensions()
         await bot.start(TOKEN)
     except KeyboardInterrupt:

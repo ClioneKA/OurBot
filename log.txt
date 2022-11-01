@@ -2,3 +2,10 @@ WARNING:discord.ext.commands.bot:Privileged message content intent is missing, c
 ERROR:discord.ext.commands.bot:Ignoring exception in command None
 discord.ext.commands.errors.CommandNotFound: Command "ªüÃZ" is not found
 WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
+WARNING:discord.ext.commands.bot:Privileged message content intent is missing, commands may not work as expected.
