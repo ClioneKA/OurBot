@@ -90,7 +90,7 @@ async def called_once_an_hour_at_55():
 
 @bot.event
 async def on_ready():
-    await called_once_an_hour_at_55()
+    await called_once_an_hour_at_55.start()
 
 @called_once_an_hour_at_55.before_loop
 async def before():
