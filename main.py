@@ -22,7 +22,7 @@ wilderness_event = [
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-intents = discord.Intents.default()
+intents = discord.Intents.all()
 intents.members = True
 
 bot = commands.Bot(command_prefix=commands.when_mentioned_or('!'), intents=intents)
