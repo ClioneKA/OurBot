@@ -16,12 +16,24 @@ class TVC(Cog_Extension):
         if id in hosting:
             await ctx.channel.send("你已經有房間了！")
             return
+        elif ctx.author.voice is None:
+            await ctx.channel.send("請先進入任意一語音頻道！")
         else:
             try:
                 channel = await ctx.guild.create_voice_channel(cname, category=category)
                 hosting[id] = channel
-            except:
-                ctx.channel.send("Something went wrong!")
+                await ctx.author.move_to(channel)
+
+                def check(member, before, after):
+                    return member == ctx.author and before.channel == channel and after.channel is not channel
+
+                await self.bot.wait_for("voice_state_update", check=check)
+                del hosting[id]
+                await channel.delete()
+            except Exception as e:
+                print(e);
+                await ctx.channel.send("Something went wrong!")
+
 
 
 async def setup(bot):
