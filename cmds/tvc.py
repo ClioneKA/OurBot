@@ -7,20 +7,20 @@ hosting = {}
 
 class TVC(Cog_Extension):
 
-    @commands.command(name='開房', help='開房 [房名]')
+    @commands.command(name='開房', help='開房 [房名] [人數]')
     @commands.has_role("VIP")
-    async def start(self, ctx, cname):
+    async def start(self, ctx, cname, limit):
         guildID = ctx.guild.id
         id = ctx.author.id
         category = discord.utils.get(ctx.guild.categories, id=1037480274876964904)
         if id in hosting:
-            await ctx.channel.send("你已經有房間了！")
+            await ctx.channel.send("你已經有個人房間了！")
             return
         elif ctx.author.voice is None:
             await ctx.channel.send("請先進入任意一語音頻道！")
         else:
             try:
-                channel = await ctx.guild.create_voice_channel(cname, category=category)
+                channel = await ctx.guild.create_voice_channel(cname, category=category, user_limit = limit)
                 hosting[id] = channel
                 await ctx.author.move_to(channel)
 
