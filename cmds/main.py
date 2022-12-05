@@ -27,7 +27,7 @@ class Main(Cog_Extension):
 
     @commands.command(name='adol', help='每天關心阿斗的Agility等級')
     async def adol(self, ctx):
-        gres = requests.get('https://apps.runescape.com/runemetrics/profile/profile?user=tamamo_cross&activities=20')
+        gres = requests.get('https://apps.runescape.com/runemetrics/profile/profile?user=nijiiro_nino&activities=20')
         gdata = gres.json()
         for skill in gdata["skillvalues"]:
             if skill["id"] == 16:
