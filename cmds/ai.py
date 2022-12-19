@@ -10,7 +10,7 @@ class AI(Cog_Extension):
 
     @commands.command(name='draw', help='draw a picture.')
     @commands.has_role("VIP")
-    async def draw(self, ctx, pr):
+    async def draw(self, ctx, *, pr):
         openai.api_key = os.getenv("OPENAI_API_KEY")
         response = openai.Image.create(
             prompt=pr,
