@@ -6,8 +6,6 @@ import openai
 import io
 import aiohttp
 
-hosting = {}
-
 class AI(Cog_Extension):
 
     @commands.command(name='draw', help='draw a picture.')
@@ -20,7 +18,7 @@ class AI(Cog_Extension):
             size="1024x1024"
         )
         image_url = response['data'][0]['url']
-        print(image_url)
+        #print(image_url)
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as resp:
                 if resp.status != 200:
