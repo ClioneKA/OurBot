@@ -23,9 +23,9 @@ class AI(Cog_Extension):
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as resp:
                 if resp.status != 200:
-                    return await ctx.channel.send('Could not download file...')
+                    return await ctx.reply('Could not download file...')
                 data = io.BytesIO(await resp.read())
-                await ctx.channel.send(file=discord.File(data, 'cool_image.png'))
+                await ctx.reply(file=discord.File(data, 'cool_image.png'))
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
