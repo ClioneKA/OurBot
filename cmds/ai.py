@@ -12,7 +12,7 @@ class AI(Cog_Extension):
     @commands.has_role("VIP")
     async def draw(self, ctx, *, pr):
         openai.api_key = os.getenv("OPENAI_API_KEY")
-        print(pr)
+        #print(pr)
         response = openai.Image.create(
             prompt=pr,
             n=1,
