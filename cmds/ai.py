@@ -13,14 +13,14 @@ class AI(Cog_Extension):
     @commands.has_role("VIP")
     async def draw(self, ctx, *, pr):
 
-        #print(pr)
+        # print(pr)
         response = openai.Image.create(
             prompt=pr,
             n=1,
             size="1024x1024"
         )
         image_url = response['data'][0]['url']
-        #print(image_url)
+        # print(image_url)
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as resp:
                 if resp.status != 200:
@@ -28,5 +28,19 @@ class AI(Cog_Extension):
                 data = io.BytesIO(await resp.read())
                 await ctx.reply(file=discord.File(data, 'cool_image.png'))
 
+    @commands.command(name='chat', help='chat with bot.')
+    @commands.has_role("VIP")
+    async def draw(self, ctx, *, message):
+        response = openai.Completion.create(
+            model="text-davinci-003",
+            prompt=message,
+            temperature=0.7,
+            max_tokens=2048,
+            top_p=1,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
+        )
+        responseMessage = response.choices[0].text
+        await ctx.reply(responseMessage)
 async def setup(bot):
     await bot.add_cog(AI(bot))
