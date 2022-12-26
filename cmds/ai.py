@@ -30,7 +30,7 @@ class AI(Cog_Extension):
 
     @commands.command(name='chat', help='chat with bot.')
     @commands.has_role("VIP")
-    async def draw(self, ctx, *, message):
+    async def chat(self, ctx, *, message):
         response = openai.Completion.create(
             model="text-davinci-003",
             prompt=message,
