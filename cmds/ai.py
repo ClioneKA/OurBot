@@ -7,17 +7,18 @@ import io
 import aiohttp
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+
 class AI(Cog_Extension):
 
     @commands.command(name='draw', help='draw a picture.')
     @commands.has_role("VIP")
     async def draw(self, ctx, *, pr):
-
         # print(pr)
         response = openai.Image.create(
             prompt=pr,
             n=1,
-            size="1024x1024"
+            size="512x512"
         )
         image_url = response['data'][0]['url']
         # print(image_url)
@@ -42,5 +43,7 @@ class AI(Cog_Extension):
         )
         responseMessage = response.choices[0].text
         await ctx.reply(responseMessage)
+
+
 async def setup(bot):
     await bot.add_cog(AI(bot))
