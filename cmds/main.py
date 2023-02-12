@@ -31,7 +31,7 @@ class Main(Cog_Extension):
         gdata = gres.json()
         for skill in gdata["skillvalues"]:
             if skill["id"] == 16:
-                await ctx.channel.send("阿斗現在"+skill["level"].__str__()+"等，距離120還差"+((1042731670-skill['xp'])/10).__str__()+"經驗。")
+                await ctx.channel.send("阿斗現在"+skill["level"].__str__()+"等，距離敏捷大師還差"+((2000000000-skill['xp'])/10).__str__()+"經驗。")
 
 async def setup(bot):
     await bot.add_cog(Main(bot))
