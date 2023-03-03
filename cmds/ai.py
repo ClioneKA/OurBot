@@ -42,7 +42,7 @@ class AI(Cog_Extension):
         chat_q.put([ctx.message.author.name, message])
 
         parsed_chat = ""
-        for chat in chat_q:
+        for chat in chat_q.queue:
             parsed_chat += chat[0] + ": " + chat[1] + "\n"
         parsed_chat += bot_name + ": "
         print(parsed_chat)
