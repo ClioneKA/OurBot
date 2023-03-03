@@ -9,7 +9,7 @@ import queue
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-bot_name = "Clione"
+bot_name = "Enoilc"
 chat_q = queue.Queue(maxsize=20)
 
 
