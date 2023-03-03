@@ -10,7 +10,7 @@ import queue
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 bot_name = "Enoilc"
-chat_q = queue.Queue(maxsize=20)
+chat_room = {}
 
 
 class AI(Cog_Extension):
@@ -36,7 +36,9 @@ class AI(Cog_Extension):
     @commands.command(name='chat', help='chat with bot.')
     @commands.has_role("VIP")
     async def chat(self, ctx, *, message):
-
+        if ctx.channel not in chat_room.keys():
+            chat_room[ctx.channel] = queue.Queue(maxsize=20)
+        chat_q = chat_room[ctx.channel]
         if chat_q.full():
             chat_q.get()
         chat_q.put([ctx.message.author.name, message])
