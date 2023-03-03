@@ -5,8 +5,12 @@ import os
 import openai
 import io
 import aiohttp
+import queue
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+bot_name = "Clione"
+chat_q = queue.Queue(maxsize=20)
 
 
 class AI(Cog_Extension):
@@ -32,9 +36,19 @@ class AI(Cog_Extension):
     @commands.command(name='chat', help='chat with bot.')
     @commands.has_role("VIP")
     async def chat(self, ctx, *, message):
+
+        if chat_q.full():
+            chat_q.get()
+        chat_q.put([ctx.message.author.name, message])
+
+        parsed_chat = ""
+        for chat in chat_q:
+            parsed_chat += chat[0] + ": " + chat[1] + "\n"
+        parsed_chat += bot_name + ": "
+
         response = openai.Completion.create(
             model="text-davinci-003",
-            prompt=message,
+            prompt=parsed_chat,
             temperature=0.7,
             max_tokens=2048,
             top_p=1,
@@ -42,7 +56,15 @@ class AI(Cog_Extension):
             presence_penalty=0.0,
         )
         responseMessage = response.choices[0].text
+
+        if chat_q.full():
+            chat_q.get()
+        chat_q.put([bot_name, responseMessage])
+
         await ctx.reply(responseMessage)
+
+
+
 
 
 async def setup(bot):
