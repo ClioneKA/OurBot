@@ -47,7 +47,6 @@ class AI(Cog_Extension):
         for chat in chat_q.queue:
             parsed_chat += chat[0] + ": " + chat[1] + "\n"
         parsed_chat += bot_name + ": "
-        print(parsed_chat)
         response = openai.Completion.create(
             model="text-davinci-003",
             prompt=parsed_chat,
