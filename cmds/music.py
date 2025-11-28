@@ -5,6 +5,7 @@ from core.classes import Cog_Extension
 from pytubefix import YouTube
 
 playing_list = []
+ffmpeg_path = os.getenv("FFMPEG_PATH")
 
 
 class Music(Cog_Extension):
@@ -23,9 +24,7 @@ class Music(Cog_Extension):
                     os.rename(file, "song.mp4")
 
             voice.play(
-                discord.FFmpegPCMAudio(
-                    executable="ffmpeg/bin/ffmpeg.exe", source="song.mp4"
-                ),
+                discord.FFmpegPCMAudio(executable=ffmpeg_path, source="song.mp4"),
                 after=lambda x: self.end_song("song.mp4"),
             )
 
@@ -78,9 +77,7 @@ class Music(Cog_Extension):
             # 找尋要播放的音樂並播放, 結束後依照after部分的程式進行後續步驟
             await interaction.response.send_message("【聽吾輩唱歌】", delete_after=10)
             voice.play(
-                discord.FFmpegPCMAudio(
-                    executable="ffmpeg/ffmpeg.exe", source="song.mp4"
-                ),
+                discord.FFmpegPCMAudio(executable=ffmpeg_path, source="song.mp4"),
                 after=lambda x: self.end_song("song.mp4"),
             )
 
