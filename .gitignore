@@ -2,3 +2,5 @@
 .idea/*
 log.txt
 *.pyc
+*.mp4
+ffmpeg/

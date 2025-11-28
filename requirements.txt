@@ -2,3 +2,7 @@ discord.py
 flask
 openai
 python-dotenv
+requests
+pytubefix
+pyNaCl
+Pillow>=12.0.0
