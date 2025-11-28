@@ -18,7 +18,7 @@ class Music(Cog_Extension):
             url = playing_list[0]
             del playing_list[0]
 
-            YouTube(url).streams.first().download()
+            YouTube(url, "WEB").streams.first().download()
             for file in os.listdir("./"):
                 if file.endswith(".mp4"):
                     os.rename(file, "song.mp4")
@@ -68,7 +68,7 @@ class Music(Cog_Extension):
                 )
 
             # 找尋輸入的Youtube連結, 將目標影片下載下來備用
-            YouTube(url).streams.first().download()
+            YouTube(url, "WEB").streams.first().download()
 
             # 將目標影片改名, 方便找到它
             for file in os.listdir("./"):
