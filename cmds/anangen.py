@@ -9,21 +9,20 @@ from core.text_fit_draw import draw_text_auto
 
 
 BASEIMAGE_MAPPING = {
-    "普通": "BaseImages\\base.png",
-    "開心": "BaseImages\\happy.png",
-    "生氣": "BaseImages\\angry.png",
-    "無語": "BaseImages\\speechless.png",
-    "臉紅": "BaseImages\\flush.png",
-    "病嬌": "BaseImages\\yandere.png",
-    "閉眼": "BaseImages\\eyeclosed.png",
-    "難受": "BaseImages\\uncomfortable.png",
-    "害怕": "BaseImages\\scared.png",
-    "激動": "BaseImages\\excited.png",
-    "驚訝": "BaseImages\\shocked.png",
-    "哭泣": "BaseImages\\cry.png",
+    "普通": "BaseImages/base.png",
+    "開心": "BaseImages/happy.png",
+    "生氣": "BaseImages/angry.png",
+    "無語": "BaseImages/speechless.png",
+    "臉紅": "BaseImages/flush.png",
+    "病嬌": "BaseImages/yandere.png",
+    "閉眼": "BaseImages/eyeclosed.png",
+    "難受": "BaseImages/uncomfortable.png",
+    "害怕": "BaseImages/scared.png",
+    "激動": "BaseImages/excited.png",
+    "驚訝": "BaseImages/shocked.png",
+    "哭泣": "BaseImages/cry.png",
 }
-BASE_OVERLAY_FILE = "BaseImages\\base_overlay.png"
-GEN_LOCK = False
+BASE_OVERLAY_FILE = "BaseImages/base_overlay.png"
 
 
 class Anan(Cog_Extension):
