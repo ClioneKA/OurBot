@@ -73,9 +73,8 @@ class Anan(Cog_Extension):
 
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
 
-        await self.speak(voice, text)
-
         await interaction.response.send_message("已發送", delete_after=5)
+        await self.speak(voice, text)
 
     async def speak(self, voice, text):
         if not os.path.exists("./sounds"):
@@ -87,6 +86,8 @@ class Anan(Cog_Extension):
         fp = f"./sounds/{hash_func.hexdigest()}.mp3"
 
         if os.path.exists(fp):
+            while voice.is_playing():
+                time.sleep(1)
             voice.play(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=fp))
         else:
             hex_data = generate_sound(text)
@@ -94,6 +95,8 @@ class Anan(Cog_Extension):
                 return False
             with open(fp, "wb") as f:
                 f.write(hex_data)
+            while voice.is_playing():
+                time.sleep(1)
             voice.play(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=fp))
         return True
 
@@ -101,7 +104,8 @@ class Anan(Cog_Extension):
     async def on_voice_state_update(self, member, before, after):
         voice = discord.utils.get(self.bot.voice_clients, guild=member.guild)
         if (
-            voice is not None
+            not member.bot
+            and voice is not None
             and after.channel == voice.channel
             and before.channel != after.channel
         ):
