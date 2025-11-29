@@ -1,14 +1,16 @@
-import discord
 import io
 import os
 import hashlib
 import time
+import discord
+from zoneinfo import ZoneInfo
 from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands
 from core.classes import Cog_Extension
 from core.gen_image import generate_image
 from core.tts import generate_sound
+from datetime import datetime
 
 FFMPEG_PATH = os.getenv("FFMPEG_PATH")
 
@@ -102,7 +104,7 @@ class Anan(Cog_Extension):
         await interaction.response.send_message("魔法，很神奇吧", delete_after=5)
         await self.speak(voice, text)
 
-    async def speak(self, voice, text):
+    async def speak(self, voice, text, emotion=None):
         """tts"""
         if not os.path.exists("./gen_sounds"):
             os.mkdir("./gen_sounds")
@@ -117,7 +119,7 @@ class Anan(Cog_Extension):
                 time.sleep(1)
             voice.play(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=fp))
         else:
-            hex_data = generate_sound(text)
+            hex_data = generate_sound(text, emotion)
             if hex_data is None:
                 return False
             with open(fp, "wb") as f:
@@ -138,7 +140,15 @@ class Anan(Cog_Extension):
             and before.channel != after.channel
         ):
             time.sleep(2.5)
-            await self.speak(voice, "こんにちは")
+            hr = datetime.now().hour
+            if hr < 3:
+                await self.speak(voice, "おはようございます", "happy")
+            elif hr < 10:
+                await self.speak(voice, "こんにちは", "happy")
+            elif hr < 21:
+                await self.speak(voice, "こんばんは", "happy")
+            else:
+                await self.speak(voice, "おはようございます", "happy")
 
 
 async def setup(bot):
