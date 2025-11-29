@@ -2,6 +2,7 @@ import discord
 import io
 import os
 import hashlib
+import time
 from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands
@@ -104,6 +105,7 @@ class Anan(Cog_Extension):
             and after.channel == voice.channel
             and before.channel != after.channel
         ):
+            time.sleep(2.5)
             await self.speak(voice, "こんにちは")
 
 
