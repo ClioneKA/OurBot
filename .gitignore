@@ -4,4 +4,4 @@ log.txt
 *.pyc
 *.mp4
 ffmpeg/
-sounds/
+gen_sounds/

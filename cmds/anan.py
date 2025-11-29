@@ -15,8 +15,10 @@ FFMPEG_PATH = os.getenv("FFMPEG_PATH")
 
 class Anan(Cog_Extension):
 
-    @app_commands.command(name="上線", description="請安安上線")
+    @app_commands.command(name="上線", description="叫安安上線")
+    @app_commands.default_permissions(administrator=True)
     async def connect(self, interaction: discord.Interaction):
+        """connect bot to vc"""
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
         if interaction.user.voice is None:
             await interaction.response.send_message(
@@ -27,6 +29,23 @@ class Anan(Cog_Extension):
             vc = interaction.user.voice.channel
             await vc.connect()
             await interaction.response.send_message("來了", delete_after=5)
+
+    @app_commands.command(name="滾", description="送安安下去")
+    @app_commands.default_permissions(administrator=True)
+    async def leave(self, interaction: discord.Interaction):
+        """disconnect bot from vc"""
+        voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
+        if voice is None:
+            await interaction.response.send_message(
+                "吾輩沒有在任何語音頻道內", delete_after=5
+            )
+        else:
+            picture = discord.File(
+                "images/ananout.png",
+                filename="安安出去.jpg",
+            )
+            await interaction.response.send_message(file=picture, delete_after=5)
+            await voice.disconnect()
 
     @app_commands.command(name="安安傳話筒", description="請安安幫你說不想直接說的話")
     @app_commands.describe(text="輸入要說的話", emotion="安安的表情")
@@ -49,6 +68,7 @@ class Anan(Cog_Extension):
     async def send_image(
         self, interaction: discord.Interaction, text: str, emotion: str
     ):
+        """send generated image to chat"""
         image_bytes = generate_image(text, emotion)
         if image_bytes == None:
             await interaction.response.send_message("嗚嗚~素描本沒紙了")
@@ -59,6 +79,12 @@ class Anan(Cog_Extension):
     @app_commands.command(name="洗腦", description="安安的固有魔法")
     @app_commands.default_permissions(administrator=True)
     async def send_sound(self, interaction: discord.Interaction, text: str):
+        """tts by command"""
+        if len(text) > 50:
+            await interaction.response.send_message(
+                "嗚~安安不想說那麼多話", delete_after=5
+            )
+            return
 
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
 
@@ -73,17 +99,18 @@ class Anan(Cog_Extension):
 
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
 
-        await interaction.response.send_message("已發送", delete_after=5)
+        await interaction.response.send_message("魔法，很神奇吧", delete_after=5)
         await self.speak(voice, text)
 
     async def speak(self, voice, text):
-        if not os.path.exists("./sounds"):
-            os.mkdir("./sounds")
+        """tts"""
+        if not os.path.exists("./gen_sounds"):
+            os.mkdir("./gen_sounds")
 
         hash_func = hashlib.md5()
         hash_func.update(text.encode("utf-8"))
 
-        fp = f"./sounds/{hash_func.hexdigest()}.mp3"
+        fp = f"./gen_sounds/{hash_func.hexdigest()}.mp3"
 
         if os.path.exists(fp):
             while voice.is_playing():
@@ -102,6 +129,7 @@ class Anan(Cog_Extension):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
+        """welcome voice when someone join vc"""
         voice = discord.utils.get(self.bot.voice_clients, guild=member.guild)
         if (
             not member.bot
