@@ -8,24 +8,6 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import logging
 
-
-wilderness_event = [
-    "Spider Swarm",
-    "Unnatural Outcrop",
-    "Demon Stragglers",
-    "Butterfly Swarm",
-    "King Black Dragon Rampage",
-    "Forgotten Soldiers",
-    "Surprising Seedlings",
-    "Hellhound Pack",
-    "Infernal Star",
-    "Lost Souls",
-    "Ramokee Incursion",
-    "Displaced Energy",
-    "Evil Bloodwood Tree",
-]
-
-
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
