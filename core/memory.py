@@ -4,7 +4,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional, Set
+from typing import Dict, Iterator, List, Optional, Set
 
 
 @dataclass(frozen=True)
@@ -16,8 +16,15 @@ class Memory:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class ImpressionObservation:
+    id: int
+    user_id: int
+    content: str
+
+
 class MemoryStore:
-    """以伺服器及使用者隔離的 SQLite 長期記憶。"""
+    """以伺服器及使用者隔離的稱謂、互動印象與使用量資料。"""
 
     def __init__(self, path: str, max_per_user: int = 100):
         self.path = Path(path).resolve()
@@ -97,7 +104,162 @@ class MemoryStore:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY(guild_id, user_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS participant_impressions (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    impression TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(guild_id, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS impression_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_impression_observations_guild
+                ON impression_observations(guild_id, id);
+
+                CREATE TABLE IF NOT EXISTS impression_summary_state (
+                    guild_id INTEGER PRIMARY KEY,
+                    reply_count INTEGER NOT NULL DEFAULT 0
+                );
                 """
+            )
+
+    def get_impression(self, guild_id: int, user_id: int) -> Optional[str]:
+        with self.lock, self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT impression FROM participant_impressions
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (guild_id, user_id),
+            ).fetchone()
+        return str(row["impression"]) if row is not None else None
+
+    def clear_impression(self, guild_id: int, user_id: int) -> bool:
+        with self.lock, self._connection() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM participant_impressions
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (guild_id, user_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM impression_observations
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (guild_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    def add_impression_observation(
+        self, guild_id: int, user_id: int, content: str, max_per_guild: int = 500
+    ) -> None:
+        content = " ".join(content.strip().split())[:500]
+        if not content:
+            return
+        max_per_guild = max(10, min(max_per_guild, 2000))
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO impression_observations(guild_id, user_id, content)
+                VALUES (?, ?, ?)
+                """,
+                (guild_id, user_id, content),
+            )
+            connection.execute(
+                """
+                DELETE FROM impression_observations
+                WHERE guild_id = ? AND id NOT IN (
+                    SELECT id FROM impression_observations
+                    WHERE guild_id = ? ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (guild_id, guild_id, max_per_guild),
+            )
+
+    def increment_impression_reply_count(self, guild_id: int) -> int:
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO impression_summary_state(guild_id, reply_count)
+                VALUES (?, 1)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    reply_count = reply_count + 1
+                """,
+                (guild_id,),
+            )
+            row = connection.execute(
+                """
+                SELECT reply_count FROM impression_summary_state
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            ).fetchone()
+        return int(row["reply_count"])
+
+    def list_impression_observations(
+        self, guild_id: int, limit: int = 200
+    ) -> List[ImpressionObservation]:
+        with self.lock, self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, user_id, content FROM impression_observations
+                WHERE guild_id = ? ORDER BY id ASC LIMIT ?
+                """,
+                (guild_id, max(1, min(limit, 1000))),
+            ).fetchall()
+        return [ImpressionObservation(**dict(row)) for row in rows]
+
+    def complete_impression_summary(
+        self,
+        guild_id: int,
+        observation_ids: List[int],
+        impressions: Dict[int, str],
+        reply_interval: int,
+    ) -> None:
+        """原子化保存印象、移除已處理片段，並扣除一個摘要週期。"""
+        reply_interval = max(1, reply_interval)
+        with self.lock, self._connection() as connection:
+            for user_id, impression in impressions.items():
+                impression = " ".join(impression.strip().split())[:500]
+                if not impression:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO participant_impressions(
+                        guild_id, user_id, impression
+                    ) VALUES (?, ?, ?)
+                    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                        impression = excluded.impression,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (guild_id, user_id, impression),
+                )
+            if observation_ids:
+                placeholders = ",".join("?" for _ in observation_ids)
+                connection.execute(
+                    f"""
+                    DELETE FROM impression_observations
+                    WHERE guild_id = ? AND id IN ({placeholders})
+                    """,
+                    (guild_id, *observation_ids),
+                )
+            connection.execute(
+                """
+                UPDATE impression_summary_state
+                SET reply_count = MAX(0, reply_count - ?)
+                WHERE guild_id = ?
+                """,
+                (reply_interval, guild_id),
             )
 
     def get_affinity(self, guild_id: int, user_id: int) -> int:
