@@ -897,6 +897,40 @@ class AI(Cog_Extension):
         response = "好，之後改用你的伺服器暱稱。" if removed else "目前沒有設定專用稱呼。"
         await interaction.response.send_message(response, ephemeral=True)
 
+    @app_commands.command(
+        name="安安查看印象", description="管理員查看指定成員的互動印象"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(member="要查看印象的成員")
+    @app_commands.rename(member="成員")
+    async def show_impression(
+        self, interaction: discord.Interaction, member: discord.Member
+    ):
+        administrator = (
+            isinstance(interaction.user, discord.Member)
+            and interaction.user.guild_permissions.administrator
+        )
+        if not administrator:
+            await interaction.response.send_message(
+                "只有伺服器管理員可以使用這個指令。", ephemeral=True
+            )
+            return
+        if not self._guild_is_allowed(interaction.guild_id):
+            await interaction.response.send_message(
+                "這個伺服器沒有開放安安的互動印象功能。", ephemeral=True
+            )
+            return
+
+        impression = self.memory.get_impression(
+            interaction.guild_id, member.id
+        )
+        response = (
+            f"安安目前對 {member.display_name} 的印象：\n{impression}"
+            if impression
+            else f"安安目前還沒有整理出對 {member.display_name} 的印象。"
+        )
+        await interaction.response.send_message(response, ephemeral=True)
+
     @app_commands.command(name="安安好感度", description="查看安安目前對你的好感度")
     async def show_affinity(self, interaction: discord.Interaction):
         if not self._guild_is_allowed(interaction.guild_id):
