@@ -225,6 +225,14 @@ class AI(Cog_Extension):
                 "你正在群聊中主動插話。自然接續話題，不要假設最後一句是在問你。",
             ),
         }
+        self.media_prompt = self._load_config_text(
+            "prompt_media.txt",
+            (
+                "從目前允許的回覆方式中選擇 output：{allowed_outputs}。"
+                "對方明確要求圖片、素描本、朗讀或語音時，必須選擇對應方式；"
+                "其他直接對話也可以依情緒自然地使用圖片或語音。"
+            ),
+        )
 
         if self.client is None:
             logger.warning("未設定 OPENAI_API_KEY，AI 自動回覆不會啟用")
@@ -438,17 +446,16 @@ class AI(Cog_Extension):
         ):
             allowed.append("voice")
 
-        guidance = (
-            "\n\n你必須輸出指定 JSON 格式。text 是實際回覆；emotion 必須選擇最符合"
-            f"語氣的表情；output 只能選擇：{', '.join(allowed)}。"
+        allowed_outputs = ", ".join(allowed)
+        configured_prompt = self.media_prompt.replace(
+            "{allowed_outputs}", allowed_outputs
         )
-        if len(allowed) > 1:
-            guidance += (
-                "一般對話優先使用 text。只有對方明確要求圖片、寫在素描本上、"
-                "朗讀或語音，或情緒表達很適合時才偶爾使用 image 或 voice。"
-                "不要因為能使用媒體就頻繁使用。"
-            )
-        return guidance
+        return (
+            "\n\n"
+            f"{configured_prompt}\n"
+            f"目前程式實際允許的 output 只有：{allowed_outputs}。"
+            "不得選擇未列出的方式。emotion 請選擇最符合回覆語氣的表情。"
+        )
 
     @staticmethod
     def _parse_reply(raw_reply: str) -> AIReply:
