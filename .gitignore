@@ -5,3 +5,6 @@ log.txt
 *.mp4
 ffmpeg/
 gen_sounds/
+data/*.db
+data/*.db-shm
+data/*.db-wal

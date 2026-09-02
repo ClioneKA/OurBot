@@ -1,6 +1,6 @@
 discord.py
 flask
-openai
+openai>=1.68.0
 python-dotenv
 requests
 pyNaCl
