@@ -306,6 +306,67 @@ class MemoryStore:
             )
             return True
 
+    def reserve_daily_user_feature_usage(
+        self,
+        feature: str,
+        guild_id: int,
+        user_id: int,
+        usage_date: str,
+        daily_limit: int,
+    ) -> bool:
+        """原子化占用一次使用者功能額度；額滿時不增加計數。"""
+        feature = feature.strip()[:32]
+        if not feature:
+            return False
+        daily_limit = max(1, daily_limit)
+        with self.lock, self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO daily_feature_usage(
+                    feature, guild_id, user_id, usage_date, request_count
+                ) VALUES (?, ?, ?, ?, 1)
+                ON CONFLICT(feature, guild_id, user_id, usage_date)
+                DO UPDATE SET request_count = request_count + 1
+                WHERE request_count < ?
+                """,
+                (feature, guild_id, user_id, usage_date, daily_limit),
+            )
+            connection.execute(
+                """
+                DELETE FROM daily_feature_usage
+                WHERE usage_date < date(?, '-7 days')
+                """,
+                (usage_date,),
+            )
+            return cursor.rowcount > 0
+
+    def release_daily_user_feature_usage(
+        self,
+        feature: str,
+        guild_id: int,
+        user_id: int,
+        usage_date: str,
+    ) -> None:
+        """外部服務失敗時退回一次已保留的使用者功能額度。"""
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE daily_feature_usage
+                SET request_count = request_count - 1
+                WHERE feature = ? AND guild_id = ? AND user_id = ?
+                    AND usage_date = ? AND request_count > 0
+                """,
+                (feature, guild_id, user_id, usage_date),
+            )
+            connection.execute(
+                """
+                DELETE FROM daily_feature_usage
+                WHERE feature = ? AND guild_id = ? AND user_id = ?
+                    AND usage_date = ? AND request_count <= 0
+                """,
+                (feature, guild_id, user_id, usage_date),
+            )
+
     def add(
         self,
         guild_id: int,

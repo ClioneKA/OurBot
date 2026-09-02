@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import discord
 from discord import app_commands
@@ -58,6 +58,13 @@ NEGATIVE_AFFINITY_PATTERN = re.compile(
     r"shut up|hate you)",
     re.IGNORECASE,
 )
+WEB_SEARCH_PATTERN = re.compile(
+    r"(?:幫我查|帮我查|查一下|查查看|搜尋|搜索|上網(?:查|找|搜尋|搜索)|"
+    r"網路上(?:查|找)|網頁搜尋|网页搜索|最新(?:新聞|消息|資訊|资讯|資料|价格|價格|"
+    r"版本|比分|天氣|天气)|今天(?:的)?(?:新聞|新闻|天氣|天气|價格|价格|比分)|"
+    r"search(?: the)? web|web search|look it up|browse the web)",
+    re.IGNORECASE,
+)
 
 EMOTIONS = tuple(BASEIMAGE_MAPPING)
 TTS_EMOTIONS = {
@@ -96,6 +103,7 @@ class AIReply:
     text: str
     output: str = "text"
     emotion: str = "普通"
+    sources: Tuple[Tuple[str, str], ...] = ()
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -148,6 +156,11 @@ class AI(Cog_Extension):
             else None
         )
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        self.search_model = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5.4-mini")
+        self.web_search_enabled = _env_bool("AI_WEB_SEARCH_ENABLED", True)
+        self.web_search_daily_limit = _env_int(
+            "AI_WEB_SEARCH_DAILY_LIMIT", 2, 1, 100
+        )
         self.allowed_guilds = _snowflake_ids("AI_GUILD_IDS")
         self.allowed_channels = _snowflake_ids("AI_CHANNEL_IDS")
         self.reply_chance = _env_float("AI_REPLY_CHANCE", 0.25, 0.0, 1.0)
@@ -231,6 +244,13 @@ class AI(Cog_Extension):
                 "從目前允許的回覆方式中選擇 output：{allowed_outputs}。"
                 "對方明確要求圖片、素描本、朗讀或語音時，必須選擇對應方式；"
                 "其他直接對話也可以依情緒自然地使用圖片或語音。"
+            ),
+        )
+        self.search_prompt = self._load_config_text(
+            "prompt_search.txt",
+            (
+                "你正在回答需要網路查證的問題。只根據搜尋結果回答，"
+                "不要用舊知識補猜最新資訊；保持安安的人格與簡短語氣。"
             ),
         )
 
@@ -415,6 +435,84 @@ class AI(Cog_Extension):
                 return False
             self.tts_last_request[guild_id] = now
             return True
+
+    def _wants_web_search(self, content: str, scene: str) -> bool:
+        return (
+            self.web_search_enabled
+            and scene == "direct"
+            and WEB_SEARCH_PATTERN.search(content) is not None
+        )
+
+    def _reserve_web_search(self, message: discord.Message) -> bool:
+        if self._is_rate_limit_exempt(message):
+            return True
+        guild_id = message.guild.id if message.guild is not None else 0
+        return self.memory.reserve_daily_user_feature_usage(
+            "web_search",
+            guild_id,
+            message.author.id,
+            self._daily_usage_date(),
+            self.web_search_daily_limit,
+        )
+
+    def _release_web_search(self, message: discord.Message) -> None:
+        if self._is_rate_limit_exempt(message):
+            return
+        guild_id = message.guild.id if message.guild is not None else 0
+        self.memory.release_daily_user_feature_usage(
+            "web_search",
+            guild_id,
+            message.author.id,
+            self._daily_usage_date(),
+        )
+
+    @staticmethod
+    def _extract_web_sources(response: Any) -> Tuple[Tuple[str, str], ...]:
+        try:
+            data = response.model_dump()
+        except AttributeError:
+            return ()
+
+        found: List[Tuple[str, str]] = []
+        seen_urls = set()
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                url = value.get("url")
+                if (
+                    isinstance(url, str)
+                    and url.startswith(("https://", "http://"))
+                    and len(url) <= 350
+                    and url not in seen_urls
+                ):
+                    title = value.get("title")
+                    clean_title = (
+                        str(title).replace("[", "").replace("]", "").strip()
+                        if title
+                        else "來源"
+                    )
+                    seen_urls.add(url)
+                    found.append((clean_title[:80], url))
+                for item in value.values():
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(data.get("output", []))
+        return tuple(found[:3])
+
+    @staticmethod
+    def _text_with_sources(reply: AIReply) -> str:
+        if not reply.sources:
+            return reply.text
+        source_lines = [
+            f"[{title}]({url.replace(')', '%29')})"
+            for title, url in reply.sources
+        ]
+        suffix = "\n\n來源：" + "、".join(source_lines)
+        available = max(1, 1900 - len(suffix))
+        return reply.text[:available] + suffix
 
     def _voice_client_for(
         self, message: discord.Message
@@ -972,6 +1070,19 @@ class AI(Cog_Extension):
             f"{self.persona}\n\n{self.scene_prompts[scene]}"
             f"{self._media_guidance(scene, message)}"
         )
+        use_web_search = self._wants_web_search(content, scene)
+        search_reserved = False
+        if use_web_search:
+            if not self._reserve_web_search(message):
+                return AIReply(
+                    f"你今天的網頁搜尋額度用完了，每天只能搜尋 "
+                    f"{self.web_search_daily_limit} 次。"
+                )
+            search_reserved = True
+            instructions += (
+                f"\n\n{self.search_prompt}\n"
+                "這次必須實際使用網頁搜尋，output 必須選 text。"
+            )
 
         if message.guild is not None:
             affinity = self.memory.get_affinity(
@@ -1010,17 +1121,41 @@ class AI(Cog_Extension):
                 )
 
         try:
-            async with self.concurrency:
-                response = await self.client.responses.create(
-                    model=self.model,
-                    instructions=instructions,
-                    input=model_input,
-                    max_output_tokens=self.max_output_tokens,
-                    text={"format": REPLY_SCHEMA},
-                    extra_body={"safety_identifier": safety_id},
+            request_options: Dict[str, Any] = {
+                "model": self.search_model if use_web_search else self.model,
+                "instructions": instructions,
+                "input": model_input,
+                "max_output_tokens": self.max_output_tokens,
+                "text": {"format": REPLY_SCHEMA},
+                "extra_body": {"safety_identifier": safety_id},
+            }
+            if use_web_search:
+                request_options.update(
+                    {
+                        "tools": [
+                            {
+                                "type": "web_search",
+                                "search_context_size": "low",
+                            }
+                        ],
+                        "tool_choice": "required",
+                        "max_tool_calls": 1,
+                        "include": ["web_search_call.action.sources"],
+                    }
                 )
+            async with self.concurrency:
+                response = await self.client.responses.create(**request_options)
             reply = self._parse_reply(response.output_text)
-        except (RateLimitError, APIConnectionError, APIError):
+            if use_web_search:
+                reply = AIReply(
+                    reply.text,
+                    "text",
+                    reply.emotion,
+                    self._extract_web_sources(response),
+                )
+        except (RateLimitError, APIConnectionError, APIError, TypeError):
+            if search_reserved:
+                self._release_web_search(message)
             logger.exception("OpenAI API 請求失敗")
             return AIReply("安安現在有點忙，晚點再叫我一下。")
 
@@ -1080,7 +1215,7 @@ class AI(Cog_Extension):
                 except (discord.ClientException, OSError, TypeError):
                     logger.exception("在 Discord 語音頻道播放 TTS 失敗")
 
-        await message.channel.send(reply.text)
+        await message.channel.send(self._text_with_sources(reply))
 
     @Cog_Extension.listener()
     async def on_message(self, message: discord.Message):
