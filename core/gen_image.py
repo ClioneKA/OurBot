@@ -1,10 +1,6 @@
-import os
-import requests
-import hashlib
-import io
 import logging
 from typing import Optional
-from discord.app_commands import Choice
+
 from core.text_fit_draw import draw_text_auto
 
 BASEIMAGE_MAPPING = {
@@ -25,7 +21,7 @@ BASE_OVERLAY_FILE = "BaseImages/base_overlay.png"
 
 
 def generate_image(text: str, emotion: str) -> Optional[bytes]:
-    if text == "" or str == "":
+    if not text.strip() or emotion not in BASEIMAGE_MAPPING:
         return None
 
     try:

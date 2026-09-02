@@ -70,6 +70,15 @@ class MemoryStore:
                     PRIMARY KEY(guild_id, user_id, usage_date)
                 );
 
+                CREATE TABLE IF NOT EXISTS daily_feature_usage (
+                    feature TEXT NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    usage_date TEXT NOT NULL,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(feature, guild_id, user_id, usage_date)
+                );
+
                 CREATE TABLE IF NOT EXISTS user_profiles (
                     guild_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -234,6 +243,68 @@ class MemoryStore:
                 (usage_date,),
             )
             return cursor.rowcount > 0
+
+    def reserve_daily_feature_usage(
+        self,
+        feature: str,
+        guild_id: int,
+        user_id: int,
+        usage_date: str,
+        user_limit: int,
+        guild_limit: int,
+    ) -> bool:
+        """原子化占用個人與伺服器的功能額度；user_id 0 代表總額。"""
+        feature = feature.strip()[:32]
+        if not feature:
+            return False
+        user_limit = max(1, user_limit)
+        guild_limit = max(1, guild_limit)
+
+        with self.lock, self._connection() as connection:
+            guild_row = connection.execute(
+                """
+                SELECT request_count FROM daily_feature_usage
+                WHERE feature = ? AND guild_id = ? AND user_id = 0
+                    AND usage_date = ?
+                """,
+                (feature, guild_id, usage_date),
+            ).fetchone()
+            user_row = connection.execute(
+                """
+                SELECT request_count FROM daily_feature_usage
+                WHERE feature = ? AND guild_id = ? AND user_id = ?
+                    AND usage_date = ?
+                """,
+                (feature, guild_id, user_id, usage_date),
+            ).fetchone()
+            if (
+                guild_row is not None
+                and int(guild_row["request_count"]) >= guild_limit
+            ) or (
+                user_row is not None
+                and int(user_row["request_count"]) >= user_limit
+            ):
+                return False
+
+            for counter_user_id in (0, user_id):
+                connection.execute(
+                    """
+                    INSERT INTO daily_feature_usage(
+                        feature, guild_id, user_id, usage_date, request_count
+                    ) VALUES (?, ?, ?, ?, 1)
+                    ON CONFLICT(feature, guild_id, user_id, usage_date)
+                    DO UPDATE SET request_count = request_count + 1
+                    """,
+                    (feature, guild_id, counter_user_id, usage_date),
+                )
+            connection.execute(
+                """
+                DELETE FROM daily_feature_usage
+                WHERE usage_date < date(?, '-7 days')
+                """,
+                (usage_date,),
+            )
+            return True
 
     def add(
         self,

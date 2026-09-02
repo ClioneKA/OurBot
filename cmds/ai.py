@@ -1,11 +1,14 @@
 import asyncio
 import hashlib
+import io
+import json
 import logging
 import os
 import random
 import re
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
@@ -15,7 +18,9 @@ from discord import app_commands
 from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 
 from core.classes import Cog_Extension
+from core.gen_image import BASEIMAGE_MAPPING, generate_image
 from core.memory import MemoryStore
+from core.tts import is_tts_configured
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,44 @@ NEGATIVE_AFFINITY_PATTERN = re.compile(
     r"shut up|hate you)",
     re.IGNORECASE,
 )
+
+EMOTIONS = tuple(BASEIMAGE_MAPPING)
+TTS_EMOTIONS = {
+    "普通": "neutral",
+    "開心": "happy",
+    "生氣": "angry",
+    "無語": "disgusted",
+    "臉紅": "happy",
+    "病嬌": "fearful",
+    "閉眼": "eye_closed",
+    "難受": "sad",
+    "害怕": "fearful",
+    "激動": "happy",
+    "驚訝": "surprised",
+    "哭泣": "sad",
+}
+REPLY_SCHEMA = {
+    "type": "json_schema",
+    "name": "anan_reply",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "output": {"type": "string", "enum": ["text", "image", "voice"]},
+            "emotion": {"type": "string", "enum": list(EMOTIONS)},
+        },
+        "required": ["text", "output", "emotion"],
+        "additionalProperties": False,
+    },
+}
+
+
+@dataclass(frozen=True)
+class AIReply:
+    text: str
+    output: str = "text"
+    emotion: str = "普通"
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -132,6 +175,21 @@ class AI(Cog_Extension):
         self.affinity_daily_changes = _env_int(
             "AI_AFFINITY_DAILY_CHANGES", 3, 1, 20
         )
+        self.image_replies_enabled = _env_bool("AI_IMAGE_REPLIES_ENABLED", True)
+        self.voice_replies_enabled = _env_bool("AI_VOICE_REPLIES_ENABLED", True)
+        self.media_direct_only = _env_bool("AI_MEDIA_DIRECT_ONLY", True)
+        self.image_max_chars = _env_int("AI_IMAGE_MAX_CHARS", 180, 20, 1000)
+        self.image_cooldown = _env_int(
+            "AI_IMAGE_COOLDOWN_SECONDS", 30, 1, 3600
+        )
+        self.tts_max_chars = _env_int("AI_TTS_MAX_CHARS", 100, 10, 1000)
+        self.tts_cooldown = _env_int("AI_TTS_COOLDOWN_SECONDS", 120, 1, 86400)
+        self.tts_user_daily_limit = _env_int(
+            "AI_TTS_USER_DAILY_LIMIT", 5, 1, 1000
+        )
+        self.tts_guild_daily_limit = _env_int(
+            "AI_TTS_GUILD_DAILY_LIMIT", 30, 1, 10000
+        )
         history_size = _env_int("AI_HISTORY_SIZE", 20, 2, 100)
         max_concurrent = _env_int("AI_MAX_CONCURRENT_REQUESTS", 2, 1, 20)
         max_memories = _env_int("AI_MEMORY_MAX_PER_USER", 100, 10, 1000)
@@ -152,6 +210,9 @@ class AI(Cog_Extension):
         self.request_times: Deque[float] = deque()
         self.hourly_request_times: Deque[float] = deque()
         self.rate_lock = asyncio.Lock()
+        self.media_rate_lock = asyncio.Lock()
+        self.image_last_request: Dict[int, float] = {}
+        self.tts_last_request: Dict[int, float] = {}
         self.concurrency = asyncio.Semaphore(max_concurrent)
         self.persona = self._load_persona()
         self.scene_prompts = {
@@ -304,6 +365,132 @@ class AI(Cog_Extension):
             self.request_times.append(now)
             self.hourly_request_times.append(now)
             return True
+
+    async def _reserve_image(self, message: discord.Message) -> bool:
+        if self._is_rate_limit_exempt(message):
+            return True
+        scope_id = (
+            message.guild.id if message.guild is not None else message.channel.id
+        )
+        now = time.monotonic()
+        async with self.media_rate_lock:
+            if (
+                now - self.image_last_request.get(scope_id, float("-inf"))
+                < self.image_cooldown
+            ):
+                return False
+            self.image_last_request[scope_id] = now
+            return True
+
+    async def _reserve_tts(self, message: discord.Message) -> bool:
+        if not is_tts_configured():
+            return False
+        if self._is_rate_limit_exempt(message):
+            return True
+
+        guild_id = message.guild.id if message.guild is not None else 0
+        now = time.monotonic()
+        async with self.media_rate_lock:
+            if (
+                now - self.tts_last_request.get(guild_id, float("-inf"))
+                < self.tts_cooldown
+            ):
+                return False
+            if not self.memory.reserve_daily_feature_usage(
+                "tts",
+                guild_id,
+                message.author.id,
+                self._daily_usage_date(),
+                self.tts_user_daily_limit,
+                self.tts_guild_daily_limit,
+            ):
+                return False
+            self.tts_last_request[guild_id] = now
+            return True
+
+    def _voice_client_for(
+        self, message: discord.Message
+    ) -> Optional[discord.VoiceClient]:
+        if message.guild is None or not isinstance(message.author, discord.Member):
+            return None
+        author_voice = message.author.voice
+        voice = discord.utils.get(self.bot.voice_clients, guild=message.guild)
+        if (
+            author_voice is None
+            or voice is None
+            or not voice.is_connected()
+            or author_voice.channel != voice.channel
+            or self.bot.get_cog("Anan") is None
+        ):
+            return None
+        return voice
+
+    def _media_guidance(self, scene: str, message: discord.Message) -> str:
+        media_allowed = scene == "direct" or not self.media_direct_only
+        allowed = ["text"]
+        if media_allowed and self.image_replies_enabled:
+            allowed.append("image")
+        if (
+            media_allowed
+            and self.voice_replies_enabled
+            and is_tts_configured()
+            and self._voice_client_for(message) is not None
+        ):
+            allowed.append("voice")
+
+        guidance = (
+            "\n\n你必須輸出指定 JSON 格式。text 是實際回覆；emotion 必須選擇最符合"
+            f"語氣的表情；output 只能選擇：{', '.join(allowed)}。"
+        )
+        if len(allowed) > 1:
+            guidance += (
+                "一般對話優先使用 text。只有對方明確要求圖片、寫在素描本上、"
+                "朗讀或語音，或情緒表達很適合時才偶爾使用 image 或 voice。"
+                "不要因為能使用媒體就頻繁使用。"
+            )
+        return guidance
+
+    @staticmethod
+    def _parse_reply(raw_reply: str) -> AIReply:
+        raw_reply = raw_reply.strip()
+        try:
+            data = json.loads(raw_reply)
+        except json.JSONDecodeError:
+            if raw_reply.startswith(("{", "[")):
+                return AIReply("安安剛剛恍神了，再說一次？")
+            return AIReply(raw_reply[:1900] or "安安剛剛恍神了，再說一次？")
+
+        if not isinstance(data, dict):
+            return AIReply("安安剛剛恍神了，再說一次？")
+
+        text = str(data.get("text", "")).strip()[:1900]
+        output = data.get("output", "text")
+        emotion = data.get("emotion", "普通")
+        if not text:
+            text = "安安剛剛恍神了，再說一次？"
+        if output not in {"text", "image", "voice"}:
+            output = "text"
+        if emotion not in EMOTIONS:
+            emotion = "普通"
+        return AIReply(text, output, emotion)
+
+    def _enforce_media_policy(
+        self, reply: AIReply, scene: str, message: discord.Message
+    ) -> AIReply:
+        if self.media_direct_only and scene != "direct":
+            return AIReply(reply.text, "text", reply.emotion)
+        if reply.output == "image" and (
+            not self.image_replies_enabled or len(reply.text) > self.image_max_chars
+        ):
+            return AIReply(reply.text, "text", reply.emotion)
+        if reply.output == "voice" and (
+            not self.voice_replies_enabled
+            or not is_tts_configured()
+            or self._voice_client_for(message) is None
+            or len(reply.text) > self.tts_max_chars
+        ):
+            return AIReply(reply.text, "text", reply.emotion)
+        return reply
 
     def _content_with_preferred_mentions(
         self, message: discord.Message, remove_bot_mention: bool = False
@@ -770,11 +957,14 @@ class AI(Cog_Extension):
 
     async def _generate_reply(
         self, message: discord.Message, content: str, scene: str
-    ) -> str:
+    ) -> AIReply:
         history = self.histories[message.channel.id]
         model_input: List[dict] = list(history)
         safety_id = hashlib.sha256(str(message.author.id).encode("utf-8")).hexdigest()
-        instructions = f"{self.persona}\n\n{self.scene_prompts[scene]}"
+        instructions = (
+            f"{self.persona}\n\n{self.scene_prompts[scene]}"
+            f"{self._media_guidance(scene, message)}"
+        )
 
         if message.guild is not None:
             affinity = self.memory.get_affinity(
@@ -819,18 +1009,16 @@ class AI(Cog_Extension):
                     instructions=instructions,
                     input=model_input,
                     max_output_tokens=self.max_output_tokens,
+                    text={"format": REPLY_SCHEMA},
                     extra_body={"safety_identifier": safety_id},
                 )
-            reply = response.output_text.strip()
+            reply = self._parse_reply(response.output_text)
         except (RateLimitError, APIConnectionError, APIError):
             logger.exception("OpenAI API 請求失敗")
-            return "安安現在有點忙，晚點再叫我一下。"
+            return AIReply("安安現在有點忙，晚點再叫我一下。")
 
-        if not reply:
-            return "安安剛剛恍神了，再說一次？"
-
-        reply = reply[:1900]
-        history.append({"role": "assistant", "content": reply})
+        reply = self._enforce_media_policy(reply, scene, message)
+        history.append({"role": "assistant", "content": reply.text})
         if scene == "direct" and message.guild is not None:
             self.memory.apply_daily_affinity_delta(
                 message.guild.id,
@@ -855,6 +1043,37 @@ class AI(Cog_Extension):
                     message.guild.id, message.author.id, content, "auto", 2
                 )
         return reply
+
+    async def _send_reply(
+        self, message: discord.Message, reply: AIReply
+    ) -> None:
+        if reply.output == "image" and await self._reserve_image(message):
+            loop = asyncio.get_running_loop()
+            image_bytes = await loop.run_in_executor(
+                None, generate_image, reply.text, reply.emotion
+            )
+            if image_bytes is not None:
+                await message.channel.send(
+                    file=discord.File(io.BytesIO(image_bytes), filename="anan.jpg")
+                )
+                return
+
+        if reply.output == "voice":
+            tts_emotion = TTS_EMOTIONS[reply.emotion]
+            voice = self._voice_client_for(message)
+            anan_cog = self.bot.get_cog("Anan")
+            if (
+                voice is not None
+                and anan_cog is not None
+                and await self._reserve_tts(message)
+            ):
+                try:
+                    if await anan_cog.speak(voice, reply.text, tts_emotion):
+                        return
+                except (discord.ClientException, OSError, TypeError):
+                    logger.exception("在 Discord 語音頻道播放 TTS 失敗")
+
+        await message.channel.send(reply.text)
 
     @Cog_Extension.listener()
     async def on_message(self, message: discord.Message):
@@ -892,10 +1111,10 @@ class AI(Cog_Extension):
         async with self.channel_locks[message.channel.id]:
             async with message.channel.typing():
                 reply = await self._generate_reply(message, content, scene)
-        try:
-            await message.channel.send(reply)
-        except discord.HTTPException:
-            logger.exception("Discord 回覆訊息失敗")
+                try:
+                    await self._send_reply(message, reply)
+                except discord.HTTPException:
+                    logger.exception("Discord 回覆訊息失敗")
 
 
 async def setup(bot):

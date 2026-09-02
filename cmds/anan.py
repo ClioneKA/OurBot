@@ -1,20 +1,24 @@
+import asyncio
 import io
 import os
-import hashlib
-import time
+from collections import defaultdict
 import discord
 from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands
 from core.classes import Cog_Extension
 from core.gen_image import generate_image
-from core.tts import generate_sound
+from core.tts import get_cached_sound
 from datetime import datetime
 
 FFMPEG_PATH = os.getenv("FFMPEG_PATH")
 
 
 class Anan(Cog_Extension):
+
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.voice_locks = defaultdict(asyncio.Lock)
 
     @app_commands.command(name="上線", description="叫安安上線")
     @app_commands.default_permissions(administrator=True)
@@ -105,27 +109,22 @@ class Anan(Cog_Extension):
 
     async def speak(self, voice, text, emotion=None):
         """tts"""
-        if not os.path.exists("./gen_sounds"):
-            os.mkdir("./gen_sounds")
-
-        hash_func = hashlib.md5()
-        hash_func.update(text.encode("utf-8"))
-
-        fp = f"./gen_sounds/{hash_func.hexdigest()}.mp3"
-
-        if os.path.exists(fp):
-            while voice.is_playing():
-                time.sleep(1)
-            voice.play(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=fp))
-        else:
-            hex_data = generate_sound(text, emotion)
-            if hex_data is None:
+        async with self.voice_locks[voice.guild.id]:
+            audio = await get_cached_sound(text, emotion)
+            if audio is None:
                 return False
-            with open(fp, "wb") as f:
-                f.write(hex_data)
+
             while voice.is_playing():
-                time.sleep(1)
-            voice.play(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=fp))
+                await asyncio.sleep(0.25)
+            if not voice.is_connected():
+                return False
+            voice.play(
+                discord.FFmpegPCMAudio(
+                    executable=FFMPEG_PATH,
+                    source=io.BytesIO(audio),
+                    pipe=True,
+                )
+            )
         return True
 
     @commands.Cog.listener()
@@ -138,7 +137,7 @@ class Anan(Cog_Extension):
             and after.channel == voice.channel
             and before.channel != after.channel
         ):
-            time.sleep(2.5)
+            await asyncio.sleep(2.5)
             hr = datetime.now().hour
             if hr < 3:
                 await self.speak(voice, "おはようございます", "happy")
