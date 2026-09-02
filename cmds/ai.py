@@ -305,14 +305,38 @@ class AI(Cog_Extension):
             self.hourly_request_times.append(now)
             return True
 
+    def _content_with_preferred_mentions(
+        self, message: discord.Message, remove_bot_mention: bool = False
+    ) -> str:
+        content = message.content
+        bot_id = self.bot.user.id if self.bot.user is not None else None
+        for mentioned_user in message.mentions:
+            if remove_bot_mention and mentioned_user.id == bot_id:
+                replacement = ""
+            else:
+                preferred_name = None
+                if message.guild is not None and mentioned_user.id != bot_id:
+                    preferred_name = self._preferred_name_for(
+                        message.guild.id, mentioned_user.id
+                    )
+                display_name = preferred_name or mentioned_user.display_name
+                replacement = f"@{display_name}"
+
+            content = content.replace(
+                f"<@{mentioned_user.id}>", replacement
+            ).replace(f"<@!{mentioned_user.id}>", replacement)
+        return " ".join(content.strip().split())
+
     def _clean_content(self, message: discord.Message) -> str:
-        content = message.clean_content.strip()
-        if self.bot.user is not None:
-            content = content.replace(f"@{self.bot.user.display_name}", "").strip()
+        content = self._content_with_preferred_mentions(
+            message, remove_bot_mention=True
+        )
         return content[: self.max_input_chars]
 
     def _remember_channel_message(self, message: discord.Message) -> None:
-        content = message.clean_content.strip()[: self.max_input_chars]
+        content = self._content_with_preferred_mentions(message)[
+            : self.max_input_chars
+        ]
         if not content:
             return
         preferred_name = None
