@@ -958,6 +958,7 @@ class AI(Cog_Extension):
         await interaction.response.send_message(response, ephemeral=True)
 
     @app_commands.command(name="安安好感度", description="查看安安目前對你的好感度")
+    @app_commands.default_permissions(use_application_commands=True)
     async def show_affinity(self, interaction: discord.Interaction):
         if not self._guild_is_allowed(interaction.guild_id):
             await interaction.response.send_message(

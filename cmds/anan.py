@@ -20,10 +20,26 @@ class Anan(Cog_Extension):
         super().__init__(bot)
         self.voice_locks = defaultdict(asyncio.Lock)
 
+    async def _require_administrator(
+        self, interaction: discord.Interaction
+    ) -> bool:
+        administrator = (
+            isinstance(interaction.user, discord.Member)
+            and interaction.user.guild_permissions.administrator
+        )
+        if administrator:
+            return True
+        await interaction.response.send_message(
+            "只有伺服器管理員可以使用這個指令。", ephemeral=True
+        )
+        return False
+
     @app_commands.command(name="上線", description="叫安安上線")
     @app_commands.default_permissions(administrator=True)
     async def connect(self, interaction: discord.Interaction):
         """connect bot to vc"""
+        if not await self._require_administrator(interaction):
+            return
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
         if interaction.user.voice is None:
             await interaction.response.send_message(
@@ -44,6 +60,8 @@ class Anan(Cog_Extension):
     @app_commands.default_permissions(administrator=True)
     async def leave(self, interaction: discord.Interaction):
         """disconnect bot from vc"""
+        if not await self._require_administrator(interaction):
+            return
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
         if voice is None:
             await interaction.response.send_message(
@@ -90,6 +108,8 @@ class Anan(Cog_Extension):
     @app_commands.default_permissions(administrator=True)
     async def send_sound(self, interaction: discord.Interaction, text: str):
         """tts by command"""
+        if not await self._require_administrator(interaction):
+            return
         if len(text) > 50:
             await interaction.response.send_message(
                 "嗚~安安不想說那麼多話", delete_after=5
