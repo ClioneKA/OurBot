@@ -392,6 +392,32 @@ class AI(Cog_Extension):
         )
         return now.date().isoformat()
 
+    def _current_time_context(self) -> str:
+        now = datetime.now(timezone.utc) + timedelta(
+            hours=self.daily_timezone_offset
+        )
+        if 5 <= now.hour < 11:
+            period = "早上"
+        elif 11 <= now.hour < 14:
+            period = "中午"
+        elif 14 <= now.hour < 18:
+            period = "下午"
+        elif 18 <= now.hour < 23:
+            period = "晚上"
+        else:
+            period = "深夜"
+
+        weekdays = ("一", "二", "三", "四", "五", "六", "日")
+        timezone_offset = f"UTC{self.daily_timezone_offset:+d}"
+        return (
+            "\n\n目前的當地日期與時間是 "
+            f"{now:%Y-%m-%d %H:%M}（星期{weekdays[now.weekday()]}、"
+            f"{period}、{timezone_offset}）。"
+            "回答時可以自然考慮目前時間，例如使用合適的早晚問候、"
+            "回應用餐或熬夜等話題。除非使用者詢問時間或時間與話題有關，"
+            "不要刻意報出日期、時間或時段。"
+        )
+
     def _is_rate_limit_exempt(self, message: discord.Message) -> bool:
         return message.author.id in self.rate_limit_bypass_user_ids
 
@@ -1001,6 +1027,7 @@ class AI(Cog_Extension):
         instructions = (
             f"{self.persona}\n\n{self.scene_prompts[scene]}"
             f"{self._media_guidance(scene, message)}"
+            f"{self._current_time_context()}"
         )
         use_web_search = self._wants_web_search(content, scene)
         search_reserved = False
