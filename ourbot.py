@@ -14,31 +14,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.all()
 intents.members = True
 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"), intents=intents)
-
-
-@bot.command()
-@commands.is_owner()
-async def load(ctx, extension):
-    await bot.load_extension(f"cmds.{extension}")
-    await ctx.send(f"Loaded {extension}.")
-    await ctx.message.delete()
-
-
-@bot.command()
-@commands.is_owner()
-async def unload(ctx, extension):
-    await bot.unload_extension(f"cmds.{extension}")
-    await ctx.send(f"Unloaded {extension}.")
-    await ctx.message.delete()
-
-
-@bot.command()
-@commands.is_owner()
-async def reload(ctx, extension):
-    await bot.reload_extension(f"cmds.{extension}")
-    await ctx.send(f"Reloaded {extension}.")
-    await ctx.message.delete()
+bot = commands.Bot(command_prefix=[], intents=intents)
 
 
 async def load_extensions():

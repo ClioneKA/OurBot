@@ -31,9 +31,14 @@ class Anan(Cog_Extension):
             )
             return
         elif voice is None:
+            await interaction.response.defer()
             vc = interaction.user.voice.channel
             await vc.connect()
-            await interaction.response.send_message("來了", delete_after=5)
+            await interaction.followup.send("來了", delete_after=5)
+        else:
+            await interaction.response.send_message(
+                "吾輩已經在語音頻道裡了", delete_after=5
+            )
 
     @app_commands.command(name="滾", description="送安安下去")
     @app_commands.default_permissions(administrator=True)
