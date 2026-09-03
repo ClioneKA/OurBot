@@ -169,8 +169,8 @@ class AI(Cog_Extension):
             if api_key
             else None
         )
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        self.search_model = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5.4-mini")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+        self.search_model = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5.6-luna")
         self.web_search_enabled = _env_bool("AI_WEB_SEARCH_ENABLED", True)
         self.web_search_daily_limit = _env_int(
             "AI_WEB_SEARCH_DAILY_LIMIT", 2, 1, 100
