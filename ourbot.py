@@ -59,8 +59,9 @@ async def load_extensions():
 async def on_ready():
     # await called_once_an_hour_at_55.start()
     slash = await bot.tree.sync()
+    slash_names = ", ".join(command.name for command in slash)
     print(f"目前登入身份 --> {bot.user}")
-    print(f"載入 {len(slash)} 個斜線指令")
+    print(f"載入 {len(slash)} 個斜線指令：{slash_names}")
 
 
 # @called_once_an_hour_at_55.before_loop
