@@ -25,6 +25,8 @@
 
 此 bot 使用全部 intents，請在 Discord Developer Portal 的 Bot 設定啟用所需的 Privileged Gateway Intents；未授權時 Gateway 連線會失敗，即使 REST 指令同步成功也無法正常回應。
 
+遠端查核直接記錄 HTTP 回傳的原始 JSON 欄位，沿用 discord.py HTTP client 的驗證與限頻處理。本機 discord.py 2.7.1 可重現將 `[0]` 安裝／情境欄位解析成 `[]` 的問題，且 `AppCommand.to_dict()` 不包含預設成員權限，因此不要使用該轉換結果判斷 Discord 上是否允許伺服器使用。新版紀錄前綴為「遠端原始指令」。
+
 ## 行為設定
 
 本機 `.env` 保存密鑰與部署資訊，`config/settings.toml` 保存機器人行為。兩者修改後都需要重啟機器人。

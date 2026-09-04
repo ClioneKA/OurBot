@@ -81,23 +81,24 @@ class OurBot(commands.Bot):
 
     async def verify_global_commands(self, synced):
         try:
-            remote = await self.tree.fetch_commands()
+            # Read raw JSON: some discord.py versions shift zero-based context
+            # flags while parsing AppCommand; to_dict also omits permissions.
+            remote = await self.http.get_global_commands(self.application_id)
         except discord.HTTPException:
             logger.exception("全域同步已回應成功，但遠端查核失敗")
             return
         logger.info("全域遠端查核：Application ID %s，GET 回傳 %d 個指令",
                     self.application_id, len(remote))
-        if {c.id for c in synced} != {c.id for c in remote}:
+        if {int(c.id) for c in synced} != {int(c['id']) for c in remote}:
             logger.warning("遠端清單與剛同步的指令 ID 不一致，請檢查是否有其他程序覆寫指令")
-        for command in remote:
-            payload = command.to_dict()
+        for payload in remote:
             installs = payload.get('integration_types')
             contexts = payload.get('contexts')
-            logger.info("遠端指令 %s (%s)：integration_types=%s，contexts=%s，default_member_permissions=%s",
-                        command.name, command.id, installs, contexts,
+            logger.info("遠端原始指令 %s (%s)：integration_types=%s，contexts=%s，default_member_permissions=%s",
+                        payload['name'], payload['id'], installs, contexts,
                         payload.get('default_member_permissions'))
             if (installs is not None and 0 not in installs) or (contexts is not None and 0 not in contexts):
-                logger.warning("指令 %s 的遠端設定不允許伺服器安裝或伺服器頻道使用", command.name)
+                logger.warning("指令 %s 的遠端設定不允許伺服器安裝或伺服器頻道使用", payload['name'])
 
     async def clear_old_guild_commands(self):
         # setup_hook runs before the Gateway fills self.guilds; use the REST API.

@@ -139,14 +139,25 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command.to_dict(self.bot.tree)['integration_types'], [0])
 
     async def test_remote_verification_reports_wrong_scope_and_overwrite(self):
-        remote = SimpleNamespace(id=2, name='test', to_dict=lambda: {
-            'integration_types': [1], 'contexts': [1], 'default_member_permissions': None})
-        with patch.object(self.bot.tree, 'fetch_commands', return_value=[remote]), \
+        remote = {'id': '2', 'name': 'test',
+                  'integration_types': [1], 'contexts': [1], 'default_member_permissions': None}
+        with patch.object(self.bot.http, 'get_global_commands', new_callable=AsyncMock, return_value=[remote]), \
                 self.assertLogs('ourbot', level='INFO') as logs:
             await OurBot.verify_global_commands(self.bot, [SimpleNamespace(id=1)])
         output = '\n'.join(logs.output)
         self.assertIn('不一致', output)
         self.assertIn('不允許伺服器', output)
+
+    async def test_raw_verification_preserves_zero_context_and_permissions(self):
+        remote = {'id': '1', 'name': 'test', 'integration_types': [0],
+                  'contexts': [0], 'default_member_permissions': '8'}
+        with patch.object(self.bot.http, 'get_global_commands', new_callable=AsyncMock, return_value=[remote]), \
+                self.assertLogs('ourbot', level='INFO') as logs:
+            await OurBot.verify_global_commands(self.bot, [SimpleNamespace(id=1)])
+        self.assertFalse(any(record.levelname == 'WARNING' for record in logs.records))
+        self.assertIn('integration_types=[0]', '\n'.join(logs.output))
+        self.assertIn('contexts=[0]', '\n'.join(logs.output))
+        self.assertIn('default_member_permissions=8', '\n'.join(logs.output))
 
 
 if __name__ == '__main__':
