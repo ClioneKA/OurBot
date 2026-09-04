@@ -3,6 +3,8 @@ from bisect import bisect_right
 from math import floor
 from pathlib import Path
 import sqlite3
+import time
+from datetime import datetime, timedelta, timezone
 
 
 MAX_LEVEL = 120
@@ -58,6 +60,11 @@ class RPGStore:
             gold INTEGER NOT NULL DEFAULT 0 CHECK (gold >= 0),
             PRIMARY KEY (guild_id, user_id))''')
         self.db.commit()
+        with self.db:
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_daily_xp (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+                source TEXT NOT NULL, xp INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(guild_id,user_id,day,source))''')
 
     def close(self):
         self.db.close()
@@ -72,17 +79,47 @@ class RPGStore:
                               (guild_id, user_id)).fetchone()
         return row[0] if row else 0
 
-    def award_text(self, guild_id, user_id, now, amount, cooldown):
+    @staticmethod
+    def day_key(now):
+        return datetime.fromtimestamp(now, timezone(timedelta(hours=8))).date().isoformat()
+
+    def daily_xp(self, guild_id, user_id, source, now=None):
+        day = self.day_key(time.time() if now is None else now)
+        row = self.db.execute('SELECT xp FROM rpg_daily_xp WHERE guild_id=? AND user_id=? AND day=? AND source=?',
+                              (guild_id, user_id, day, source)).fetchone()
+        return row[0] if row else 0
+
+    def _daily_award(self, guild, user, source, now, amount, limit):
+        if limit is None:
+            return amount
+        amount = max(0, min(amount, limit - self.daily_xp(guild, user, source, now)))
+        if amount:
+            self.db.execute('INSERT INTO rpg_daily_xp VALUES (?,?,?,?,?) '
+                            'ON CONFLICT(guild_id,user_id,day,source) DO UPDATE SET xp=xp+excluded.xp',
+                            (guild, user, self.day_key(now), source, amount))
+        return amount
+
+    def award_text(self, guild_id, user_id, now, amount, cooldown, daily_limit=None):
         # Conditional UPSERT makes cooldown and XP one atomic, restart-safe write.
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('SELECT last_text_at FROM players WHERE guild_id=? AND user_id=?',
+                                  (guild_id, user_id)).fetchone()
+            if row and row[0] is not None and now - row[0] < cooldown:
+                return
+            amount = self._daily_award(guild_id, user_id, 'text', now, amount, daily_limit)
             self.db.execute('''INSERT INTO players (guild_id, user_id, xp, last_text_at)
                 VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET
                 xp=players.xp+excluded.xp, last_text_at=excluded.last_text_at
                 WHERE players.last_text_at IS NULL OR ?-players.last_text_at>=?''',
                 (guild_id, user_id, amount, now, now, cooldown))
 
-    def award_voice(self, awards):
+    def award_voice(self, awards, daily_limit=None, now=None):
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            now = time.time() if now is None else now
+            awards = [(guild, user, self._daily_award(guild, user, 'voice', now, amount, daily_limit))
+                      for guild, user, amount in awards]
             self.db.executemany('''INSERT INTO players (guild_id, user_id, xp)
                 VALUES (?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET
                 xp=players.xp+excluded.xp''', awards)

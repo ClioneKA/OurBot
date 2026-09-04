@@ -99,6 +99,8 @@ class RaidSettings:
 class RPGSettings:
     enabled: bool = field(default=True, metadata={})
     text_xp: int = field(default=15, metadata={'minimum': 1, 'maximum': 1000})
+    text_daily_xp_limit: int = field(default=1000, metadata={'minimum': 0, 'maximum': 1000000})
+    voice_daily_xp_limit: int = field(default=3000, metadata={'minimum': 0, 'maximum': 1000000})
     text_cooldown_seconds: int = field(default=60, metadata={'minimum': 1, 'maximum': 3600})
     text_min_chars: int = field(default=3, metadata={'minimum': 1, 'maximum': 2000})
     voice_xp_per_minute: int = field(default=10, metadata={'minimum': 1, 'maximum': 1000})

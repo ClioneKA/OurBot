@@ -103,6 +103,7 @@ class AdventureView(discord.ui.View):
         else:
             s = self.cog.settings
             embed = discord.Embed(title='安安大冒險｜冒險指南', description=
+                f'每日聊天上限：文字 {s.text_daily_xp_limit:,} XP、語音 {s.voice_daily_xp_limit:,} XP，分開計算，台灣時間 00:00 重置；討伐經驗不計入。\n\n'
                 f'文字至少 {s.text_min_chars} 個非空白字元，每 {s.text_cooldown_seconds} 秒 {s.text_xp} XP，跨頻道共用冷卻。\n'
                 f'一般語音至少 {s.voice_min_members} 位未靜音、未拒聽真人，每完整分鐘 {s.voice_xp_per_minute} XP。AFK、舞台與 Bot 不計入；未滿分鐘及離線時間不補發，不偵測實際說話。\n\n'
                 f'採 RuneScape 標準經驗曲線，上限 Lv.120。Lv.10 可轉職，Lv.{s.regular_level}／{s.veteran_level}／{s.elite_level} 晉升，飾品格 1／2／3／4 格。\n\n'

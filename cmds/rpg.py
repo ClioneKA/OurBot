@@ -46,7 +46,8 @@ class RPG(commands.Cog):
                 or len(''.join(message.content.split())) < self.settings.text_min_chars):
             return
         self.store.award_text(message.guild.id, message.author.id, time.time(),
-                              self.settings.text_xp, self.settings.text_cooldown_seconds)
+                              self.settings.text_xp, self.settings.text_cooldown_seconds,
+                              self.settings.text_daily_xp_limit)
 
     def update_voice(self, guild):
         if not self.settings.enabled or guild.unavailable:
@@ -56,7 +57,7 @@ class RPG(commands.Cog):
         awards = self.tracker.update(guild.id, eligible, time.monotonic(),
                                      self.settings.voice_xp_per_minute)
         if awards:
-            self.store.award_voice(awards)
+            self.store.award_voice(awards, daily_limit=self.settings.voice_daily_xp_limit, now=time.time())
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -116,6 +117,11 @@ class RPG(commands.Cog):
             embed.add_field(name='距離下一級', value=f'{required - progress:,} XP')
         embed.add_field(name='累積經驗', value=f'{xp:,} XP')
         embed.add_field(name='金幣', value=f'{self.store.gold(guild_id, member.id):,} 金幣')
+        now = time.time()
+        embed.add_field(name='今日聊天經驗（台灣時間）', value=
+                        f'文字：{self.store.daily_xp(guild_id, member.id, "text", now):,} / {self.settings.text_daily_xp_limit:,} XP\n'
+                        f'語音：{self.store.daily_xp(guild_id, member.id, "voice", now):,} / {self.settings.voice_daily_xp_limit:,} XP\n'
+                        '每日 00:00 重置；討伐經驗不計入。', inline=False)
         embed.add_field(name='基礎能力＋飾品加成', value='\n'.join(
             f'{name}：{total}（{base} + {bonus}）' for name, total, base, bonus in
             zip(STAT_NAMES, state['total'], state['base'], state['bonus'])), inline=False)
