@@ -10,6 +10,36 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_fox_pendant_and_bat_weapons(self):
+        from core.rpg_character import item_text
+        from core.rpg_battle import raid_battle, dump_battle, load_battle
+        self.level(10)
+        self.characters.change_job(1, 1, '弓兵')
+        self.assertFalse(any(k.startswith(('fox:', 'bat:')) for k in self.characters.inventory(1, 1)))
+        for key in ('fox:pendant', 'bat:bow'):
+            with self.store.db:
+                self.store.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (1,1,?)', (key,))
+            with self.assertRaises(CharacterError):
+                self.characters.equip(1, 1, key)
+        self.level(20)
+        before = self.characters.snapshot(1, 1)
+        self.characters.equip(1, 1, 'fox:pendant')
+        self.characters.equip(1, 1, 'bat:bow')
+        after = self.characters.snapshot(1, 1)
+        self.assertEqual(after['combat']['閃避率'], before['combat']['閃避率'] + 5)
+        self.assertEqual(after['lifesteal'], 2)
+        battle = raid_battle([dict(name='玩家', state=after, rules=[])], dict(kind='巨獸', name='巨獸'), 1)
+        self.assertEqual(load_battle(dump_battle(battle)).fighters[0].lifesteal, 2)
+        self.characters.unequip(1, 1, '武器')
+        self.characters.unequip(1, 1, '飾品1')
+        self.assertEqual(self.characters.snapshot(1, 1)['lifesteal'], 0)
+        self.assertEqual(self.characters.snapshot(1, 1)['combat']['閃避率'], before['combat']['閃避率'])
+        for key in ('axe', 'sword_shield', 'bow', 'staff'):
+            item = ITEMS['bat:' + key]
+            self.assertEqual((item.required_level, item.lifesteal, item.price), (20, 2, 0))
+            self.assertLess(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
+        self.assertIn('閃避率 +5%', item_text(ITEMS['fox:pendant']))
+
     def test_accuracy_can_exceed_100_and_caps_at_150(self):
         from core.rpg_character import combat_from_stats
         for dexterity, accuracy in ((120, 99), (125, 100), (130, 101), (374, 149), (375, 150), (500, 150)):

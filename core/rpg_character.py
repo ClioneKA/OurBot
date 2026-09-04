@@ -42,6 +42,8 @@ class Item:
     value: int = 0
     required_level: int | None = None
     party_bonus: bool = False
+    evasion: int = 0
+    lifesteal: int = 0
 
 
 ITEMS = {}
@@ -98,10 +100,22 @@ for job, key, name, bonuses in (
                                  bonuses, (40, 120), required_level=20)
 
 
+ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
+                            required_level=20, evasion=5)
+for job, key, name, bonuses in (
+    ('裝甲步兵', 'axe', '血翼戰斧', (10, 18, 2, 0)),
+    ('騎士', 'sword_shield', '血翼劍盾', (40, 8, 8, 0)),
+    ('弓兵', 'bow', '血翼長弓', (0, 16, 0, 0)),
+    ('僧侶', 'staff', '血翼權杖', (0, 9, 0, 20)),
+):
+    ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
+                              bonuses, STABILITY[job], required_level=20, lifesteal=2)
+
+
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):
         ITEMS[key] = replace(item, value=300)
-    elif key.startswith(('golem:', 'tree:', 'goblin:')):
+    elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:')):
         ITEMS[key] = replace(item, value=750)
 
 
@@ -145,6 +159,10 @@ def item_text(item):
         parts.append(f'Lv.{item.required_level}')
     if item.party_bonus:
         parts.append('開戰每人（含自己）生命力／力氣／耐力／靈巧／信仰各 +1，最多各 +10，整場固定，僅自身')
+    if item.evasion:
+        parts.append(f'閃避率 +{item.evasion}%')
+    if item.lifesteal:
+        parts.append(f'吸血 {item.lifesteal}%（直接傷害實際扣血量）')
     return '、'.join(parts) or '無加成'
 
 
@@ -225,10 +243,12 @@ class Characters:
         for name, value in combat_bonus.items():
             combat[name] += value
         weapon = ITEMS.get(equipped.get('武器'))
+        combat['閃避率'] += sum(ITEMS[key].evasion for key in equipped.values())
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
-                    combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100))
+                    combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100),
+                    lifesteal=weapon.lifesteal if weapon else 0)
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
@@ -237,7 +257,7 @@ class Characters:
 
     def _grant(self, guild_id, user_id, job):
         candidates = [key for key, item in ITEMS.items()
-                      if not key.startswith(('raid:', 'starter:', 'goblin:')) and
+                      if not key.startswith(('raid:', 'starter:', 'goblin:', 'fox:', 'bat:')) and
                       (not item.job or (item.job == job and item.stage == 0))]
         granted = []
         for key in candidates:

@@ -16,6 +16,27 @@ from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fox_bat_generation_loot_and_command_choices(self):
+        from core.rpg_monsters import prepare_monster
+        from cmds.rpg import RPG
+        choices = next(p.choices for p in RPG.spawn_raid.parameters if p.name == 'kind')
+        for kind, size in (('月影妖狐', 1), ('血翼蝠王', 4)):
+            self.assertIn(kind, [c.value for c in choices])
+            with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+                monster = prepare_monster(await self.service.imagine(kind))
+            self.assertEqual(monster['tier'], 2)
+            raid = self.repo.create(1, 2, monster, 100, asdict(self.settings.raid), {'drop_chance': 1})
+            self.assertEqual(len(raid['drop_pool']), size)
+            self.assertEqual(raid['drop_pool'], list(DROP_TABLES[kind]))
+            self.assertIn('150%', self.service.lobby_embed(raid).fields[2].value)
+            p = self.participant()
+            raid.update(status='running', participants=[p], members=[1])
+            self.repo.save(raid)
+            battle = raid_battle([p], monster, 1)
+            battle.result = '勝利'
+            result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            self.assertIn(result['rewards'][0]['item'], raid['drop_pool'])
+
     async def test_goblin_generation_lobby_and_exclusive_loot(self):
         from core.rpg_monsters import prepare_monster
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
@@ -240,7 +261,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_slime_rarity_fallback_and_saved_rewards(self):
         with patch('core.rpg_raids.random.choices', return_value=['史萊姆群']) as choice, patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團'), weights=(20, 20, 10, 15, 15, 20), k=1)
+        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(15, 15, 10, 10, 10, 15, 15, 10), k=1)
         self.assertIn('史萊姆群', monster['name'])
         policy = asdict(replace(self.settings.raid, victory_xp=400, victory_gold=150, drop_chance=1.0))
         raid = self.repo.create(1, 2, monster, 100, policy)
@@ -423,7 +444,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_imagination_fallback_and_channel_validation(self):
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團'))
+        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'))
         self.assertTrue(monster['name'])
         self.assertEqual(channel_ids('2, 2, 3'), {2, 3})
         for raw in ('abc', '-1'):

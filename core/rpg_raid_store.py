@@ -9,6 +9,8 @@ from core.rpg_character import CharacterError
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
 DROP_TABLES = {
+    '月影妖狐': ('fox:pendant',),
+    '血翼蝠王': ('bat:axe', 'bat:sword_shield', 'bat:bow', 'bat:staff'),
     '哥布林戰團': ('goblin:badge', 'goblin:axe', 'goblin:sword_shield', 'goblin:bow', 'goblin:staff'),
     '巨獸': tuple(f'raid:{i}' for i in range(5)),
     '毒蛛': tuple(f'raid:{i}' for i in range(5)),

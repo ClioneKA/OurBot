@@ -157,6 +157,7 @@ class Fighter:
     guard_bonus: int = 0
     stability: tuple = (100, 100)
     armed: bool = True
+    lifesteal: int = 0
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -245,11 +246,12 @@ class Battle:
                 return rule, skill, target
         return None
 
-    def hit(self, actor, target, power=1.0, precise=False):
+    def hit(self, actor, target, power=1.0, precise=False, lifesteal=None):
         if actor.team == 0 and not actor.armed:
             self.log.append(f'{actor.name} 未裝備武器，無法造成傷害。')
             return False
-        chance = max(10, min(99, actor.stats['命中率'] - target.stats['閃避率']))
+        evasion = target.stats['閃避率'] + (15 if target.has('moon_shadow', self.round) else 0)
+        chance = max(10, min(99, actor.stats['命中率'] - evasion))
         if not precise and self.rng.random() * 100 >= chance:
             self.log.append(f'{actor.name} → {target.name}：未命中')
             return False
@@ -273,12 +275,31 @@ class Battle:
             damage = max(1, int(damage * multiplier))
         if target.has('taunt', self.round):
             damage = max(1, int(damage * 0.85))
+        actual_damage = min(target.hp, damage)
         target.hp = max(0, target.hp - damage)
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
                         f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}{"，倒下" if target.hp == 0 else ""}')
+        drain = actor.lifesteal if lifesteal is None else lifesteal
+        healing = min(actor.stats['HP'] - actor.hp, actual_damage * drain // 100)
+        if healing > 0 and actor.hp > 0:
+            actor.hp += healing
+            self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
         return True
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '月影妖狐' and self.round % 3 == 0:
+            actor.effects['moon_shadow'] = self.round + 1
+            self.log.append(f'{actor.name} 使用【月影斬】：150% 單體攻擊，閃避率 +15% 至第 {self.round + 1} 回合結束。')
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            if target is not None:
+                self.hit(actor, target, 1.5)
+            return
+        if actor.team == 1 and actor.job == '血翼蝠王' and self.round % 2 == 0:
+            self.log.append(f'{actor.name} 使用【汲血撕咬】：150% 單體攻擊，吸血 30%。')
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            if target is not None:
+                self.hit(actor, target, 1.5, lifesteal=30)
+            return
         if actor.team == 1 and actor.job == '哥布林隊長' and self.round % 3 == 0:
             for ally in self.living(1):
                 ally.effects['bless'] = self.round + 1
@@ -422,6 +443,7 @@ def raid_battle(participants, monster, seed):
     fighters = [Fighter(p['name'], 0, p['state']['job'], dict(p['state']['combat']),
                         p['state']['total'][3], [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
+                        lifesteal=p['state'].get('lifesteal', 0),
                         armed=bool(p['state'].get('equipped', {}).get('武器'))) for p in participants]
     badge_logs = []
     for fighter, participant in zip(fighters, participants):
@@ -486,6 +508,7 @@ def load_battle(data):
         f.guard_bonus = data_f.get('guard_bonus', 0)
         f.stability = tuple(data_f.get('stability', (100, 100)))
         f.armed = data_f.get('armed', True)
+        f.lifesteal = data_f.get('lifesteal', 0)
         fighters.append(f)
     battle = Battle(fighters, max_rounds=data['max_rounds'])
     battle.round, battle.result, battle.log = data['round'], data['result'], list(data['log'])

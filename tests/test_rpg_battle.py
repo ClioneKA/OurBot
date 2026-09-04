@@ -11,6 +11,81 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_lifesteal_uses_actual_damage_and_survives_restart(self):
+        from unittest.mock import patch
+        actor = fighter(attack=100, hp=1000, rules=[])
+        actor.lifesteal = 2
+        actor.hp = 500
+        enemy = fighter('敵人', 1, hp=1000, rules=[])
+        enemy.stats['防禦'] = 0
+        battle = Battle([actor, enemy], seed=1)
+        battle.hit(actor, enemy, precise=True)
+        self.assertEqual(actor.hp, 502)
+        enemy.hp = 50
+        battle.hit(actor, enemy, precise=True)
+        self.assertEqual(actor.hp, 503)  # Overkill contributes only 50 HP.
+        enemy.hp = 49
+        battle.hit(actor, enemy, precise=True)
+        self.assertEqual(actor.hp, 503)  # No minimum one-HP heal.
+        enemy.hp = 1000
+        with patch.object(battle.rng, 'random', return_value=0.999):
+            self.assertFalse(battle.hit(actor, enemy))
+        self.assertEqual(actor.hp, 503)
+        actor.hp = 999
+        battle.hit(actor, enemy, precise=True)
+        self.assertEqual(actor.hp, 1000)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        self.assertEqual(restored.fighters[0].lifesteal, 2)
+        battle.step()
+        restored.step()
+        self.assertEqual(dump_battle(battle), dump_battle(restored))
+        legacy = dump_battle(battle)
+        legacy['fighters'][0].pop('lifesteal')
+        self.assertEqual(load_battle(legacy).fighters[0].lifesteal, 0)
+
+    def test_fox_attack_evasion_expiry_and_precise_shot(self):
+        from unittest.mock import patch
+        player = fighter(hp=1000, rules=[])
+        fox = fighter('妖狐', 1, job='月影妖狐', rules=[])
+        battle = Battle([player, fox], seed=1)
+        battle.round = 3
+        with patch.object(battle, 'hit') as hit:
+            battle.act(fox)
+            hit.assert_called_once_with(fox, player, 1.5)
+        self.assertTrue(fox.has('moon_shadow', 4))
+        self.assertFalse(fox.has('moon_shadow', 5))
+        with patch.object(battle.rng, 'random', return_value=0.9):
+            self.assertFalse(battle.hit(player, fox))
+            self.assertTrue(battle.hit(player, fox, precise=True))
+            battle.round = 5
+            self.assertTrue(battle.hit(player, fox))
+        self.assertEqual(load_battle(dump_battle(battle)).fighters[1].effects, fox.effects)
+
+    def test_bat_bites_every_two_rounds_and_respects_taunt(self):
+        from unittest.mock import patch
+        player = fighter(hp=1000, rules=[])
+        other = fighter('脆皮', hp=1000, rules=[])
+        other.hp = 1
+        player.effects['taunt'] = 10
+        bat = fighter('蝠王', 1, job='血翼蝠王', hp=1000, attack=100, rules=[])
+        bat.hp = 500
+        battle = Battle([player, other, bat], seed=1)
+        for turn in range(1, 5):
+            battle.round = turn
+            with patch.object(battle, 'hit') as hit:
+                battle.act(bat)
+                if turn % 2 == 0:
+                    hit.assert_called_once_with(bat, player, 1.5, lifesteal=30)
+                else:
+                    hit.assert_called_once_with(bat, player)
+        player.effects.clear()
+        other.hp = 0
+        player.stats['防禦'] = 0
+        player.effects['stance'] = 10
+        battle.hit(bat, player, 1.5, precise=True, lifesteal=30)
+        self.assertEqual(player.hp, 880)  # Militia reduces 150 damage to 120.
+        self.assertEqual(bat.hp, 536)
+
     def test_tree_stuns_exact_floor_of_living_players_and_heals(self):
         for count, expected in ((1, 0), (3, 0), (4, 1), (6, 1), (10, 3), (20, 6)):
             players = [fighter(str(i), hp=1000) for i in range(count)]
