@@ -1,5 +1,29 @@
 # 設定維護
 
+## 啟動與斜線指令
+
+安裝 `requirements.txt` 的依賴，依 `.env.example` 填好 `.env` 後，在專案根目錄執行：
+
+```powershell
+.\ourbot\Scripts\python.exe -m pip install -r requirements.txt
+.\ourbot\Scripts\python.exe .\ourbot.py
+```
+
+若虛擬環境無法建立 Python 程序，請先安裝 Python 3.12 以上，使用 `py -3.12 -m venv .venv` 建立新環境，並把上述命令的 `ourbot` 改成 `.venv`。虛擬環境依賴原本安裝的 Python，不能只複製資料夾使用。
+
+啟動時先驗證設定，再於 `setup_hook` 載入全部 `cmds/*.py` 並同步應用程式指令；失敗會記錄原因並結束程序。重新連線不會再次同步。終端機與根目錄 `log.txt` 都會顯示模組名稱、同步範圍、Discord 回傳的指令名稱與 ID，以及登入後的 Application ID。
+
+- `.env` 的 `DISCORD_SYNC_GUILD_IDS` 留空：同步全域指令。
+- 填入目標伺服器 ID（多個以逗號分隔）：將本機全域指令複製並同步至這些伺服器，方便快速測試；不更新全域指令。
+- `AI_GUILD_IDS` 只控制 AI 回覆範圍，不控制斜線指令註冊。
+- 切換同步範圍不會清除先前範圍的遠端指令；先前的伺服器指令可能遮蓋同名全域指令，請留意測試與正式環境的設定。
+
+排查時先確認 `log.txt` 出現「指令同步成功」。若只有模組載入紀錄，查看後續錯誤；若同步成功但 Discord 沒顯示，確認登入的 Application ID 是預期的 bot、邀請授權包含 `bot` 和 `applications.commands`，並檢查伺服器整合設定、使用者與頻道的應用程式指令權限，再重新載入 Discord。全域指令更新可能有客戶端快取，可使用指定伺服器同步排查。
+
+此 bot 使用全部 intents，請在 Discord Developer Portal 的 Bot 設定啟用所需的 Privileged Gateway Intents；未授權時 Gateway 連線會失敗，即使 REST 指令同步成功也無法正常回應。
+
+## 行為設定
+
 本機 `.env` 保存密鑰與部署資訊，`config/settings.toml` 保存機器人行為。兩者修改後都需要重啟機器人。
 
 | 檔案／區塊 | 內容 |
