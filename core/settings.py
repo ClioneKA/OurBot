@@ -79,9 +79,45 @@ class TTSSettings:
 
 
 @dataclass(frozen=True)
+class RaidSettings:
+    enabled: bool = field(default=True, metadata={})
+    ai_monsters: bool = field(default=True, metadata={})
+    min_interval_minutes: int = field(default=60, metadata={'minimum': 10, 'maximum': 10080})
+    max_interval_minutes: int = field(default=180, metadata={'minimum': 10, 'maximum': 10080})
+    max_participants: int = field(default=20, metadata={'minimum': 1, 'maximum': 20})
+    victory_xp: int = field(default=300, metadata={'minimum': 1, 'maximum': 100000})
+    victory_gold: int = field(default=100, metadata={'minimum': 0, 'maximum': 1000000})
+    defeat_xp: int = field(default=30, metadata={'minimum': 0, 'maximum': 10000})
+    drop_chance: float = field(default=0.5, metadata={'minimum': 0.0, 'maximum': 1.0})
+
+    def __post_init__(self):
+        if self.min_interval_minutes > self.max_interval_minutes:
+            raise SettingsError('rpg.raid 出現間隔下限不得超過上限')
+
+
+@dataclass(frozen=True)
+class RPGSettings:
+    enabled: bool = field(default=True, metadata={})
+    text_xp: int = field(default=15, metadata={'minimum': 1, 'maximum': 1000})
+    text_cooldown_seconds: int = field(default=60, metadata={'minimum': 1, 'maximum': 3600})
+    text_min_chars: int = field(default=3, metadata={'minimum': 1, 'maximum': 2000})
+    voice_xp_per_minute: int = field(default=10, metadata={'minimum': 1, 'maximum': 1000})
+    voice_min_members: int = field(default=2, metadata={'minimum': 2, 'maximum': 100})
+    regular_level: int = field(default=20, metadata={'minimum': 11, 'maximum': 118})
+    veteran_level: int = field(default=50, metadata={'minimum': 12, 'maximum': 119})
+    elite_level: int = field(default=80, metadata={'minimum': 13, 'maximum': 120})
+    raid: RaidSettings = field(default_factory=RaidSettings)
+
+    def __post_init__(self):
+        if not 10 < self.regular_level < self.veteran_level < self.elite_level:
+            raise SettingsError('rpg 晉升等級必須依序遞增：10 < regular_level < veteran_level < elite_level')
+
+
+@dataclass(frozen=True)
 class Settings:
     ai: AISettings = field(default_factory=AISettings)
     tts: TTSSettings = field(default_factory=TTSSettings)
+    rpg: RPGSettings = field(default_factory=RPGSettings)
 
 
 def _section(cls, raw, path):

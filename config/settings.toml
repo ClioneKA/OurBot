@@ -58,3 +58,27 @@ tts_guild_daily_limit = 50
 [tts]
 voice_id = "moss_audio_8434cf0e-cc87-11f0-9bff-daa50e7d99bd"
 model = "speech-2.6-turbo"
+
+[rpg]
+enabled = true
+text_xp = 15
+text_cooldown_seconds = 60
+text_min_chars = 3
+voice_xp_per_minute = 10
+# 至少兩位未靜音、未拒聽的真人才累積語音經驗。
+voice_min_members = 2
+# Lv.10 才能首次轉職；後續自動晉升等級需嚴格遞增。
+regular_level = 20
+veteran_level = 50
+elite_level = 80
+
+[rpg.raid]
+enabled = true
+ai_monsters = true
+min_interval_minutes = 60
+max_interval_minutes = 180
+max_participants = 20
+victory_xp = 300
+victory_gold = 100
+defeat_xp = 30
+drop_chance = 0.5
