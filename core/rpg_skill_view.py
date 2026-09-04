@@ -5,7 +5,7 @@ from core.rpg_menu import add_back, navigate
 
 import discord
 
-from core.rpg_battle import CONDITIONS, TARGETS, SKILLS, ALLY_EFFECTS
+from core.rpg_battle import CONDITIONS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 
@@ -17,6 +17,7 @@ class SkillView(discord.ui.View):
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.job = cog.characters.job(self.guild_id, self.owner.id)
         self.slot = 1
+        self.choosing_skill = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -26,18 +27,30 @@ class SkillView(discord.ui.View):
 
     def rebuild(self):
         rule = self.current()
-        skill = SKILLS[self.job][self.slot - 1]
+        skill = rule_skill(self.job, rule)
         self.clear_items()
         self.add_item(PanelSelect('slot', row=0, placeholder='選擇要設定的技能', options=[
             discord.SelectOption(label=f'槽 {i}：{s.name}', value=str(i), default=i == self.slot)
-            for i, s in enumerate(SKILLS[self.job], 1)]))
+            for i, s in sorted((r.slot, rule_skill(self.job, r))
+                               for r in self.cog.tactics.rules(self.guild_id, self.owner.id, self.job))]))
+        if self.choosing_skill:
+            available = self.cog.tactics.available(self.guild_id, self.owner.id, self.job)
+            self.add_item(PanelSelect('equip', row=1, placeholder='選擇已解鎖技能', options=[
+                discord.SelectOption(label=s.name, value=str(i), description=s.description[:100],
+                                     default=i == (rule.skill_id or rule.slot))
+                for i, s in enumerate(available, 1)]))
+            self.change_skill.label = '返回策略設定'
+            for button in (self.change_skill, self.refresh, self.close_panel):
+                self.add_item(button)
+            add_back(self, 4)
+            return
+        self.change_skill.label = '更換技能'
         self.add_item(PanelSelect('priority', row=1, placeholder='選擇優先順序', options=[
             discord.SelectOption(label=f'優先 {i}' + ('（最先）' if i == 1 else ''), value=str(i), default=i == rule.priority)
             for i in (1, 2, 3)]))
         self.add_item(PanelSelect('condition', row=2, placeholder='選擇施放條件', options=[
             discord.SelectOption(label=label, value=key, default=key == rule.condition) for key, label in CONDITIONS.items()]))
-        fixed = {'guard': '固定目標：全隊', 'area': '固定目標：全體敵人',
-                 'stance': '固定目標：自己', 'taunt': '固定目標：自己'}.get(skill.effect)
+        fixed = f'固定目標：{FIXED_TARGETS[skill.effect]}' if skill.effect in FIXED_TARGETS else None
         targets = {key: label for key, label in TARGETS.items() if key != 'self' or skill.effect in ALLY_EFFECTS}
         if skill.effect != 'cleanse':
             targets.pop('debuffed', None)
@@ -46,14 +59,18 @@ class SkillView(discord.ui.View):
             discord.SelectOption(label=label, value=key, default=key == rule.target) for key, label in targets.items()]))
         self.toggle.label = '停用自動施放' if rule.enabled else '啟用自動施放'
         self.toggle.style = discord.ButtonStyle.secondary if rule.enabled else discord.ButtonStyle.success
-        for button in (self.toggle, self.refresh, self.close_panel):
+        for button in (self.change_skill, self.toggle, self.refresh, self.close_panel):
             self.add_item(button)
         add_back(self, 4)
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
-        embed.add_field(name='正在設定', value=f'槽 {self.slot}：{SKILLS[self.job][self.slot - 1].name}', inline=False)
-        if SKILLS[self.job][self.slot - 1].effect == 'cleanse':
+        skill = rule_skill(self.job, self.current())
+        embed.add_field(name='正在設定', value=f'槽 {self.slot}：{skill.name}', inline=False)
+        if self.choosing_skill:
+            embed.add_field(name='更換技能', value='Lv.20 解鎖兩個進階技能；維持三格，同技能不能重複裝備。'
+                            '更換後保留該格順位與開關，施放條件及目標恢復新技能預設值。', inline=False)
+        if skill.effect == 'cleanse':
             embed.add_field(name='淨化目標規則', value='只選存活且中毒／破甲／暈眩的隊友（含自己）。選「有可淨化負面狀態的隊友」時，多人符合則選血量比例最低者；其他選項依原規則篩選。'
                             '若希望先解除狀態，可把淨化設為優先 1；每回合只施放一個技能。', inline=False)
         if notice:
@@ -86,10 +103,19 @@ class SkillView(discord.ui.View):
             notice = None
             if job != self.job:
                 self.job, self.slot = job, 1
+                self.choosing_skill = False
                 notice = '職業已變更，已重新載入技能；請再次選擇設定。'
             else:
                 try:
-                    if action == 'slot':
+                    if action == 'change_skill':
+                        self.choosing_skill = not self.choosing_skill
+                    elif action == 'equip':
+                        if value not in tuple(str(i) for i in range(1, 6)):
+                            raise CharacterError('無效的技能。')
+                        self.cog.tactics.equip(self.guild_id, self.owner.id, self.job, self.slot, int(value))
+                        self.choosing_skill = False
+                        notice = '已更換技能，開戰時套用。'
+                    elif action == 'slot':
                         if value not in ('1', '2', '3'):
                             raise CharacterError('無效的技能槽。')
                         self.slot = int(value)
@@ -97,7 +123,7 @@ class SkillView(discord.ui.View):
                         old = self.current()  # Preserve other changes made in another panel.
                         if action == 'priority' and value not in ('1', '2', '3'):
                             raise CharacterError('無效的優先順序。')
-                        if action == 'target' and SKILLS[self.job][self.slot - 1].effect in ('guard', 'area', 'stance', 'taunt'):
+                        if action == 'target' and rule_skill(self.job, old).effect in FIXED_TARGETS:
                             raise CharacterError('這個技能的目標固定，不需設定。')
                         self.cog.tactics.configure(self.guild_id, self.owner.id, self.job, self.slot,
                             int(value) if action == 'priority' else old.priority,
@@ -109,6 +135,10 @@ class SkillView(discord.ui.View):
                     notice = str(exc)
             self.rebuild()
             await interaction.response.edit_message(embed=self.embed(notice), view=self)
+
+    @discord.ui.button(label='更換技能', row=4)
+    async def change_skill(self, interaction, button):
+        await self.handle(interaction, 'change_skill')
 
     @discord.ui.button(label='停用自動施放', row=4)
     async def toggle(self, interaction, button):

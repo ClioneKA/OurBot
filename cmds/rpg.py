@@ -11,7 +11,7 @@ from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, 
 from core.settings import get_settings
 from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, stage_level
-from core.rpg_battle import Tactics, SKILLS, CONDITIONS, TARGETS
+from core.rpg_battle import Tactics, CONDITIONS, TARGETS, FIXED_TARGETS, rule_skill
 from core.rpg_raids import RaidService
 
 
@@ -206,11 +206,12 @@ class RPG(commands.Cog):
     def skills_embed(self, guild, user):
         state = self.characters.snapshot(guild, user)
         embed = discord.Embed(title=f'{state["title"]}・自動技能', color=0x8B5CF6,
-                              description='每回合由優先 1 開始檢查，施放第一個符合條件且冷卻結束的技能；否則普攻。')
+                              description='每回合由優先 1 開始檢查，施放第一個符合條件且冷卻結束的技能；否則普攻。\n'
+                              '固定三格；Lv.20 後各職業解鎖兩個新技能，按「更換技能」配置。')
         for rule in self.tactics.rules(guild, user, state['job']):
-            skill = SKILLS[state['job']][rule.slot - 1]
+            skill = rule_skill(state['job'], rule)
             embed.add_field(name=f'優先 {rule.priority}｜槽 {rule.slot}：{skill.name}｜{"開" if rule.enabled else "關"}',
-                            value=f'{skill.description}\n冷卻 {skill.cooldown} 回合｜{CONDITIONS[rule.condition]}｜目標：{TARGETS[rule.target]}', inline=False)
+                            value=f'{skill.description}\n冷卻 {skill.cooldown} 回合｜{CONDITIONS[rule.condition]}｜目標：{FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])}', inline=False)
         embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。')
         return embed
 

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import discord
 
-from core.rpg import RPGStore
-from core.rpg_battle import Tactics
+from core.rpg import RPGStore, level_floor
+from core.rpg_battle import Tactics, rule_skill
 from core.rpg_character import Characters
 from core.rpg_skill_view import SkillView
 from core.settings import RPGSettings
@@ -71,3 +71,35 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'toggle')
         self.assertTrue(self.view.current().enabled)
         self.assertTrue(self.view.is_finished())
+
+    async def test_unlock_replace_and_configure_three_slots(self):
+        self.store.award_voice([(1, 1, level_floor(19))])
+        self.characters.change_job(1, 1, '僧侶')
+        await self.view.handle(self.interaction, 'refresh')
+        await self.view.handle(self.interaction, 'change_skill')
+        self.assertEqual(len(self.view.children[1].options), 3)
+        await self.view.handle(self.interaction, 'equip', '4')
+        self.assertIsNone(self.view.current().skill_id)
+        self.store.award_voice([(1, 1, level_floor(20) - level_floor(19))])
+        await self.view.handle(self.interaction, 'refresh')
+        self.assertEqual(len(self.view.children[1].options), 5)
+        await self.view.handle(self.interaction, 'equip', '4')
+        self.assertEqual(rule_skill('僧侶', self.view.current()).name, '群體治療')
+        self.assertFalse(self.view.choosing_skill)
+        self.assertEqual(len(self.view.children[0].options), 3)
+        self.assertEqual(len(self.view.children[1].options), 3)
+        self.assertTrue(self.view.children[3].disabled)
+        self.assertIn('全隊', self.view.children[3].options[0].label)
+        self.assertEqual(len(self.view.to_components()), 5)
+        self.assertEqual(len(self.view.to_components()[-1]['components']), 5)
+        await self.view.handle(self.interaction, 'priority', '3')
+        await self.view.handle(self.interaction, 'condition', 'always')
+        await self.view.handle(self.interaction, 'toggle')
+        self.assertEqual((self.view.current().skill_id, self.view.current().priority,
+                          self.view.current().enabled), (4, 3, False))
+        await self.view.handle(self.interaction, 'change_skill')
+        self.characters.change_job(1, 1, '弓兵')
+        await self.view.handle(self.interaction, 'equip', '5')
+        self.assertEqual(self.view.job, '弓兵')
+        self.assertIsNone(self.view.current().skill_id)
+        self.assertFalse(self.view.choosing_skill)

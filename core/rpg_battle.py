@@ -5,6 +5,7 @@ import random
 
 from core.rpg_character import CharacterError
 from core.rpg_monsters import monster_name
+from core.rpg import level_for
 
 
 CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 40%',
@@ -29,18 +30,37 @@ SKILLS = {
              Skill('防禦', 'stance', 3, '自身減傷 20%', 'self40')),
     '裝甲步兵': (Skill('重擊', 'strike', 2, '造成 160% 傷害'),
                  Skill('破甲', 'break', 3, '造成傷害並降低目標防禦 40%'),
-                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%', 'self40')),
+                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%', 'self40'),
+                 Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
+                 Skill('重裝猛擊', 'crush', 4, '對單一敵人造成 220% 傷害')),
     '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊，自身減傷 15%'),
              Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值', 'ally50'),
-             Skill('堅守', 'stance', 3, '自身減傷 50%', 'self40')),
+             Skill('堅守', 'stance', 3, '自身減傷 50%', 'self40'),
+             Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後暈眩至下一回合結束（跳過一次行動）'),
+             Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 25%', 'self40')),
     '弓兵': (Skill('連射', 'double', 2, '兩次 85% 傷害，各自判定命中'),
              Skill('精準射擊', 'precise', 3, '必中，造成 150% 傷害'),
-             Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害')),
+             Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害'),
+             Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 75% 傷害，分別判定命中'),
+             Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 5%')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
              Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%'),
-             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff')),
+             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff'),
+             Skill('群體治療', 'group_heal', 4, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
+             Skill('強效治療', 'greater_heal', 4, '恢復一名隊友 180% 治療量的 HP', 'ally50')),
 }
-ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse'}
+ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'greater_heal'}
+FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
+                 'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
+
+
+def unlocked_skills(job, level):
+    return SKILLS[job] if level >= 20 else SKILLS[job][:3]
+
+
+def rule_skill(job, rule):
+    # Old saved tactics and battle snapshots used the slot as the skill ID.
+    return SKILLS[job][(rule.skill_id or rule.slot) - 1]
 
 
 @dataclass(frozen=True)
@@ -50,25 +70,32 @@ class Rule:
     enabled: bool
     condition: str
     target: str
+    skill_id: int | None = None
 
 
 def default_rules(job):
     return [Rule(i, i, True, skill.condition, 'debuffed' if skill.effect == 'cleanse' else 'lowest')
-            for i, skill in enumerate(SKILLS[job], 1)]
+            for i, skill in enumerate(SKILLS[job][:3], 1)]
 
 
 class Tactics:
     def __init__(self, store):
+        self.store = store
         self.db = store.db
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_tactics (
                 guild_id INTEGER, user_id INTEGER, job TEXT, slot INTEGER,
                 priority INTEGER, enabled INTEGER, condition TEXT, target TEXT,
                 PRIMARY KEY (guild_id, user_id, job, slot))''')
+            if 'skill_id' not in {row[1] for row in self.db.execute('PRAGMA table_info(rpg_tactics)')}:
+                self.db.execute('ALTER TABLE rpg_tactics ADD COLUMN skill_id INTEGER')
+
+    def available(self, guild, user, job):
+        return unlocked_skills(job, level_for(self.store.xp(guild, user)))
 
     def rules(self, guild, user, job):
-        saved = {row[0]: Rule(row[0], row[1], bool(row[2]), row[3], row[4]) for row in self.db.execute(
-            'SELECT slot, priority, enabled, condition, target FROM rpg_tactics '
+        saved = {row[0]: Rule(row[0], row[1], bool(row[2]), row[3], row[4], row[5]) for row in self.db.execute(
+            'SELECT slot, priority, enabled, condition, target, skill_id FROM rpg_tactics '
             'WHERE guild_id=? AND user_id=? AND job=?', (guild, user, job))}
         return sorted([saved.get(rule.slot, rule) for rule in default_rules(job)], key=lambda rule: rule.priority)
 
@@ -77,9 +104,12 @@ class Tactics:
             raise CharacterError('技能槽與優先順序必須是 1–3。')
         if condition not in CONDITIONS or target not in TARGETS or type(enabled) is not bool:
             raise CharacterError('無效的自動施放設定。')
-        if target == 'self' and SKILLS[job][slot - 1].effect not in ALLY_EFFECTS | {'stance', 'taunt'}:
+        rules = self.rules(guild, user, job)
+        current = next(rule for rule in rules if rule.slot == slot)
+        skill = rule_skill(job, current)
+        if target == 'self' and skill.effect not in ALLY_EFFECTS | {'stance', 'taunt', 'rally'}:
             raise CharacterError('攻擊技能不能以自己為目標。')
-        if target == 'debuffed' and SKILLS[job][slot - 1].effect != 'cleanse':
+        if target == 'debuffed' and skill.effect != 'cleanse':
             raise CharacterError('負面狀態目標僅供淨化使用。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -88,11 +118,29 @@ class Tactics:
             updated = []
             for rule in rules:
                 if rule.slot == slot:
-                    rule = Rule(slot, priority, enabled, condition, target)
+                    rule = Rule(slot, priority, enabled, condition, target, rule.skill_id)
                 elif rule.priority == priority:
-                    rule = Rule(rule.slot, old_priority, rule.enabled, rule.condition, rule.target)
-                updated.append((guild, user, job, rule.slot, rule.priority, int(rule.enabled), rule.condition, rule.target))
-            self.db.executemany('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?)', updated)
+                    rule = Rule(rule.slot, old_priority, rule.enabled, rule.condition, rule.target, rule.skill_id)
+                updated.append((guild, user, job, rule.slot, rule.priority, int(rule.enabled), rule.condition, rule.target, rule.skill_id))
+            self.db.executemany('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', updated)
+
+    def equip(self, guild, user, job, slot, skill_id):
+        if job not in SKILLS or slot not in (1, 2, 3):
+            raise CharacterError('無效的職業或技能槽。')
+        if type(skill_id) is not int or not 1 <= skill_id <= len(self.available(guild, user, job)):
+            raise CharacterError('技能尚未解鎖；進階技能需要 Lv.20。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            rules = self.rules(guild, user, job)
+            current = next(rule for rule in rules if rule.slot == slot)
+            if (current.skill_id or current.slot) == skill_id:
+                return
+            if any((rule.skill_id or rule.slot) == skill_id for rule in rules if rule.slot != slot):
+                raise CharacterError('此技能已裝備於其他格，請先替換該格技能。')
+            skill = SKILLS[job][skill_id - 1]
+            self.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                            (guild, user, job, slot, current.priority, int(current.enabled), skill.condition,
+                             'debuffed' if skill.effect == 'cleanse' else 'lowest', skill_id))
 
 
 @dataclass
@@ -163,7 +211,7 @@ class Battle:
     def select(self, actor):
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
         for rule in sorted(actor.rules, key=lambda r: r.priority):
-            skill = SKILLS[actor.job][rule.slot - 1]
+            skill = rule_skill(actor.job, rule)
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
             if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * 40:
@@ -176,13 +224,17 @@ class Battle:
                     any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun')) for f in allies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
-            if skill.effect == 'heal':
+            if skill.effect in ('heal', 'greater_heal', 'group_heal'):
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
                 candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))]
             elif skill.effect == 'bless':
                 candidates = [f for f in candidates if not f.has(skill.effect, self.round)]
-            if skill.effect == 'guard':
+            if skill.effect == 'group_heal':
+                target = actor if candidates else None
+            elif skill.effect == 'rally':
+                target = actor if actor.hp < actor.stats['HP'] else None
+            elif skill.effect == 'guard':
                 bonus = max(1, actor.stats['HP'] // 20)
                 target = actor if any(not f.has('guard', self.round) or f.guard_bonus < bonus for f in allies) else None
             elif skill.effect in ('stance', 'taunt'):
@@ -280,8 +332,17 @@ class Battle:
         actor.ready[rule.slot] = self.round + skill.cooldown + 1
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
-        if effect == 'heal':
+        if effect in ('group_heal', 'rally'):
+            targets = self.living(actor.team) if effect == 'group_heal' else [actor]
+            healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 4
+            for ally in targets:
+                amount = min(ally.stats['HP'] - ally.hp, healing)
+                ally.hp += amount
+                self.log.append(f'{ally.name} 恢復 {amount} HP')
+        elif effect in ('heal', 'greater_heal'):
             healing = actor.stats['治療量'] // 2 if actor.job == '民兵' else actor.stats['治療量']
+            if effect == 'greater_heal':
+                healing = healing * 180 // 100
             amount = min(target.stats['HP'] - target.hp, healing)
             target.hp += amount
             self.log.append(f'{target.name} 恢復 {amount} HP')
@@ -300,18 +361,23 @@ class Battle:
         elif effect in ('bless', 'stance', 'taunt'):
             target.effects[effect] = self.round + 1
             self.log.append(f'{target.name} 獲得效果，持續至第 {self.round + 1} 回合結束')
-        elif effect == 'area':
+        elif effect in ('area', 'cleave'):
             for enemy in self.living(1 - actor.team):
-                self.hit(actor, enemy, 0.8)
-        elif effect == 'double':
-            for _ in range(2):
+                self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.8)
+        elif effect in ('double', 'triple'):
+            for _ in range(3 if effect == 'triple' else 2):
                 if target.hp > 0:
-                    self.hit(actor, target, 0.85)
+                    self.hit(actor, target, 0.75 if effect == 'triple' else 0.85)
         else:
-            hit = self.hit(actor, target, 1.6 if effect == 'strike' else 1.5 if effect == 'precise' else 1,
+            power = {'strike': 1.6, 'precise': 1.5, 'crush': 2.2, 'shield_bash': 1.2, 'poison_arrow': 1.2}.get(effect, 1)
+            hit = self.hit(actor, target, power,
                            precise=effect == 'precise')
             if hit and effect == 'break' and target.hp > 0:
                 target.effects['break'] = self.round + 1
+            if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
+                status = 'stun' if effect == 'shield_bash' else 'poison'
+                target.effects[status] = max(target.effects.get(status, 0), self.round + (1 if status == 'stun' else 2))
+                self.log.append(f'{target.name} {"暈眩" if status == "stun" else "中毒"}')
 
     def step(self):
         if self.result or self.check_end():
