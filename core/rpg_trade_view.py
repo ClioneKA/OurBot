@@ -151,6 +151,19 @@ class TradeView(discord.ui.View):
                 notice = (f'已給予 <@{recipient}> {ITEMS[key].name} ×{amount}。' if self.mode == 'give'
                           else f'已賣出 {ITEMS[key].name} ×{amount}，獲得 {gold} 金幣。')
                 self.selected = None
+                if self.mode == 'give':
+                    sender = discord.utils.escape_markdown(getattr(self.owner, 'display_name', str(self.owner.id)))
+                    guild_name = discord.utils.escape_markdown(getattr(interaction.guild, 'name', str(self.guild_id)))
+                    notification = discord.Embed(title='安安大冒險｜收到道具',
+                        description=f'你在 **{guild_name}** 收到 **{sender}** 贈送的道具！', color=0x8B5CF6)
+                    notification.add_field(name=ITEMS[key].name, value=f'數量：{amount}\n{item_text(ITEMS[key])}', inline=False)
+                    notification.set_footer(text='道具已放入該伺服器的背包，使用 /冒險 → 背包 查看。')
+                    try:
+                        await asyncio.wait_for(member.send(embed=notification,
+                                                           allowed_mentions=discord.AllowedMentions.none()), timeout=20)
+                        notice += '\n已私訊通知對方。'
+                    except (discord.HTTPException, asyncio.TimeoutError):
+                        notice += '\n道具已入帳，但私訊通知未能送達；對方可能關閉了私訊。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

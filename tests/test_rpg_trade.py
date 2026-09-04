@@ -24,7 +24,7 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
             self.store.db.execute("INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity) VALUES (1,1,'raid:0',3)")
         self.cog = SimpleNamespace(characters=self.characters, store=self.store, menu_views=WeakSet())
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
-            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(bot=False))),
+            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=SimpleNamespace(bot=False, send=AsyncMock()))),
             response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock(), send_modal=AsyncMock()),
             edit_original_response=AsyncMock())
 
@@ -70,6 +70,9 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         await view.execute(self.interaction, modal.key, modal.recipient, 2, modal.revision)
         self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 2)
         self.interaction.guild.fetch_member.assert_awaited_once_with(2)
+        self.interaction.guild.fetch_member.return_value.send.assert_awaited_once()
+        sent = self.interaction.guild.fetch_member.return_value.send.call_args.kwargs
+        self.assertIn('數量：2', sent['embed'].fields[0].value)
         self.interaction.guild.fetch_member.return_value = SimpleNamespace(bot=True)
         await view.execute(self.interaction, 'raid:0', 3, 1, view.revision)
         self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
@@ -89,8 +92,22 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.gold(1, 1), 0)
         await view.execute(self.interaction, 'raid:0', None, 3, view.revision)
         self.assertEqual(self.store.gold(1, 1), 180)
+
         self.assertIsNone(view.selected)
         self.assertLessEqual(len(view.to_components()), 5)
         await view.on_timeout()
         await view.execute(self.interaction, 'raid:0', None, 1, view.revision)
         self.assertEqual(self.store.gold(1, 1), 180)
+
+    async def test_failed_dm_does_not_rollback_or_repeat_gift(self):
+        import discord
+        member = self.interaction.guild.fetch_member.return_value
+        member.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'Cannot send messages')
+        view = TradeView(self.cog, self.interaction, 'give')
+        self.addCleanup(view.stop)
+        await view.execute(self.interaction, 'raid:0', 2, 1, 0)
+        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 1)
+        self.assertIn('私訊通知未能送達', self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value)
+        await view.execute(self.interaction, 'raid:0', 2, 1, 0)
+        member.send.assert_awaited_once()
+        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 1)
