@@ -261,7 +261,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_slime_rarity_fallback_and_saved_rewards(self):
         with patch('core.rpg_raids.random.choices', return_value=['史萊姆群']) as choice, patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(15, 15, 10, 10, 10, 15, 15, 10), k=1)
+        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(20, 20, 5, 11, 11, 11, 11, 11), k=1)
         self.assertIn('史萊姆群', monster['name'])
         policy = asdict(replace(self.settings.raid, victory_xp=400, victory_gold=150, drop_chance=1.0))
         raid = self.repo.create(1, 2, monster, 100, policy)

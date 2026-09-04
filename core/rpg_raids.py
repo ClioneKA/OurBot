@@ -123,7 +123,7 @@ class RaidService:
         self.repo.schedule(channel, now + delay)
 
     async def imagine(self, kind=None):
-        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(15, 15, 10, 10, 10, 15, 15, 10), k=1)[0]
+        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(20, 20, 5, 11, 11, 11, 11, 11), k=1)[0]
         monster = dict(name=random.choice(('吞月棉花獸', '夜光茶壺怪', '迷霧糖霜蛛')),
                        description='安安：「吾輩剛剛想到的怪物跑出來了！有誰願意一起對付牠？」', kind=kind)
         if kind == '月影妖狐':
