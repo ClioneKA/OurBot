@@ -9,6 +9,7 @@ from core.rpg_character import CharacterError
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
 DROP_TABLES = {
+    '哥布林戰團': ('goblin:badge', 'goblin:axe', 'goblin:sword_shield', 'goblin:bow', 'goblin:staff'),
     '巨獸': tuple(f'raid:{i}' for i in range(5)),
     '毒蛛': tuple(f'raid:{i}' for i in range(5)),
     '史萊姆群': (),
@@ -137,11 +138,18 @@ class RaidStore:
                 from types import SimpleNamespace
                 settings = SimpleNamespace(**raid['reward_policy'])
             rng = random.Random(raid['seed'])
+            enemies = [f for f in battle_data['fighters'] if f['team'] == 1]
+            maximum = sum(max(0, f['stats']['HP']) for f in enemies)
+            remaining = sum(max(0, min(f['hp'], f['stats']['HP'])) for f in enemies)
+            depleted = maximum - remaining
+            xp = settings.victory_xp
+            gold = getattr(settings, 'victory_gold', 0)
+            if not victory:
+                xp = xp * depleted // maximum if maximum else 0
+                gold = gold * depleted // maximum if maximum else 0
+                raid['failure_progress'] = dict(max_hp=maximum, remaining_hp=remaining)
             rewards = []
             for p in raid['participants']:
-                xp = settings.victory_xp if victory else settings.defeat_xp
-                # Older announcements had no gold reward; do not retroactively change them.
-                gold = getattr(settings, 'victory_gold', 0) if victory else 0
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < settings.drop_chance:

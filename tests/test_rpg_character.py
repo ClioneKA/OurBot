@@ -10,6 +10,35 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_goblin_loot_level_jobs_and_no_free_supplies(self):
+        from core.rpg_character import item_text
+        self.level(10)
+        self.characters.change_job(1, 1, '弓兵')
+        self.assertFalse(any(key.startswith('goblin:') for key in self.characters.inventory(1, 1)))
+        for key in ('goblin:badge', 'goblin:bow', 'goblin:axe'):
+            with self.store.db:
+                self.store.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (1,1,?)', (key,))
+            with self.assertRaises(CharacterError):
+                self.characters.equip(1, 1, key)
+        self.level(20)
+        self.characters.equip(1, 1, 'goblin:badge')
+        self.characters.equip(1, 1, 'goblin:bow')
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual(state['stability'], (40, 120))
+        self.assertEqual(state['equipped']['飾品1'], 'goblin:badge')
+        with self.assertRaises(CharacterError):
+            self.characters.equip(1, 1, 'goblin:axe')
+        with self.assertRaises(CharacterError):
+            self.characters.buy(1, 1, 'goblin:bow')
+        for key in ('axe', 'sword_shield', 'bow', 'staff'):
+            item = ITEMS['goblin:' + key]
+            self.assertEqual(sum(item.stability) / 2, 80)
+            self.assertEqual(item.required_level, 20)
+            self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
+        self.assertIn('整場固定', item_text(ITEMS['goblin:badge']))
+        self.level(19)
+        self.assertNotIn('goblin:badge', self.characters.snapshot(1, 1)['equipped'].values())
+
     def test_golem_ranged_weapons_require_job_and_regular_stage(self):
         for job, key in (('弓兵', 'golem:bow'), ('僧侶', 'golem:staff')):
             self.level(10)

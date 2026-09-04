@@ -128,6 +128,8 @@ class RPG(commands.Cog):
         embed.add_field(name='戰鬥能力', value='｜'.join(
             f'{name} {value}{"%" if name.endswith("率") else ""}'
             for name, value in state['combat'].items()), inline=False)
+        if 'goblin:badge' in state['equipped'].values():
+            embed.add_field(name='戰團徽章', value='開戰每人（含自己）生命力／力氣／耐力／靈巧／信仰各 +1，最多各 +10。整場固定，僅自身，上方能力尚未計入。', inline=False)
         embed.add_field(name='武器／套裝直接加成', value='、'.join(
             f'{name} +{value}' for name, value in state['combat_bonus'].items() if value) or '無', inline=False)
         embed.add_field(name='武器穩定度', value=(f'{state["stability"][0]}–{state["stability"][1]}% 傷害'
@@ -180,7 +182,7 @@ class RPG(commands.Cog):
     @app_commands.describe(kind='不填則隨機抽取怪物類型', name='這場怪物的名稱，最多20字',
         strength='血量、攻擊、防禦倍率，0.1–10；會再乘頻道動態難度', victory_xp='勝利每人最終經驗，覆蓋類型預設獎勵',
         victory_gold='勝利每人最終金幣，覆蓋類型預設獎勵', drop_percent='專屬物品掉落百分比，0–100；史萊姆群固定不掉落')
-    @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹')])
+    @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團')])
     async def spawn_raid(self, interaction: discord.Interaction, kind: str = None,
                          name: app_commands.Range[str, 1, 20] = None,
                          strength: app_commands.Range[float, 0.1, 10.0] = 1.0,

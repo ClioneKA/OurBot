@@ -82,5 +82,6 @@ max_interval_minutes = 90
 max_participants = 20
 victory_xp = 300
 victory_gold = 100
+# 舊設定相容欄位；失敗改依怪物已削減 HP 比例發放勝利經驗與金幣，此值不再用於結算。
 defeat_xp = 30
 drop_chance = 0.125

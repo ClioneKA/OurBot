@@ -27,6 +27,72 @@ def participant():
 
 
 class MonsterTests(unittest.TestCase):
+    def test_goblin_group_buffs_death_and_restart(self):
+        battle = raid_battle([participant()], monster('哥布林戰團'), 42)
+        player, captain, *grunts = battle.fighters
+        self.assertEqual([f.job for f in battle.living(1)], ['哥布林隊長', '哥布林打手', '哥布林打手'])
+        self.assertEqual(sum(f.hp for f in battle.living(1)), 1278)
+        self.assertEqual(captain.stats['攻擊'], 85)
+        player.rules = [Rule(3, 1, True, 'enemies3', 'lowest')]
+        with patch.object(battle, 'hit') as hit:
+            battle.act(player)
+            self.assertEqual([c.args[1] for c in hit.call_args_list], [captain, *grunts])
+        battle.round = 3
+        with patch.object(battle, 'hit') as hit:
+            battle.act(captain)
+            hit.assert_not_called()
+        self.assertTrue(all(f.has('bless', 4) and not f.has('bless', 5) for f in [captain, *grunts]))
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        battle.step()
+        restored.step()
+        self.assertEqual(dump_battle(battle), dump_battle(restored))
+        captain.hp = 0
+        battle.round = 5
+        with patch.object(battle, 'act') as act:
+            battle.step()
+            self.assertNotIn(captain, [c.args[0] for c in act.call_args_list])
+        self.assertFalse(any(f.has('bless', 6) for f in grunts))
+
+    def test_badge_party_scaling_is_personal_capped_and_frozen(self):
+        for count in (1, 4, 10, 12):
+            people = [participant() for _ in range(count)]
+            people[0]['state']['equipped']['飾品1'] = 'goblin:badge'
+            battle = raid_battle(people, monster(), 10)
+            wearer = battle.fighters[0]
+            counted = min(count, 10)
+            original = dict(people[0]['state']['combat'])
+            for stat, per_player in (('HP', 10), ('攻擊', 3), ('防禦', 3), ('治療量', 3)):
+                self.assertEqual(wearer.stats[stat], original[stat] + counted * per_player)
+            self.assertEqual(wearer.dexterity, 20 + counted)
+            for stat, divisor in (('命中率', 5), ('閃避率', 10), ('暴擊率', 8)):
+                self.assertEqual(wearer.stats[stat], original[stat] + (20 + counted) // divisor - 20 // divisor)
+            self.assertEqual(wearer.hp, wearer.stats['HP'])
+            self.assertEqual(people[0]['state']['combat'], original)
+            if count > 1:
+                self.assertEqual(battle.fighters[1].stats, original)
+                battle.fighters[1].hp = 0
+            stats = dict(wearer.stats)
+            restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+            self.assertEqual(restored.fighters[0].stats, stats)
+            battle.step()
+            restored.step()
+            self.assertEqual(wearer.stats, stats)
+            self.assertEqual(dump_battle(battle), dump_battle(restored))
+
+    def test_badge_respects_rate_caps_and_preserves_equipment_bonuses(self):
+        from core.rpg_character import combat_from_stats
+        people = [participant() for _ in range(10)]
+        state = people[0]['state']
+        state['equipped']['飾品1'] = 'goblin:badge'
+        state['total'] = [50, 60, 70, 359, 80]
+        state['combat'] = combat_from_stats(state['total'])
+        state['combat']['攻擊'] += 54
+        state['combat']['治療量'] += 20
+        wearer = raid_battle(people, monster(), 10).fighters[0]
+        self.assertEqual(wearer.stats, {'HP': 650, '攻擊': 284, '防禦': 240,
+                                     '治療量': 290, '命中率': 99, '閃避率': 35, '暴擊率': 50})
+        self.assertEqual(wearer.dexterity, 369)
+
     def test_tiers_and_distinct_stats(self):
         expected = {
             '巨獸': (1, 1065, 170, 40, 36, 88, 0, 10),

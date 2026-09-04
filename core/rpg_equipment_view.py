@@ -5,7 +5,7 @@ from core.rpg_menu import add_back, navigate
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, stage_level, item_text
+from core.rpg_character import CharacterError, ITEMS, item_level, item_text
 
 
 class PanelSelect(discord.ui.Select):
@@ -43,8 +43,8 @@ class EquipmentView(discord.ui.View):
         kind = '飾品' if self.slot.startswith('飾品') else self.slot
         self.available = [key for key in self.cog.characters.inventory(self.guild_id, self.owner.id)
                           if ITEMS[key].slot == kind and
-                          (not ITEMS[key].job or (ITEMS[key].job == state['job'] and
-                           state['level'] >= stage_level(ITEMS[key].stage, self.cog.settings)))]
+                          (not ITEMS[key].job or ITEMS[key].job == state['job']) and
+                          state['level'] >= item_level(ITEMS[key], self.cog.settings)]
         if self.item_id not in self.available:
             self.item_id = None
         self.clear_items()

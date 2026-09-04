@@ -16,6 +16,24 @@ from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_goblin_generation_lobby_and_exclusive_loot(self):
+        from core.rpg_monsters import prepare_monster
+        with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+            monster = await self.service.imagine('哥布林戰團')
+        monster = prepare_monster(monster)
+        self.assertEqual(monster['tier'], 2)
+        raid = self.repo.create(1, 2, monster, 100, asdict(self.settings.raid), {'drop_chance': 1})
+        self.assertEqual(raid['drop_pool'], list(DROP_TABLES['哥布林戰團']))
+        self.assertEqual(len(raid['drop_pool']), 5)
+        self.assertIn('鼓舞', self.service.lobby_embed(raid).fields[2].value)
+        p = self.participant()
+        raid.update(status='running', participants=[p], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([p], monster, 1)
+        battle.result = '勝利'
+        result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertIn(result['rewards'][0]['item'], raid['drop_pool'])
+
     async def test_tree_generation_and_four_job_suit_loot(self):
         from core.rpg_character import ITEMS
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
@@ -222,7 +240,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_slime_rarity_fallback_and_saved_rewards(self):
         with patch('core.rpg_raids.random.choices', return_value=['史萊姆群']) as choice, patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'), weights=(25, 25, 10, 20, 20), k=1)
+        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團'), weights=(20, 20, 10, 15, 15, 20), k=1)
         self.assertIn('史萊姆群', monster['name'])
         policy = asdict(replace(self.settings.raid, victory_xp=400, victory_gold=150, drop_chance=1.0))
         raid = self.repo.create(1, 2, monster, 100, policy)
@@ -242,7 +260,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.gold(1, 1), 300)
         self.assertEqual(self.characters.inventory(1, 1), ['starter:club'])
 
-    async def test_slime_defeat_has_normal_xp_and_no_loot(self):
+    async def test_slime_defeat_at_full_hp_has_no_rewards(self):
         monster = dict(self.monster, kind='史萊姆群')
         raid = self.repo.create(1, 2, monster, 100, asdict(self.settings.raid))
         raid.update(status='running', participants=[self.participant()], members=[1])
@@ -250,7 +268,33 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         battle = raid_battle(raid['participants'], monster, 1)
         battle.result = '戰敗'
         result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
-        self.assertEqual(result['rewards'], [dict(id=1, xp=30, gold=0, item=None)])
+        self.assertEqual(result['rewards'], [dict(id=1, xp=0, gold=0, item=None)])
+
+    async def test_failure_rewards_use_final_combined_hp_and_frozen_policy(self):
+        for index, result_name in enumerate(('戰敗', '平手（達回合上限）', '平手')):
+            with self.subTest(result=result_name):
+                uid = 100 + index
+                raid = self.repo.create(1, 200 + index, self.monster, 100,
+                                        asdict(replace(self.settings.raid, victory_xp=101,
+                                                       victory_gold=53, drop_chance=1.0)))
+                raid.update(status='running', participants=[self.participant(uid)], members=[uid])
+                self.repo.save(raid)
+                battle = raid_battle(raid['participants'], self.monster, 1)
+                data = dump_battle(battle)
+                enemy = data['fighters'][-1]
+                enemy['stats']['HP'], enemy['hp'] = 100, 0
+                import copy
+                second = copy.deepcopy(enemy)
+                second['stats']['HP'], second['hp'] = 200, 101
+                data['fighters'].append(second)
+                data['result'] = result_name
+                settled = self.repo.settle(raid['id'], data,
+                                           replace(self.settings.raid, victory_xp=9999, victory_gold=9999))
+                self.assertEqual(settled['rewards'], [dict(id=uid, xp=66, gold=35, item=None)])
+                self.assertEqual(settled['failure_progress'], dict(max_hp=300, remaining_hp=101))
+                self.repo.settle(raid['id'], data, self.settings.raid)
+                self.assertEqual((self.store.xp(1, uid), self.store.gold(1, uid)), (66, 35))
+                self.assertEqual(self.characters.inventory(1, uid), ['starter:club'])
 
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -351,6 +395,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         raid.update(status='running', participants=[self.participant()], members=[1])
         battle = raid_battle(raid['participants'], self.monster, 1)
         battle.result = '戰敗'
+        battle.fighters[-1].hp = battle.fighters[-1].stats['HP'] // 2
         raid['battle'] = dump_battle(battle)
         self.repo.save(raid)
         self.message.edit.side_effect = RuntimeError('network')
@@ -358,11 +403,11 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             await self.service.advance(raid, self.channel, 400)
         state = self.repo.get(raid['id'])
         self.assertFalse(state['delivered'])
-        self.assertEqual(self.store.xp(1, 1), 30)
-        self.assertEqual(self.store.gold(1, 1), 0)
+        self.assertEqual(self.store.xp(1, 1), 150)
+        self.assertEqual(self.store.gold(1, 1), 50)
         self.message.edit.side_effect = None
         await self.service.advance(state, self.channel, 405)
-        self.assertEqual(self.store.xp(1, 1), 30)
+        self.assertEqual(self.store.xp(1, 1), 150)
         self.assertEqual(self.characters.inventory(1, 1), ['starter:club'])
 
     async def test_skill_priority_and_job_isolation(self):
@@ -378,7 +423,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_imagination_fallback_and_channel_validation(self):
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'))
+        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團'))
         self.assertTrue(monster['name'])
         self.assertEqual(channel_ids('2, 2, 3'), {2, 3})
         for raw in ('abc', '-1'):

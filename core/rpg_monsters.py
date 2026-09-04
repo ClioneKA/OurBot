@@ -12,6 +12,7 @@ PROFILES = {
     '史萊姆群': (1, 1.2, 0.8, 0.5, 1.1, 90, 8, 5),
     '鐵殼魔像': (2, 1.2, 1.1, 2, 0.5, 90, 0, 5),
     '荊棘妖樹': (2, 1.4, 0.75, 1.3, 0.6, 92, 0, 5),
+    '哥布林戰團': (2, 1.2, 0.5, 0.8, 1.1, 92, 8, 10),
 }
 # probability, HP, attack, defense, victory rewards, equipment drop chance
 QUALITIES = {
@@ -37,7 +38,7 @@ def prepare_monster(monster):
         hp=product(base[0], thp, hp), attack=product(base[1], tatk, attack),
         defense=product(base[2], tdef, defense), speed=speed,
         hit=hit, dodge=dodge, crit=crit,
-        count=3 if monster['kind'] == '史萊姆群' else 1),
+        count=3 if monster['kind'] in ('史萊姆群', '哥布林戰團') else 1),
         quality_reward=reward, quality_drop=drop)
 
 

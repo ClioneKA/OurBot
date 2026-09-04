@@ -40,6 +40,8 @@ class Item:
     stability: tuple = (100, 100)
     price: int = 0
     value: int = 0
+    required_level: int | None = None
+    party_bonus: bool = False
 
 
 ITEMS = {}
@@ -84,10 +86,22 @@ for job, key, name, bonuses in (
     ITEMS[f'tree:{key}'] = Item(name, '套裝', job, 1, (0, 0, 0, 0, 0), bonuses)
 
 
+ITEMS['goblin:badge'] = Item('戰團徽章', '飾品', '', 1, (0, 0, 0, 0, 0),
+                             required_level=20, party_bonus=True)
+for job, key, name, bonuses in (
+    ('裝甲步兵', 'axe', '掠奪者戰斧', (0, 60, 0, 0)),
+    ('騎士', 'sword_shield', '掠奪者劍盾', (30, 40, 6, 0)),
+    ('弓兵', 'bow', '掠奪者長弓', (0, 54, 0, 0)),
+    ('僧侶', 'staff', '掠奪者權杖', (0, 42, 0, 20)),
+):
+    ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
+                                 bonuses, (40, 120), required_level=20)
+
+
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):
         ITEMS[key] = replace(item, value=300)
-    elif key.startswith(('golem:', 'tree:')):
+    elif key.startswith(('golem:', 'tree:', 'goblin:')):
         ITEMS[key] = replace(item, value=750)
 
 
@@ -108,11 +122,29 @@ def stat_text(stats):
     return '、'.join(f'{name} +{value}' for name, value in zip(STAT_NAMES, stats) if value) or '無加成'
 
 
+def item_level(item, settings):
+    if item.required_level is not None:
+        return item.required_level
+    return stage_level(item.stage, settings) if item.job else 1
+
+
+def combat_from_stats(total):
+    vitality, strength, endurance, dexterity, faith = total
+    return {'HP': 50 + vitality * 10, '攻擊': strength * 2 + faith,
+            '防禦': endurance * 3, '治療量': faith * 3,
+            '命中率': min(99, 75 + dexterity // 5),
+            '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
+
+
 def item_text(item):
     parts = [f'{name} +{value}' for name, value in zip(STAT_NAMES, item.stats) if value]
     parts += [f'{name} +{value}' for name, value in zip(COMBAT_NAMES, item.combat) if value]
     if item.slot == '武器':
         parts.append(f'穩定度 {item.stability[0]}–{item.stability[1]}%')
+    if item.required_level is not None:
+        parts.append(f'Lv.{item.required_level}')
+    if item.party_bonus:
+        parts.append('開戰每人（含自己）生命力／力氣／耐力／靈巧／信仰各 +1，最多各 +10，整場固定，僅自身')
     return '、'.join(parts) or '無加成'
 
 
@@ -179,7 +211,7 @@ class Characters:
             item = ITEMS.get(item_id)
             if (slot in slots and item and item_id in owned and
                     (not item.job or item.job == job) and
-                    (not item.job or level >= stage_level(item.stage, self.settings))):
+                    level >= item_level(item, self.settings)):
                 equipped[slot] = item_id
         # First nine level-ups always use militia growth, even after changing jobs.
         growth = GROWTH[job]
@@ -187,11 +219,7 @@ class Characters:
                      + (stage * weight * 2 if job != '民兵' else 0) for weight in growth)
         bonus = tuple(sum(ITEMS[item].stats[i] for item in equipped.values()) for i in range(5))
         total = tuple(a + b for a, b in zip(base, bonus))
-        vitality, strength, endurance, dexterity, faith = total
-        combat = {'HP': 50 + vitality * 10, '攻擊': strength * 2 + faith, '防禦': endurance * 3,
-                  '治療量': faith * 3,
-                  '命中率': min(99, 75 + dexterity // 5),
-                  '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
+        combat = combat_from_stats(total)
         combat_bonus = {name: sum(ITEMS[key].combat[i] for key in equipped.values())
                         for i, name in enumerate(COMBAT_NAMES)}
         for name, value in combat_bonus.items():
@@ -209,7 +237,7 @@ class Characters:
 
     def _grant(self, guild_id, user_id, job):
         candidates = [key for key, item in ITEMS.items()
-                      if not key.startswith(('raid:', 'starter:')) and
+                      if not key.startswith(('raid:', 'starter:', 'goblin:')) and
                       (not item.job or (item.job == job and item.stage == 0))]
         granted = []
         for key in candidates:
@@ -257,7 +285,7 @@ class Characters:
             item = ITEMS[item_id]
             if item.job and item.job != state['job']:
                 raise CharacterError('這件裝備不適合目前職業。')
-            if item.job and state['level'] < stage_level(item.stage, self.settings):
+            if state['level'] < item_level(item, self.settings):
                 raise CharacterError('等級尚未達到這件裝備的需求。')
             slot = item.slot
             if slot == '飾品':

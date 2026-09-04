@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 import random
 
-from core.rpg_character import CharacterError
+from core.rpg_character import CharacterError, ITEMS, combat_from_stats
 from core.rpg_monsters import monster_name
 from core.rpg import level_for
 
@@ -279,6 +279,11 @@ class Battle:
         return True
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '哥布林隊長' and self.round % 3 == 0:
+            for ally in self.living(1):
+                ally.effects['bless'] = self.round + 1
+            self.log.append(f'{actor.name} 使用【戰團鼓舞】：存活戰團成員攻擊 +25%，持續至第 {self.round + 1} 回合結束。')
+            return
         if actor.team == 1 and actor.job == '史萊姆':
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
             if target is not None:
@@ -416,6 +421,18 @@ def raid_battle(participants, monster, seed):
                         p['state']['total'][3], [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         armed=bool(p['state'].get('equipped', {}).get('武器'))) for p in participants]
+    badge_logs = []
+    for fighter, participant in zip(fighters, participants):
+        if any(ITEMS[key].party_bonus for key in participant['state'].get('equipped', {}).values() if key in ITEMS):
+            count = min(len(participants), 10)
+            total = participant['state']['total']
+            before = combat_from_stats(total)
+            after = combat_from_stats([value + count for value in total])
+            for stat in before:
+                fighter.stats[stat] += after[stat] - before[stat]
+            fighter.dexterity += count
+            fighter.hp = fighter.stats['HP']
+            badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
     average = sum(p['state']['level'] for p in participants) / len(participants)
     stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
              '攻擊': int(22 + average * 6), '防禦': int(10 + average * 2),
@@ -438,8 +455,13 @@ def raid_battle(participants, monster, seed):
         individual['HP'] = max(1, stats['HP'] // count + (i < stats['HP'] % count))
         name = monster_name(monster) + (f'・{i + 1}' if count > 1 else '')
         job = '史萊姆' if count > 1 and monster['kind'] == '史萊姆群' else monster['kind']
+        if monster['kind'] == '哥布林戰團':
+            job = '哥布林隊長' if i == 0 else '哥布林打手'
+            name = monster_name(monster) + ('・隊長' if i == 0 else f'・打手{i}')
         fighters.append(Fighter(name, 1, job, individual, speed, []))
-    return Battle(fighters, seed=seed)
+    battle = Battle(fighters, seed=seed)
+    battle.log.extend(badge_logs)
+    return battle
 
 
 def dump_battle(battle):
