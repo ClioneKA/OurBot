@@ -17,6 +17,7 @@ from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_raid_store import RaidStore, DROP_TABLES
 from core.rpg_notifications import RaidNotifications
+from core.rpg_monsters import prepare_monster, monster_name
 
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,13 @@ class RaidService:
                   '荊棘妖樹': '每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），跳過下一次行動，可淨化；不受嘲諷影響',
                   '鐵殼魔像': '血量 1.2 倍、防禦 2 倍；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
                   '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響'}[raid['monster']['kind']]
-        embed = discord.Embed(title='魔物出現｜' + safe_text(raid['monster']['name'], 20),
+        if raid['monster'].get('profile'):
+            traits = {'巨獸': '血厚、攻擊高、防禦偏低、速度慢；每三回合對全隊橫掃',
+                      '毒蛛': '血薄、防禦低、速度快、閃避高；攻擊附帶中毒，可淨化',
+                      '史萊姆群': '三隻獨立血量的史萊姆，每隻每回合一次 45% 撞擊；倒下後停止攻擊，可用群攻對付',
+                      '鐵殼魔像': '高防禦、速度慢；第 3、6、9…回合蓄力，下一回合 250% 單體重拳',
+                      '荊棘妖樹': '高血量、低攻擊；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化'}[raid['monster']['kind']]
+        embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
         embed.add_field(name=f'參與者 {len(raid["members"])}/{self.settings.max_participants}',
@@ -178,7 +185,7 @@ class RaidService:
         pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
         category = '討伐飾品' if pool and all(ITEMS[key].slot == '飾品' for key in pool) else '專屬裝備'
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
-                     else f'{policy.drop_chance:.0%} 機率取得{category}（可能重複）')
+                     else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
         scaling = raid.get('reward_scaling')
         if scaling:
             labels = {'victory_xp': '勝利經驗', 'victory_gold': '勝利金幣'}
@@ -191,11 +198,11 @@ class RaidService:
         return embed
 
     def battle_embed(self, raid, battle):
-        embed = discord.Embed(title=f'{safe_text(raid["monster"]["name"], 20)}｜第 {battle.round} 回合｜{battle.result or "自動戰鬥中"}',
+        embed = discord.Embed(title=f'{safe_text(monster_name(raid["monster"]), 32)}｜第 {battle.round} 回合｜{battle.result or "自動戰鬥中"}',
                               description='\n'.join(battle.log[-12:])[-3000:] or '戰鬥即將開始', color=0xE09B37)
-        boss = battle.fighters[-1]
-        embed.add_field(name='魔物 HP', value=f'{boss.hp:,}/{boss.stats["HP"]:,}')
-        roster = '\n'.join(f'{f.name}：{f.hp}/{f.stats["HP"]}' for f in battle.fighters[:-1])
+        enemies = [f for f in battle.fighters if f.team == 1]
+        embed.add_field(name='魔物 HP', value='\n'.join(f'{f.name}：{f.hp:,}/{f.stats["HP"]:,}' for f in enemies)[:1024])
+        roster = '\n'.join(f'{f.name}：{f.hp}/{f.stats["HP"]}' for f in battle.fighters if f.team == 0)
         embed.add_field(name='討伐隊伍', value=roster[:1024], inline=False)
         if raid.get('difficulty_change'):
             change = raid['difficulty_change']
@@ -295,6 +302,7 @@ class RaidService:
             monster['strength'] = strength
             if name is not None:
                 monster['name'] = name.strip()
+            monster = prepare_monster(monster)
             raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(self.settings), overrides)
             role = None
             try:

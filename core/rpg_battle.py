@@ -1,8 +1,10 @@
 """Deterministic when seeded: automatic turn combat and persistent skill tactics."""
 from dataclasses import dataclass, field
+from decimal import Decimal
 import random
 
 from core.rpg_character import CharacterError
+from core.rpg_monsters import monster_name
 
 
 CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 40%',
@@ -225,6 +227,12 @@ class Battle:
         return True
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '史萊姆':
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            if target is not None:
+                self.log.append(f'{actor.name} 使用【彈跳撞擊】')
+                self.hit(actor, target, 0.45)
+            return
         if actor.team == 1 and actor.job == '荊棘妖樹' and self.round % 3 == 0:
             healing = min(actor.stats['HP'] - actor.hp, actor.stats['HP'] // 20)
             actor.hp += healing
@@ -337,7 +345,7 @@ class Battle:
 
 
 def raid_battle(participants, monster, seed):
-    """Only actual registered players fight one generated monster."""
+    """Build enemies from the announcement snapshot; keep legacy raids compatible."""
     fighters = [Fighter(p['name'], 0, p['state']['job'], dict(p['state']['combat']),
                         p['state']['total'][3], [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
@@ -346,12 +354,25 @@ def raid_battle(participants, monster, seed):
     stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
              '攻擊': int(22 + average * 6), '防禦': int(10 + average * 2),
              '治療量': 0, '命中率': 92, '閃避率': 5, '暴擊率': 10}
-    if monster['kind'] == '鐵殼魔像':
+    profile = monster.get('profile')
+    speed = int(12 + average * 2)
+    if profile:
+        for stat, key in (('HP', 'hp'), ('攻擊', 'attack'), ('防禦', 'defense')):
+            stats[stat] = max(1, int(stats[stat] * Decimal(str(profile[key]))))
+        stats.update(命中率=profile['hit'], 閃避率=profile['dodge'], 暴擊率=profile['crit'])
+        speed = max(1, int(speed * profile['speed']))
+    elif monster['kind'] == '鐵殼魔像':
         stats['HP'] = int(stats['HP'] * 1.2)
         stats['防禦'] *= 2
     for stat in ('HP', '攻擊', '防禦'):
         stats[stat] = max(1, int(stats[stat] * monster.get('strength', 1)))
-    fighters.append(Fighter(monster['name'], 1, monster['kind'], stats, int(12 + average * 2), []))
+    count = profile['count'] if profile else 1
+    for i in range(count):
+        individual = dict(stats)
+        individual['HP'] = max(1, stats['HP'] // count + (i < stats['HP'] % count))
+        name = monster_name(monster) + (f'・{i + 1}' if count > 1 else '')
+        job = '史萊姆' if count > 1 and monster['kind'] == '史萊姆群' else monster['kind']
+        fighters.append(Fighter(name, 1, job, individual, speed, []))
     return Battle(fighters, seed=seed)
 
 

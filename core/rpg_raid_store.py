@@ -36,6 +36,13 @@ class RaidStore:
         return row[0] if row else 1.0
 
     def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None):
+        if 'quality' in monster:
+            from dataclasses import asdict
+            from core.settings import RaidSettings
+            reward_policy = dict(reward_policy) if reward_policy is not None else asdict(RaidSettings())
+            for key in ('victory_xp', 'victory_gold'):
+                reward_policy[key] = int(Decimal(str(monster['quality_reward'])) * reward_policy.get(key, 0))
+            reward_policy['drop_chance'] = monster['quality_drop']
         if monster['kind'] == '史萊姆群':
             from dataclasses import asdict
             from core.settings import RaidSettings

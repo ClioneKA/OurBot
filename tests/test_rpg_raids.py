@@ -196,11 +196,13 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raid['reward_policy']['victory_gold'], 500)
         self.assertEqual(raid['reward_policy']['drop_chance'], 0)
         p = self.participant()
-        regular = raid_battle([p], self.monster, 1)
+        regular = raid_battle([p], dict(raid['monster'], strength=1), 1)
         custom = raid_battle([p], raid['monster'], 1)
-        for stat in ('HP', '攻擊', '防禦'):
+        self.assertEqual(sum(f.stats['HP'] for f in custom.living(1)),
+                         2 * sum(f.stats['HP'] for f in regular.living(1)))
+        for stat in ('攻擊', '防禦'):
             self.assertEqual(custom.fighters[-1].stats[stat], 2 * regular.fighters[-1].stats[stat])
-        self.assertEqual(custom.fighters[-1].stats['暴擊率'], 10)
+        self.assertEqual(custom.fighters[-1].stats['暴擊率'], 5)
         raid.update(status='running', participants=[p], members=[1])
         self.repo.save(raid)
         custom.result = '勝利'
