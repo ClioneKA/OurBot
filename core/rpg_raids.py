@@ -164,7 +164,7 @@ class RaidService:
         loot_text = '不掉落飾品' if raid['monster']['kind'] == '史萊姆群' else f'{policy.drop_chance:.0%} 機率取得討伐飾品（可能重複）'
         embed.add_field(name='獎勵', value=f'成功：每人 {policy.victory_xp} XP、{getattr(policy, "victory_gold", 0)} 金幣，{loot_text}。\n'
                         f'失敗或回合上限：每人 {policy.defeat_xp} XP，無金幣及掉落。倒下者仍依隊伍結果領獎。', inline=False)
-        embed.set_footer(text='可先用 /裝備 與 /技能 調整策略。沒有 NPC 隊友；至少一人即可開戰。')
+        embed.set_footer(text='可先用 /冒險 → 裝備／能力 與 /冒險 → 技能 調整策略。沒有 NPC 隊友；至少一人即可開戰。')
         return embed
 
     def battle_embed(self, raid, battle):

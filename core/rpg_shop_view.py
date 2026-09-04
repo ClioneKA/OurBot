@@ -1,6 +1,8 @@
 """Gold shop with explicit purchase button and transactional inventory delivery."""
 import asyncio
 
+from core.rpg_menu import add_back, navigate
+
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, item_text, stage_level
@@ -36,6 +38,7 @@ class ShopView(discord.ui.View):
             self.cog.store.gold(self.guild_id, self.owner.id) < item.price)
         for button in (self.buy_button, self.refresh, self.close_panel):
             self.add_item(button)
+        add_back(self, 1)
 
     def embed(self, notice=None):
         gold = self.cog.store.gold(self.guild_id, self.owner.id)
@@ -47,12 +50,12 @@ class ShopView(discord.ui.View):
             embed.add_field(name='商品', value='無前綴：500 金幣／件\n老練：1,500 金幣／件\n精銳：4,000 金幣／件', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='需達到裝備等級才能購買；購入後放入背包，使用 /裝備 穿戴。已持有物品不能重複購買。')
+        embed.set_footer(text='需達到裝備等級才能購買；購入後放入背包，使用 /冒險 → 裝備／能力 穿戴。已持有物品不能重複購買。')
         return embed
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請使用 /商店 開啟自己的商店。', ephemeral=True)
+            await interaction.response.send_message('請使用 /冒險 → 商店 開啟自己的商店。', ephemeral=True)
             return False
         return True
 
@@ -61,7 +64,10 @@ class ShopView(discord.ui.View):
             return
         async with self.lock:
             if self.closed or self.is_finished():
-                await interaction.response.send_message('商店已關閉，請重新使用 /商店。', ephemeral=True)
+                await interaction.response.send_message('商店已關閉，請重新使用 /冒險 → 商店。', ephemeral=True)
+                return
+            if action == 'home':
+                await navigate(self, interaction)
                 return
             if action == 'close':
                 self.closed = True
@@ -97,9 +103,11 @@ class ShopView(discord.ui.View):
 
     async def on_timeout(self):
         async with self.lock:
+            if self.closed:
+                return
             self.closed = True
             self.stop()
             try:
-                await self.origin.edit_original_response(content='商店已逾時，請重新使用 /商店。', view=None)
+                await self.origin.edit_original_response(content='商店已逾時，請重新使用 /冒險 → 商店。', view=None)
             except discord.HTTPException:
                 pass

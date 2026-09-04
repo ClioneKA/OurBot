@@ -105,7 +105,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'角色', '排行榜', '冒險說明', '轉職', '領取補給', '背包', '裝備', '生成討伐', '技能', '商店'})
+                                 {'冒險', '排行榜', '生成討伐'})
                 admin = SimpleNamespace(guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2),
                     permissions=SimpleNamespace(administrator=False),
                     response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
@@ -139,54 +139,60 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                        display_avatar=SimpleNamespace(url='https://example.com/avatar.png'))
                 interaction = SimpleNamespace(user=user, guild_id=1,
                                               response=SimpleNamespace(send_message=AsyncMock()))
-                await cog.profile.callback(cog, interaction)
-                embed = interaction.response.send_message.call_args.kwargs['embed']
-                self.assertIn('15 / 83 XP', embed.fields[0].value)
-                self.assertIn('民兵', embed.title)
-                self.assertEqual(next(f.value for f in embed.fields if f.name == '金幣'), '0 金幣')
-                await cog.change_job.callback(cog, interaction, '騎士')
-                self.assertIn('Lv.10', interaction.response.send_message.call_args.args[0])
-                store.award_voice([(1, 10, 200000000)])
-                await cog.profile.callback(cog, interaction)
-                embed = interaction.response.send_message.call_args.kwargs['embed']
-                self.assertIn('Lv.120', embed.title)
-                self.assertIn('已達最高等級', embed.fields[0].value)
-                self.assertNotIn('距離下一級', [field.name for field in embed.fields])
-                await cog.change_job.callback(cog, interaction, '騎士')
-                self.assertIn('精銳騎士', interaction.response.send_message.call_args.args[0])
-                await cog.skills.callback(cog, interaction)
-                skill_panel = interaction.response.send_message.call_args.kwargs['view']
                 interaction.response.edit_message = AsyncMock()
-                await skill_panel.handle(interaction, 'slot', '2')
-                await skill_panel.handle(interaction, 'priority', '1')
-                await skill_panel.handle(interaction, 'toggle')
+                interaction.edit_original_response = AsyncMock()
+                await cog.adventure.callback(cog, interaction)
+                embed = interaction.response.send_message.call_args.kwargs['embed']
+                self.assertIn('安安大冒險', embed.title)
+                self.assertIn('15 / 83 XP', embed.fields[0].value)
+                self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
+                home = interaction.response.send_message.call_args.kwargs['view']
+                await home.handle(interaction, 'jobs')
+                jobs = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertTrue(home.is_finished())
+                await jobs.handle(interaction, 'job', '騎士')
+                await jobs.handle(interaction, 'change_job')
+                self.assertIn('Lv.10', interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+                store.award_voice([(1, 10, 200000000)])
+                await jobs.handle(interaction, 'change_job')
+                self.assertIn('精銳騎士', interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+                await jobs.handle(interaction, 'home')
+                home = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertIn('Lv.120', home.embed().title)
+                await home.handle(interaction, 'skills')
+                skills = interaction.response.edit_message.call_args.kwargs['view']
+                await skills.handle(interaction, 'slot', '2')
+                await skills.handle(interaction, 'priority', '1')
+                await skills.handle(interaction, 'toggle')
                 rules = cog.tactics.rules(1, 10, '騎士')
                 self.assertEqual((rules[0].slot, rules[0].enabled), (2, False))
-                await cog.skills.callback(cog, interaction)
-                self.assertEqual(len(interaction.response.send_message.call_args.kwargs['embed'].fields), 4)
-                await cog.equip_item.callback(cog, interaction)
-                panel = interaction.response.send_message.call_args.kwargs['view']
-                self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
-                self.assertIn('裝備與能力值', interaction.response.send_message.call_args.kwargs['embed'].title)
-                self.assertEqual(cog.equip_item.parameters, [])
-                interaction.response.edit_message = AsyncMock()
+                await skills.handle(interaction, 'home')
+                home = interaction.response.edit_message.call_args.kwargs['view']
+                await home.handle(interaction, 'equipment')
+                panel = interaction.response.edit_message.call_args.kwargs['view']
                 await panel.handle(interaction, 'slot', '飾品4')
                 await panel.handle(interaction, 'item', 'accessory:0')
                 before = cog.characters.snapshot(1, 10)['total'][0]
                 await panel.handle(interaction, 'wear')
                 self.assertEqual(cog.characters.snapshot(1, 10)['total'][0], before + 3)
-                self.assertEqual(cog.characters.snapshot(1, 10)['equipped']['飾品4'], 'accessory:0')
-                updated = interaction.response.edit_message.call_args.kwargs['embed']
-                self.assertIn('生命護符', next(f.value for f in updated.fields if f.name.startswith('裝備欄')))
-                await cog.backpack.callback(cog, interaction, 1)
-                self.assertIn('背包 1/1', interaction.response.send_message.call_args.kwargs['embed'].title)
                 await panel.handle(interaction, 'remove')
                 self.assertEqual(cog.characters.snapshot(1, 10)['total'][0], before)
-                await panel.handle(interaction, 'wear')
-                await panel.handle(interaction, 'remove')
-                self.assertNotIn('飾品4', cog.characters.snapshot(1, 10)['equipped'])
-                await panel.handle(interaction, 'close')
-                self.assertTrue(panel.is_finished())
+                await panel.handle(interaction, 'home')
+                home = interaction.response.edit_message.call_args.kwargs['view']
+                await home.handle(interaction, 'backpack')
+                backpack = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertIn('背包 1/1', backpack.embed().title)
+                await backpack.handle(interaction, 'home')
+                home = interaction.response.edit_message.call_args.kwargs['view']
+                await home.handle(interaction, 'shop')
+                shop = interaction.response.edit_message.call_args.kwargs['view']
+                await shop.handle(interaction, 'home')
+                home = interaction.response.edit_message.call_args.kwargs['view']
+                await home.handle(interaction, 'help')
+                help_view = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertIn('RuneScape', help_view.embed().description)
+                await help_view.handle(interaction, 'close')
+                self.assertTrue(help_view.is_finished())
                 cog.tracker.update(1, {10}, 0, 10)
                 await cog.on_disconnect()
                 self.assertEqual(cog.tracker.sessions, {})

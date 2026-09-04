@@ -1,6 +1,8 @@
 """Private, immediately saved skill strategy controls."""
 import asyncio
 
+from core.rpg_menu import add_back, navigate
+
 import discord
 
 from core.rpg_battle import CONDITIONS, TARGETS, SKILLS, ALLY_EFFECTS
@@ -44,18 +46,19 @@ class SkillView(discord.ui.View):
         self.toggle.style = discord.ButtonStyle.secondary if rule.enabled else discord.ButtonStyle.success
         for button in (self.toggle, self.refresh, self.close_panel):
             self.add_item(button)
+        add_back(self, 4)
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
         embed.add_field(name='正在設定', value=f'槽 {self.slot}：{SKILLS[self.job][self.slot - 1].name}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='選擇後立即保存，開戰時套用。優先順序交換不重複；閒置 3 分鐘後關閉，可重開 /技能。')
+        embed.set_footer(text='選擇後立即保存，開戰時套用。優先順序交換不重複；閒置 3 分鐘後關閉，可重開 /冒險 → 技能。')
         return embed
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請使用 /技能 開啟自己的技能面板。', ephemeral=True)
+            await interaction.response.send_message('請使用 /冒險 → 技能 開啟自己的技能面板。', ephemeral=True)
             return False
         return True
 
@@ -64,7 +67,10 @@ class SkillView(discord.ui.View):
             return
         async with self.lock:
             if self.closed or self.is_finished():
-                await interaction.response.send_message('面板已關閉，請重新使用 /技能。', ephemeral=True)
+                await interaction.response.send_message('面板已關閉，請重新使用 /冒險 → 技能。', ephemeral=True)
+                return
+            if action == 'home':
+                await navigate(self, interaction)
                 return
             if action == 'close':
                 self.closed = True
@@ -113,9 +119,11 @@ class SkillView(discord.ui.View):
 
     async def on_timeout(self):
         async with self.lock:
+            if self.closed:
+                return
             self.closed = True
             self.stop()
             try:
-                await self.origin.edit_original_response(content='技能面板已逾時，請重新使用 /技能。', view=None)
+                await self.origin.edit_original_response(content='技能面板已逾時，請重新使用 /冒險 → 技能。', view=None)
             except discord.HTTPException:
                 pass

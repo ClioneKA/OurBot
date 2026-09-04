@@ -1,6 +1,8 @@
 """Private Discord equipment panel; mutations retain the character-store checks."""
 import asyncio
 
+from core.rpg_menu import add_back, navigate
+
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, stage_level, item_text
@@ -30,7 +32,7 @@ class EquipmentView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner.id or interaction.guild_id != self.guild_id:
-            await interaction.response.send_message('這是其他冒險者的面板，請使用 /裝備 開啟自己的面板。', ephemeral=True)
+            await interaction.response.send_message('這是其他冒險者的面板，請使用 /冒險 → 裝備／能力 開啟自己的面板。', ephemeral=True)
             return False
         return True
 
@@ -57,6 +59,7 @@ class EquipmentView(discord.ui.View):
                                      discord.SelectOption(label='沒有可用裝備', value='empty')]))
         for button in (self.wear, self.remove, self.refresh, self.close_panel):
             self.add_item(button)
+        add_back(self, 2)
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']
         return state
@@ -67,7 +70,7 @@ class EquipmentView(discord.ui.View):
         embed.add_field(name='目前選擇', value=f'{self.slot}：{ITEMS[self.item_id].name if self.item_id else "請選擇物品"}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='先選欄位，再選物品並按穿戴；操作後更新能力值。閒置 3 分鐘後關閉，可重新使用 /裝備。')
+        embed.set_footer(text='先選欄位，再選物品並按穿戴；操作後更新能力值。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -75,9 +78,12 @@ class EquipmentView(discord.ui.View):
             return
         async with self.lock:
             if self.closed or self.is_finished():
-                await interaction.response.send_message('面板已關閉，請重新使用 /裝備。', ephemeral=True)
+                await interaction.response.send_message('面板已關閉，請重新使用 /冒險 → 裝備／能力。', ephemeral=True)
                 return
             notice = None
+            if action == 'home':
+                await navigate(self, interaction)
+                return
             if action == 'close':
                 self.closed = True
                 self.stop()
@@ -127,9 +133,11 @@ class EquipmentView(discord.ui.View):
 
     async def on_timeout(self):
         async with self.lock:
+            if self.closed:
+                return
             self.closed = True
             self.stop()
             try:
-                await self.origin.edit_original_response(content='裝備面板已逾時，請重新使用 /裝備。', view=None)
+                await self.origin.edit_original_response(content='裝備面板已逾時，請重新使用 /冒險 → 裝備／能力。', view=None)
             except discord.HTTPException:
                 pass  # The user may already have dismissed the private message.

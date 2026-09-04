@@ -197,7 +197,7 @@ class Characters:
             if level < 10:
                 raise CharacterError('目前是民兵，達到 Lv.10 才能轉職。')
             if self.job(guild_id, user_id) == job:
-                raise CharacterError('你已經是這個職業；進階裝備請從 /商店 購買取得。')
+                raise CharacterError('你已經是這個職業；進階裝備請從 /冒險 → 商店 購買取得。')
             self.db.execute('INSERT INTO rpg_characters VALUES (?, ?, ?) '
                             'ON CONFLICT(guild_id, user_id) DO UPDATE SET job=excluded.job',
                             (guild_id, user_id, job))
@@ -213,7 +213,7 @@ class Characters:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.snapshot(guild_id, user_id)
             if state['job'] == '民兵':
-                raise CharacterError('達到 Lv.10 並使用 /轉職 後才能領取職業補給。')
+                raise CharacterError('達到 Lv.10 並使用 /冒險 → 轉職 後才能領取職業補給。')
             return self._grant(guild_id, user_id, state['job'])
 
     def equip(self, guild_id, user_id, item_id, accessory_slot=1):
@@ -221,7 +221,7 @@ class Characters:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.snapshot(guild_id, user_id)
             if item_id not in self.inventory(guild_id, user_id):
-                raise CharacterError('背包中沒有這件裝備，請重新開啟 /裝備 並從面板選擇。')
+                raise CharacterError('背包中沒有這件裝備，請重新開啟 /冒險 → 裝備／能力 並從面板選擇。')
             item = ITEMS[item_id]
             if item.job and item.job != state['job']:
                 raise CharacterError('這件裝備不適合目前職業。')
