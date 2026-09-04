@@ -21,6 +21,7 @@ from core.classes import Cog_Extension
 from core.gen_image import BASEIMAGE_MAPPING, generate_image
 from core.memory import MemoryStore
 from core.tts import is_tts_configured
+from core.settings import get_settings
 
 
 logger = logging.getLogger(__name__)
@@ -120,31 +121,6 @@ class AIReply:
     affinity_delta: int = 0
 
 
-def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        logger.warning("%s 不是有效整數，改用預設值 %s", name, default)
-        return default
-    return max(minimum, min(value, maximum))
-
-
-def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
-    try:
-        value = float(os.getenv(name, str(default)))
-    except ValueError:
-        logger.warning("%s 不是有效數字，改用預設值 %s", name, default)
-        return default
-    return max(minimum, min(value, maximum))
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().casefold() not in {"0", "false", "no", "off"}
-
-
 def _snowflake_ids(name: str) -> Set[int]:
     result = set()
     for raw_id in os.getenv(name, "").split(","):
@@ -163,78 +139,51 @@ class AI(Cog_Extension):
 
     def __init__(self, bot):
         super().__init__(bot)
+        settings = get_settings()
         api_key = os.getenv("OPENAI_API_KEY")
         self.client = (
             AsyncOpenAI(api_key=api_key, timeout=30.0, max_retries=1)
             if api_key
             else None
         )
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
-        self.search_model = os.getenv("OPENAI_SEARCH_MODEL", "gpt-5.6-luna")
-        self.web_search_enabled = _env_bool("AI_WEB_SEARCH_ENABLED", True)
-        self.web_search_daily_limit = _env_int(
-            "AI_WEB_SEARCH_DAILY_LIMIT", 2, 1, 100
-        )
+        self.model = settings.ai.model
+        self.search_model = settings.ai.search.model
+        self.web_search_enabled = settings.ai.search.enabled
+        self.web_search_daily_limit = settings.ai.search.daily_limit
         self.allowed_guilds = _snowflake_ids("AI_GUILD_IDS")
         self.allowed_channels = _snowflake_ids("AI_CHANNEL_IDS")
-        self.reply_chance = _env_float("AI_REPLY_CHANCE", 0.25, 0.0, 1.0)
-        self.direct_reply_chance = _env_float(
-            "AI_DIRECT_REPLY_CHANCE", 1.0, 0.0, 1.0
-        )
-        self.user_cooldown = _env_int("AI_USER_COOLDOWN_SECONDS", 30, 1, 3600)
-        self.channel_cooldown = _env_int(
-            "AI_CHANNEL_COOLDOWN_SECONDS", 5, 1, 3600
-        )
-        self.requests_per_minute = _env_int(
-            "AI_GLOBAL_REQUESTS_PER_MINUTE", 20, 1, 1000
-        )
-        self.requests_per_hour = _env_int(
-            "AI_GLOBAL_REQUESTS_PER_HOUR", 100, 1, 10000
-        )
-        self.user_daily_limit = _env_int("AI_USER_DAILY_LIMIT", 20, 1, 1000)
-        self.daily_timezone_offset = _env_int(
-            "AI_DAILY_TIMEZONE_OFFSET_HOURS", 8, -12, 14
-        )
+        self.reply_chance = settings.ai.reply_chance
+        self.direct_reply_chance = settings.ai.direct_reply_chance
+        self.user_cooldown = settings.ai.limits.user_cooldown_seconds
+        self.channel_cooldown = settings.ai.limits.channel_cooldown_seconds
+        self.requests_per_minute = settings.ai.limits.global_requests_per_minute
+        self.requests_per_hour = settings.ai.limits.global_requests_per_hour
+        self.user_daily_limit = settings.ai.limits.user_daily_limit
+        self.daily_timezone_offset = settings.ai.limits.daily_timezone_offset_hours
         self.rate_limit_bypass_user_ids = _snowflake_ids(
             "AI_RATE_LIMIT_BYPASS_USER_IDS"
         )
-        self.max_input_chars = _env_int("AI_MAX_INPUT_CHARS", 1000, 50, 4000)
-        self.max_output_tokens = _env_int("AI_MAX_OUTPUT_TOKENS", 250, 32, 2000)
-        self.memory_summary_enabled = _env_bool(
-            "AI_MEMORY_SUMMARY_ENABLED", True
-        )
-        self.memory_summary_interval = _env_int(
-            "AI_MEMORY_SUMMARY_INTERVAL", 10, 1, 1000
-        )
-        self.memory_summary_batch_size = _env_int(
-            "AI_MEMORY_SUMMARY_BATCH_SIZE", 200, 10, 1000
-        )
-        self.memory_summary_max_tokens = _env_int(
-            "AI_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS", 2000, 200, 8000
-        )
+        self.max_input_chars = settings.ai.max_input_chars
+        self.max_output_tokens = settings.ai.max_output_tokens
+        self.memory_summary_enabled = settings.ai.memory.summary_enabled
+        self.memory_summary_interval = settings.ai.memory.summary_interval
+        self.memory_summary_batch_size = settings.ai.memory.summary_batch_size
+        self.memory_summary_max_tokens = settings.ai.memory.summary_max_output_tokens
         self.memory_summary_model = (
-            os.getenv("AI_MEMORY_SUMMARY_MODEL", "").strip() or self.model
+            settings.ai.memory.summary_model.strip() or self.model
         )
-        self.affinity_daily_changes = _env_int(
-            "AI_AFFINITY_DAILY_CHANGES", 3, 1, 20
-        )
-        self.image_replies_enabled = _env_bool("AI_IMAGE_REPLIES_ENABLED", True)
-        self.voice_replies_enabled = _env_bool("AI_VOICE_REPLIES_ENABLED", True)
-        self.media_direct_only = _env_bool("AI_MEDIA_DIRECT_ONLY", True)
-        self.image_max_chars = _env_int("AI_IMAGE_MAX_CHARS", 180, 20, 1000)
-        self.image_cooldown = _env_int(
-            "AI_IMAGE_COOLDOWN_SECONDS", 30, 1, 3600
-        )
-        self.tts_max_chars = _env_int("AI_TTS_MAX_CHARS", 100, 10, 1000)
-        self.tts_cooldown = _env_int("AI_TTS_COOLDOWN_SECONDS", 120, 1, 86400)
-        self.tts_user_daily_limit = _env_int(
-            "AI_TTS_USER_DAILY_LIMIT", 5, 1, 1000
-        )
-        self.tts_guild_daily_limit = _env_int(
-            "AI_TTS_GUILD_DAILY_LIMIT", 30, 1, 10000
-        )
-        history_size = _env_int("AI_HISTORY_SIZE", 20, 2, 100)
-        max_concurrent = _env_int("AI_MAX_CONCURRENT_REQUESTS", 2, 1, 20)
+        self.affinity_daily_changes = settings.ai.memory.affinity_daily_changes
+        self.image_replies_enabled = settings.ai.media.image_replies_enabled
+        self.voice_replies_enabled = settings.ai.media.voice_replies_enabled
+        self.media_direct_only = settings.ai.media.direct_only
+        self.image_max_chars = settings.ai.media.image_max_chars
+        self.image_cooldown = settings.ai.media.image_cooldown_seconds
+        self.tts_max_chars = settings.ai.media.tts_max_chars
+        self.tts_cooldown = settings.ai.media.tts_cooldown_seconds
+        self.tts_user_daily_limit = settings.ai.media.tts_user_daily_limit
+        self.tts_guild_daily_limit = settings.ai.media.tts_guild_daily_limit
+        history_size = settings.ai.history_size
+        max_concurrent = settings.ai.limits.max_concurrent_requests
         project_root = Path(__file__).resolve().parent.parent
         memory_path = Path(os.getenv("AI_MEMORY_DB", "data/memory.db"))
         if not memory_path.is_absolute():

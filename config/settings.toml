@@ -1,0 +1,60 @@
+# 機器人行為設定。修改後重啟生效；密鑰與部署設定請放 .env。
+
+[ai]
+model = "gpt-5.6-luna"
+# 在 .env 的 AI_CHANNEL_IDS 指定頻道主動插話的機率（0 到 1）。
+reply_chance = 0.1
+# 使用者直接提及或回覆安安時的基礎回覆機率；受好感度影響，上限為 100%。
+direct_reply_chance = 1.0
+# 每個頻道保存的近期訊息筆數（所有非機器人文字及安安的回覆）。
+history_size = 20
+max_input_chars = 1000
+max_output_tokens = 250
+
+[ai.search]
+enabled = true
+# 網頁搜尋使用支援 Web Search 的獨立模型，不影響一般聊天模型。
+model = "gpt-5.6-luna"
+# 每位使用者在每個伺服器每天可觸發的網頁搜尋次數。
+daily_limit = 2
+
+[ai.limits]
+# 多層限頻：未通過檢查的訊息不會呼叫模型。
+user_cooldown_seconds = 5
+channel_cooldown_seconds = 10
+global_requests_per_minute = 6
+global_requests_per_hour = 30
+max_concurrent_requests = 2
+# 每位使用者在每個伺服器的每日觸發上限，預設 UTC+8 午夜重置。
+user_daily_limit = 20
+daily_timezone_offset_hours = 8
+
+[ai.memory]
+# 每成功回覆固定次數後，批次用 GPT 更新該伺服器每位參與者的互動印象。
+summary_enabled = true
+summary_interval = 10
+# 單次最多整理的聊天片段。
+summary_batch_size = 200
+summary_max_output_tokens = 2000
+# 留空時沿用 ai.model。
+summary_model = ""
+# 好感度每天最多自動變動幾次；範圍固定為 -100 到 100。
+affinity_daily_changes = 3
+
+[ai.media]
+# 人格回覆媒體。預設只有直接提及／回覆時能使用，隨機插話只傳文字。
+image_replies_enabled = true
+voice_replies_enabled = true
+direct_only = true
+# 圖片過長或仍在冷卻時會自動退回文字。
+image_max_chars = 50
+image_cooldown_seconds = 10
+# MiniMax TTS 過長、仍在冷卻或達每日上限時會自動退回文字。
+tts_max_chars = 50
+tts_cooldown_seconds = 20
+tts_user_daily_limit = 5
+tts_guild_daily_limit = 50
+
+[tts]
+voice_id = "moss_audio_8434cf0e-cc87-11f0-9bff-daa50e7d99bd"
+model = "speech-2.6-turbo"

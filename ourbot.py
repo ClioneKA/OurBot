@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import logging
+from core.settings import get_settings
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -76,6 +77,7 @@ async def run():
     it's recommended that you create it here and pass it to the bot as a kwarg.
     """
     try:
+        get_settings()  # 啟動時驗證全部行為設定，再載入功能與連線。
         await load_extensions()
         await bot.start(TOKEN)
     except KeyboardInterrupt:

@@ -1,5 +1,4 @@
 from discord.ext import commands
-from dotenv import load_dotenv
 
 
 class Cog_Extension(commands.Cog):

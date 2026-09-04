@@ -7,11 +7,12 @@ from typing import Dict, Optional
 
 import requests
 
+from core.settings import get_settings
+
 
 logger = logging.getLogger(__name__)
 
 URL = "https://api.minimax.io/v1/t2a_v2"
-DEFAULT_VOICE_ID = "moss_audio_8434cf0e-cc87-11f0-9bff-daa50e7d99bd"
 _cache_locks: Dict[str, asyncio.Lock] = {}
 
 
@@ -26,7 +27,7 @@ def _generate_sound_sync(text: str, emotion: Optional[str]) -> Optional[bytes]:
         return None
 
     voice_setting = {
-        "voice_id": os.getenv("MINIMAX_VOICE_ID", DEFAULT_VOICE_ID),
+        "voice_id": get_settings().tts.voice_id,
     }
     if emotion:
         voice_setting["emotion"] = emotion
@@ -36,7 +37,7 @@ def _generate_sound_sync(text: str, emotion: Optional[str]) -> Optional[bytes]:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": os.getenv("MINIMAX_TTS_MODEL", "speech-2.6-turbo"),
+        "model": get_settings().tts.model,
         "text": text,
         "voice_setting": voice_setting,
     }
@@ -70,8 +71,8 @@ async def get_cached_sound(
     emotion: Optional[str] = None,
     cache_dir: str = "gen_sounds",
 ) -> Optional[bytes]:
-    voice_id = os.getenv("MINIMAX_VOICE_ID", DEFAULT_VOICE_ID)
-    model = os.getenv("MINIMAX_TTS_MODEL", "speech-2.6-turbo")
+    voice_id = get_settings().tts.voice_id
+    model = get_settings().tts.model
     cache_key = hashlib.sha256(
         f"{model}\0{voice_id}\0{emotion or ''}\0{text}".encode("utf-8")
     ).hexdigest()
