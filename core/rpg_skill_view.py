@@ -39,6 +39,8 @@ class SkillView(discord.ui.View):
         fixed = {'guard': '固定目標：全隊', 'area': '固定目標：全體敵人',
                  'stance': '固定目標：自己', 'taunt': '固定目標：自己'}.get(skill.effect)
         targets = {key: label for key, label in TARGETS.items() if key != 'self' or skill.effect in ALLY_EFFECTS}
+        if skill.effect != 'cleanse':
+            targets.pop('debuffed', None)
         self.add_item(PanelSelect('target', row=3, placeholder=fixed or '選擇目標規則', disabled=bool(fixed), options=[
             discord.SelectOption(label=fixed, value=rule.target, default=True)] if fixed else [
             discord.SelectOption(label=label, value=key, default=key == rule.target) for key, label in targets.items()]))
@@ -51,6 +53,9 @@ class SkillView(discord.ui.View):
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
         embed.add_field(name='正在設定', value=f'槽 {self.slot}：{SKILLS[self.job][self.slot - 1].name}', inline=False)
+        if SKILLS[self.job][self.slot - 1].effect == 'cleanse':
+            embed.add_field(name='淨化目標規則', value='只選存活且中毒／破甲／暈眩的隊友（含自己）。選「有可淨化負面狀態的隊友」時，多人符合則選血量比例最低者；其他選項依原規則篩選。'
+                            '若希望先解除狀態，可把淨化設為優先 1；每回合只施放一個技能。', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
         embed.set_footer(text='選擇後立即保存，開戰時套用。優先順序交換不重複；閒置 3 分鐘後關閉，可重開 /冒險 → 技能。')

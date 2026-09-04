@@ -15,7 +15,10 @@ def add_back(view, row):
 
 
 async def navigate(view, interaction, page='home'):
-    if page == 'equipment':
+    if page in ('give', 'sell'):
+        from core.rpg_trade_view import TradeView
+        next_view = TradeView(view.cog, view.origin, page)
+    elif page == 'equipment':
         from core.rpg_equipment_view import EquipmentView
         next_view = EquipmentView(view.cog, view.origin)
     elif page == 'skills':
@@ -72,6 +75,7 @@ class AdventureView(discord.ui.View):
             self.index = min(self.index, self.pages - 1)
             self.button('上一頁', 'previous', 0, self.index == 0)
             self.button('下一頁', 'next', 0, self.index == self.pages - 1)
+            self.button('給予物品', 'give', 0)
         if self.page != 'home':
             add_back(self, 2)
         self.button('重新整理', 'refresh', 2)
@@ -106,11 +110,12 @@ class AdventureView(discord.ui.View):
                 f'每日聊天上限：文字 {s.text_daily_xp_limit:,} XP、語音 {s.voice_daily_xp_limit:,} XP，分開計算，台灣時間 00:00 重置；討伐經驗不計入。\n\n'
                 f'文字至少 {s.text_min_chars} 個非空白字元，每 {s.text_cooldown_seconds} 秒 {s.text_xp} XP，跨頻道共用冷卻。\n'
                 f'一般語音至少 {s.voice_min_members} 位未靜音、未拒聽真人，每完整分鐘 {s.voice_xp_per_minute} XP。AFK、舞台與 Bot 不計入；未滿分鐘及離線時間不補發，不偵測實際說話。\n\n'
-                f'採 RuneScape 標準經驗曲線，上限 Lv.120。Lv.10 可轉職，Lv.{s.regular_level}／{s.veteran_level}／{s.elite_level} 晉升，飾品格 1／2／3／4 格。\n\n'
-                '初始裝備木棒；空手無法造成傷害。武器／套裝增加戰鬥數值，飾品增加基礎能力，同名限穿一件。進階裝備從商店購買；魔像專屬武器僅由討伐掉落。\n\n'
+                f'採 RuneScape 標準經驗曲線，上限 Lv.120。Lv.10 可轉職，Lv.{s.regular_level}／{s.veteran_level}／{s.elite_level} 晉升，轉職後飾品格 2／3／4／5 格（民兵 1 格）。\n\n'
+                '初始裝備木棒；空手無法造成傷害。武器／套裝增加戰鬥數值，飾品增加基礎能力，同名限穿一件。進階裝備從商店購買；魔像專屬武器、妖樹專屬套裝僅由討伐掉落。\n\n'
                 '在頻道點擊報名，五分鐘後自動討伐；開戰前可調整裝備和技能。勝利獲得經驗、金幣與機率專屬物品（可重複），稀有史萊姆群報酬較高但不掉飾品；實際獎勵依公告。\n\n'
                 '討伐頻道動態難度：成功後 ×1.1，失敗或回合上限後 ×0.9，範圍 0.5–3 倍；取消不調整，下一場套用。勝利經驗與金幣隨動態難度增減，掉落率及失敗經驗不變。\n\n'
-                '使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
+                '背包可給予同伺服器真人物品；商店以物品價值的 20% 收購。木棒與免費補給綁定，穿戴中的那一件需先卸下。\n\n'
+                '使用 /討伐通知 領取出怪通知身分組，可選取消退訂。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
         embed.set_footer(text='僅自己可操作；閒置 3 分鐘後關閉，使用 /冒險 重新開啟。')
@@ -129,7 +134,7 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'help'):
+            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'help', 'give'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

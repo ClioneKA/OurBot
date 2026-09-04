@@ -16,6 +16,7 @@ from discord.ext import tasks
 from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_raid_store import RaidStore, DROP_TABLES
+from core.rpg_notifications import RaidNotifications
 
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class RaidService:
         self.settings = cog.settings.raid
         self.channels = channel_ids(os.getenv('RPG_RAID_CHANNEL_IDS', ''))
         self.repo = RaidStore(cog.store)
+        self.notifications = RaidNotifications(cog.store)
         self.views = {}
         self.rosters = {}
         self.client = None
@@ -120,9 +122,11 @@ class RaidService:
         self.repo.schedule(channel, now + delay)
 
     async def imagine(self, kind=None):
-        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'), weights=(35, 35, 10, 20), k=1)[0]
+        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'), weights=(25, 25, 10, 20, 20), k=1)[0]
         monster = dict(name=random.choice(('吞月棉花獸', '夜光茶壺怪', '迷霧糖霜蛛')),
                        description='安安：「吾輩剛剛想到的怪物跑出來了！有誰願意一起對付牠？」', kind=kind)
+        if kind == '荊棘妖樹':
+            monster.update(name='荊棘妖樹', description='安安：「吾輩種的小樹開始揮舞藤蔓了！小心被纏住！」')
         if kind == '鐵殼魔像':
             monster.update(name='鐵殼魔像', description='安安：「吾輩做的鐵皮玩偶站起來了！當心牠蓄力後的重拳！」')
         if kind == '史萊姆群':
@@ -142,6 +146,7 @@ class RaidService:
             response = await self.client.responses.create(
                 model=self.cog.ai_model, instructions=persona + '\n為 Discord 合作 RPG 構思一隻原創奇幻怪物。使用繁體中文，名稱最多20字、出場描述最多120字，以安安口吻邀請大家討伐。不要寫數值、獎勵、@提及或連結。',
                 input='怪物特色：' + {'巨獸': '每三回合對全隊橫掃。', '毒蛛': '普通攻擊附帶中毒。',
+                                     '荊棘妖樹': '每三回合再生回血並纏繞暈眩部分玩家。名稱須包含妖樹。',
                                      '鐵殼魔像': '高防禦魔像，每三回合蓄力，下一回合單體重拳。名稱須包含魔像。',
                                      '史萊姆群': '一群史萊姆共用血量，每回合連續三次彈跳撞擊。名稱須包含史萊姆群。'}[kind],
                 text={'format': schema}, max_output_tokens=800, store=False)
@@ -156,6 +161,7 @@ class RaidService:
     def lobby_embed(self, raid):
         policy = SimpleNamespace(**raid['reward_policy']) if raid.get('reward_policy') else self.settings
         traits = {'巨獸': '每三回合對全隊橫掃', '毒蛛': '攻擊附帶中毒，可用淨化解除',
+                  '荊棘妖樹': '每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），跳過下一次行動，可淨化；不受嘲諷影響',
                   '鐵殼魔像': '血量 1.2 倍、防禦 2 倍；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
                   '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(raid['monster']['name'], 20),
@@ -257,7 +263,7 @@ class RaidService:
 
     async def spawn(self, channel, *, kind=None, name=None, strength=1.0,
                     victory_xp=None, victory_gold=None, drop_percent=None):
-        if kind is not None and kind not in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'):
+        if kind is not None and kind not in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'):
             raise CharacterError('無效的怪物類型。')
         if not 0.1 <= strength <= 10:
             raise CharacterError('強度倍率必須介於 0.1–10。')
@@ -290,8 +296,15 @@ class RaidService:
             if name is not None:
                 monster['name'] = name.strip()
             raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(self.settings), overrides)
-            message = await channel.send(embed=self.lobby_embed(raid), view=self.signup(raid),
-                                         allowed_mentions=discord.AllowedMentions.none())
+            role = None
+            try:
+                role = await self.notifications.ensure(channel.guild)
+            except (CharacterError, discord.HTTPException) as exc:
+                logger.warning('Raid notification role unavailable for guild %s: %s', channel.guild.id, exc)
+            message = await channel.send(content=role.mention if role else None,
+                                         embed=self.lobby_embed(raid), view=self.signup(raid),
+                                         allowed_mentions=discord.AllowedMentions(everyone=False, users=False,
+                                                                                 roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
             return message

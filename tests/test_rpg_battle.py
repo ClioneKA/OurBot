@@ -11,6 +11,62 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_tree_stuns_exact_floor_of_living_players_and_heals(self):
+        for count, expected in ((1, 0), (3, 0), (4, 1), (6, 1), (10, 3), (20, 6)):
+            players = [fighter(str(i), hp=1000) for i in range(count)]
+            dead = fighter('倒下')
+            dead.hp = 0
+            tree = fighter('妖樹', 1, job='荊棘妖樹', hp=1000, rules=[])
+            tree.hp = 970
+            battle = Battle(players + [dead, tree], seed=1)
+            battle.round = 3
+            battle.act(tree)
+            self.assertEqual(tree.hp, 1000)
+            self.assertEqual(sum(f.has('stun', 3) for f in players), expected)
+            self.assertFalse(dead.has('stun', 3))
+            restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+            self.assertEqual(dump_battle(restored), dump_battle(battle))
+
+    def test_stun_skips_once_and_can_be_cleansed(self):
+        from unittest.mock import patch
+        actor = fighter('玩家', hp=1000, rules=[])
+        actor.effects['stun'] = 2
+        enemy = fighter('怪物', 1, rules=[])
+        battle = Battle([actor, enemy], seed=1)
+        with patch.object(battle, 'act') as act:
+            battle.step()
+            self.assertNotIn(actor, [call.args[0] for call in act.call_args_list])
+            act.reset_mock()
+            battle.step()
+            self.assertIn(actor, [call.args[0] for call in act.call_args_list])
+        healer = fighter('僧侶', job='僧侶', rules=[Rule(3, 1, True, 'ally_debuff', 'debuffed')])
+        actor.effects['stun'] = 3
+        battle.fighters.insert(0, healer)
+        self.assertIs(battle.select(healer)[2], actor)
+        battle.act(healer)
+        self.assertNotIn('stun', actor.effects)
+
+    def test_cleanse_debuff_target_skips_healthy_dead_and_expired(self):
+        healer = fighter('僧侶', job='僧侶', rules=[Rule(3, 1, True, 'ally_debuff', 'debuffed')])
+        healthy = fighter('低血量隊友')
+        healthy.hp = 1
+        poisoned = fighter('中毒隊友')
+        poisoned.effects['poison'] = 3
+        dead = fighter('倒下隊友')
+        dead.hp = 0
+        dead.effects['break'] = 3
+        battle = Battle([healer, healthy, poisoned, dead, fighter('敵人', 1)], seed=1)
+        battle.round = 1
+        self.assertIs(battle.select(healer)[2], poisoned)
+        battle.act(healer)
+        self.assertNotIn('poison', poisoned.effects)
+        self.assertIsNone(battle.select(healer))
+        healer.ready.clear()
+        healthy.effects['poison'] = 0
+        self.assertIsNone(battle.select(healer))
+        healer.effects['break'] = 3
+        self.assertIs(battle.select(healer)[2], healer)
+
     def test_golem_charge_survives_reload_and_punch_respects_taunt(self):
         from unittest.mock import patch
         tank = fighter('騎士', hp=3000)

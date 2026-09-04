@@ -54,7 +54,7 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         self.store.award_voice([(1, 1, level_floor(80))])
         self.characters.change_job(1, 1, '僧侶')
         await self.view.handle(self.interaction, 'refresh')
-        self.assertEqual(len(self.view.children[0].options), 6)
+        self.assertEqual(len(self.view.children[0].options), 7)
         self.assertLessEqual(len(self.view.children[1].options), 25)
         await self.view.on_timeout()
         self.interaction.edit_original_response.assert_awaited_once()

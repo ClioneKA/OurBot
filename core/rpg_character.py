@@ -1,5 +1,5 @@
 """Character rules and transactional equipment storage; no Discord dependency."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.rpg import level_for
 
@@ -39,6 +39,7 @@ class Item:
     combat: tuple = (0, 0, 0, 0)
     stability: tuple = (100, 100)
     price: int = 0
+    value: int = 0
 
 
 ITEMS = {}
@@ -72,6 +73,26 @@ ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0)
                          (0, 26, 2, 0), (65, 135))
 ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
                            (10, 14, 0, 26), (85, 115))
+
+
+for job, key, name, bonuses in (
+    ('裝甲步兵', 'infantry', '荊棘戰甲', (100, 6, 20, 0)),
+    ('騎士', 'knight', '古木重鎧', (160, 0, 30, 0)),
+    ('弓兵', 'archer', '藤葉獵裝', (70, 8, 12, 0)),
+    ('僧侶', 'monk', '靈根僧袍', (70, 0, 12, 20)),
+):
+    ITEMS[f'tree:{key}'] = Item(name, '套裝', job, 1, (0, 0, 0, 0, 0), bonuses)
+
+
+for key, item in list(ITEMS.items()):
+    if key.startswith('raid:'):
+        ITEMS[key] = replace(item, value=300)
+    elif key.startswith(('golem:', 'tree:')):
+        ITEMS[key] = replace(item, value=750)
+
+
+def item_value(item):
+    return item.price or item.value
 
 
 def stage_for(level, settings):
@@ -148,7 +169,7 @@ class Characters:
         job = self.job(guild_id, user_id)
         # Job is chosen explicitly at Lv.10; unchosen characters remain militia.
         stage = stage_for(level, self.settings) if job != '民兵' else 0
-        capacity = stage + 1
+        capacity = 1 if job == '民兵' else stage + 2
         slots = ['武器', '套裝'] + [f'飾品{i}' for i in range(1, capacity + 1)]
         raw = dict(self.db.execute('SELECT slot, item_id FROM rpg_equipment WHERE guild_id=? AND user_id=?',
                                    (guild_id, user_id)))
@@ -272,10 +293,43 @@ class Characters:
         return item
 
     def unequip(self, guild_id, user_id, slot):
-        if slot not in ('武器', '套裝', '飾品1', '飾品2', '飾品3', '飾品4'):
+        if slot not in ('武器', '套裝', '飾品1', '飾品2', '飾品3', '飾品4', '飾品5'):
             raise CharacterError('無效的裝備欄位。')
         with self.db:
             cursor = self.db.execute('DELETE FROM rpg_equipment WHERE guild_id=? AND user_id=? AND slot=?',
                                      (guild_id, user_id, slot))
             if not cursor.rowcount:
                 raise CharacterError('這個欄位沒有裝備。')
+
+    def available_quantity(self, guild, user, key):
+        owned = self.inventory_counts(guild, user).get(key, 0)
+        equipped = self.db.execute('SELECT 1 FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
+                                   (guild, user, key)).fetchone()
+        return max(0, owned - bool(equipped))
+
+    def dispose(self, guild, user, key, quantity, recipient=None):
+        """Transfer or sell only unequipped copies in one transaction."""
+        item = ITEMS.get(key)
+        if not item or item_value(item) <= 0:
+            raise CharacterError('木棒與免費補給為綁定物品，不能給予或賣出。')
+        if type(quantity) is not int or quantity < 1:
+            raise CharacterError('數量必須是正整數。')
+        if recipient == user:
+            raise CharacterError('不能給予自己。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if quantity > self.available_quantity(guild, user, key):
+                raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
+            self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? WHERE guild_id=? AND user_id=? AND item_id=?',
+                            (quantity, guild, user, key))
+            self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0',
+                            (guild, user, key))
+            if recipient is not None:
+                self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity) VALUES (?,?,?,?) '
+                                'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=quantity+excluded.quantity',
+                                (guild, recipient, key, quantity))
+                return 0
+            gold = item_value(item) // 5 * quantity
+            self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
+                            'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold', (guild, user, gold))
+            return gold

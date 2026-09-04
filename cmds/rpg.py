@@ -151,6 +151,26 @@ class RPG(commands.Cog):
         embed = discord.Embed(title='安安大冒險｜冒險者排行榜', description='\n'.join(lines) or '還沒有冒險者，開始聊天來獲得經驗吧！', color=0xF59E0B)
         await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.command(name='討伐通知', description='向安安領取或取消討伐通知身分組')
+    @app_commands.guild_only()
+    @app_commands.rename(action='操作')
+    @app_commands.choices(action=[app_commands.Choice(name='領取', value='subscribe'),
+                                 app_commands.Choice(name='取消', value='unsubscribe')])
+    async def raid_notifications(self, interaction: discord.Interaction, action: str = 'subscribe'):
+        if action not in ('subscribe', 'unsubscribe'):
+            await interaction.response.send_message('請選擇領取或取消。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            message = await self.raids.notifications.subscribe(interaction.guild, interaction.user, action == 'subscribe')
+        except CharacterError as exc:
+            message = str(exc)
+        except discord.Forbidden:
+            message = '身分組操作失敗，請確認安安有「管理身分組」權限，且位置高於討伐通知身分組。'
+        except discord.HTTPException:
+            message = 'Discord 暫時無法更新身分組，請稍後再試。'
+        await interaction.followup.send(message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
 
     @app_commands.command(name='生成討伐', description='管理員立即在目前的討伐頻道生成魔物，五分鐘後開戰')
     @app_commands.guild_only()
@@ -160,7 +180,7 @@ class RPG(commands.Cog):
     @app_commands.describe(kind='不填則隨機抽取怪物類型', name='這場怪物的名稱，最多20字',
         strength='血量、攻擊、防禦倍率，0.1–10；會再乘頻道動態難度', victory_xp='勝利每人最終經驗，覆蓋類型預設獎勵',
         victory_gold='勝利每人最終金幣，覆蓋類型預設獎勵', drop_percent='專屬物品掉落百分比，0–100；史萊姆群固定不掉落')
-    @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像')])
+    @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹')])
     async def spawn_raid(self, interaction: discord.Interaction, kind: str = None,
                          name: app_commands.Range[str, 1, 20] = None,
                          strength: app_commands.Range[float, 0.1, 10.0] = 1.0,

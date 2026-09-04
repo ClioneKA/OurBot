@@ -117,7 +117,7 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(self.characters.snapshot(1, 1)['title'], '民兵')
         state = self.characters.change_job(1, 1, '騎士')
         self.assertEqual(state['title'], '早期騎士')
-        self.assertEqual(state['capacity'], 1)
+        self.assertEqual(state['capacity'], 2)
         self.assertEqual(len(state['equipped']), 2)
         self.assertEqual(self.store.xp(1, 1), 1154)
 
@@ -126,9 +126,9 @@ class CharacterTests(unittest.TestCase):
         self.characters.change_job(1, 1, '弓兵')
         self.assertEqual(len(self.characters.inventory(1, 1)), 8)
         self.assertEqual(self.characters.claim(1, 1), [])
-        for level, name, slots in ((19, '早期弓兵', 1), (20, '弓兵', 2),
-                                   (49, '弓兵', 2), (50, '老練弓兵', 3),
-                                   (79, '老練弓兵', 3), (80, '精銳弓兵', 4)):
+        for level, name, slots in ((19, '早期弓兵', 2), (20, '弓兵', 3),
+                                   (49, '弓兵', 3), (50, '老練弓兵', 4),
+                                   (79, '老練弓兵', 4), (80, '精銳弓兵', 5)):
             self.level(level)
             state = self.characters.snapshot(1, 1)
             self.assertEqual((state['title'], state['capacity']), (name, slots))
@@ -140,7 +140,7 @@ class CharacterTests(unittest.TestCase):
         self.level(10)
         self.characters.change_job(1, 1, '裝甲步兵')
         before = self.characters.snapshot(1, 1)
-        for item, slot in (('unknown', 1), ('accessory:0', 2)):
+        for item, slot in (('unknown', 1), ('accessory:0', 3)):
             with self.assertRaises(CharacterError):
                 self.characters.equip(1, 1, item, slot)
         self.assertEqual(self.characters.snapshot(1, 1), before)
@@ -179,7 +179,7 @@ class CharacterTests(unittest.TestCase):
     def test_reconfigured_requirements_disable_locked_equipment(self):
         self.level(20)
         self.characters.change_job(1, 1, '僧侶')
-        self.characters.equip(1, 1, 'accessory:0', 2)
+        self.characters.equip(1, 1, 'accessory:0', 3)
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,1000)')
         for slot in ('武器', '套裝'):
@@ -191,7 +191,7 @@ class CharacterTests(unittest.TestCase):
         with self.assertRaises(CharacterError):
             revised.equip(1, 1, '僧侶:1:武器')
         revised.equip(1, 1, '僧侶:0:武器')
-        revised.unequip(1, 1, '飾品2')
+        revised.unequip(1, 1, '飾品3')
 
     def test_restart_and_guild_user_isolation(self):
         self.level(10)

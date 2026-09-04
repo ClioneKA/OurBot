@@ -22,11 +22,11 @@ daily_limit = 2
 # 多層限頻：未通過檢查的訊息不會呼叫模型。
 user_cooldown_seconds = 5
 channel_cooldown_seconds = 10
-global_requests_per_minute = 6
-global_requests_per_hour = 30
+global_requests_per_minute = 5
+global_requests_per_hour = 25
 max_concurrent_requests = 2
 # 每位使用者在每個伺服器的每日觸發上限，預設 UTC+8 午夜重置。
-user_daily_limit = 20
+user_daily_limit = 15
 daily_timezone_offset_hours = 8
 
 [ai.memory]
@@ -68,19 +68,19 @@ text_cooldown_seconds = 60
 text_min_chars = 3
 voice_xp_per_minute = 10
 # 至少兩位未靜音、未拒聽的真人才累積語音經驗。
-voice_min_members = 2
+voice_min_members = 1
 # Lv.10 才能首次轉職；後續自動晉升等級需嚴格遞增。
 regular_level = 20
 veteran_level = 50
-elite_level = 80
+elite_level = 90
 
 [rpg.raid]
 enabled = true
 ai_monsters = true
-min_interval_minutes = 60
-max_interval_minutes = 180
+min_interval_minutes = 30
+max_interval_minutes = 90
 max_participants = 20
 victory_xp = 300
 victory_gold = 100
 defeat_xp = 30
-drop_chance = 0.25
+drop_chance = 0.125

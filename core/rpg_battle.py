@@ -6,8 +6,10 @@ from core.rpg_character import CharacterError
 
 
 CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 40%',
-              'ally50': '隊伍有人 HP ≤ 50%', 'enemies3': '存活敵人 ≥ 3'}
-TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': '自己'}
+              'ally50': '隊伍有人 HP ≤ 50%', 'enemies3': '存活敵人 ≥ 3',
+              'ally_debuff': '隊友有可淨化負面狀態（含自己）'}
+TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': '自己',
+           'debuffed': '有可淨化負面狀態的隊友'}
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ SKILLS = {
              Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
              Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%'),
-             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒與破甲')),
+             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff')),
 }
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse'}
 
@@ -49,7 +51,8 @@ class Rule:
 
 
 def default_rules(job):
-    return [Rule(i, i, True, skill.condition, 'lowest') for i, skill in enumerate(SKILLS[job], 1)]
+    return [Rule(i, i, True, skill.condition, 'debuffed' if skill.effect == 'cleanse' else 'lowest')
+            for i, skill in enumerate(SKILLS[job], 1)]
 
 
 class Tactics:
@@ -74,6 +77,8 @@ class Tactics:
             raise CharacterError('無效的自動施放設定。')
         if target == 'self' and SKILLS[job][slot - 1].effect not in ALLY_EFFECTS | {'stance', 'taunt'}:
             raise CharacterError('攻擊技能不能以自己為目標。')
+        if target == 'debuffed' and SKILLS[job][slot - 1].effect != 'cleanse':
+            raise CharacterError('負面狀態目標僅供淨化使用。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             rules = self.rules(guild, user, job)
@@ -140,6 +145,8 @@ class Battle:
         return self.result is not None
 
     def target(self, actor, candidates, rule, offensive=False):
+        if rule.target == 'debuffed':
+            candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))]
         if offensive:
             taunters = [f for f in candidates if f.has('taunt', self.round)]
             candidates = taunters or candidates
@@ -163,11 +170,14 @@ class Battle:
                 continue
             if rule.condition == 'enemies3' and len(enemies) < 3:
                 continue
+            if rule.condition == 'ally_debuff' and not any(
+                    any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun')) for f in allies):
+                continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect == 'heal':
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
-                candidates = [f for f in candidates if f.has('poison', self.round) or f.has('break', self.round)]
+                candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))]
             elif skill.effect == 'bless':
                 candidates = [f for f in candidates if not f.has(skill.effect, self.round)]
             if skill.effect == 'guard':
@@ -215,6 +225,16 @@ class Battle:
         return True
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '荊棘妖樹' and self.round % 3 == 0:
+            healing = min(actor.stats['HP'] - actor.hp, actor.stats['HP'] // 20)
+            actor.hp += healing
+            candidates = self.living(0)
+            targets = self.rng.sample(candidates, len(candidates) * 33 // 100)
+            self.log.append(f'{actor.name} 使用【荊棘再生】：恢復 {healing} HP，纏繞暈眩 {len(targets)} 人。')
+            for target in targets:
+                target.effects['stun'] = self.round + 1
+                self.log.append(f'{target.name} 暈眩，將跳過下一次行動（可淨化）。')
+            return
         if actor.team == 1 and actor.job == '鐵殼魔像':
             if actor.has('charged_punch', self.round):
                 actor.effects.pop('charged_punch', None)
@@ -258,6 +278,7 @@ class Battle:
             target.hp += amount
             self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
+            target.effects.pop('stun', None)
             target.effects.pop('poison', None)
             target.effects.pop('break', None)
             self.log.append(f'移除 {target.name} 的負面狀態')
@@ -303,6 +324,10 @@ class Battle:
                     break
                 if actor.hp == 0:
                     continue
+            if actor.has('stun', self.round):
+                actor.effects.pop('stun', None)
+                self.log.append(f'{actor.name} 因暈眩跳過本次行動。')
+                continue
             self.act(actor)
             if self.check_end():
                 break

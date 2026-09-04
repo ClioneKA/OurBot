@@ -16,6 +16,25 @@ from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tree_generation_and_four_job_suit_loot(self):
+        from core.rpg_character import ITEMS
+        with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+            monster = await self.service.imagine('荊棘妖樹')
+        self.assertEqual(monster['kind'], '荊棘妖樹')
+        raid = self.repo.create(1, 2, monster, 100, asdict(replace(self.settings.raid, drop_chance=1)))
+        pool = raid['drop_pool']
+        self.assertEqual(len(pool), 4)
+        self.assertEqual({ITEMS[key].job for key in pool}, {'裝甲步兵', '騎士', '弓兵', '僧侶'})
+        self.assertTrue(all(ITEMS[key].slot == '套裝' and ITEMS[key].price == 0 and ITEMS[key].stage == 1 for key in pool))
+        self.assertIn('33%', self.service.lobby_embed(raid).fields[2].value)
+        p = self.participant()
+        raid.update(status='running', participants=[p], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([p], monster, 1)
+        battle.result = '勝利'
+        result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertIn(result['rewards'][0]['item'], pool)
+
     async def test_golem_generation_stats_and_exclusive_loot(self):
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine('鐵殼魔像')
@@ -159,11 +178,18 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             guild = SimpleNamespace(id=1, unavailable=False)
         channel = FakeChannel()
         channel.send = AsyncMock(return_value=SimpleNamespace(id=3))
+        notify_role = SimpleNamespace(id=123, mention='<@&123>')
+        self.service.notifications.ensure = AsyncMock(return_value=notify_role)
         self.service.imagine = AsyncMock(return_value=dict(self.monster, kind='史萊姆群'))
         with patch('core.rpg_raids.discord.TextChannel', FakeChannel):
             await self.service.spawn(channel, kind='史萊姆群', name='寶藏史萊姆群', strength=2.0,
                                      victory_xp=1000, victory_gold=500, drop_percent=100)
         self.service.imagine.assert_awaited_once_with('史萊姆群')
+        sent = channel.send.call_args.kwargs
+        self.assertEqual(sent['content'], '<@&123>')
+        self.assertEqual(sent['allowed_mentions'].roles, [notify_role])
+        self.assertFalse(sent['allowed_mentions'].everyone)
+        self.assertFalse(sent['allowed_mentions'].users)
         raid = self.repo.pending()[0]
         self.assertEqual(raid['monster']['name'], '寶藏史萊姆群')
         self.assertEqual(raid['reward_policy']['victory_xp'], 1000)
@@ -194,7 +220,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_slime_rarity_fallback_and_saved_rewards(self):
         with patch('core.rpg_raids.random.choices', return_value=['史萊姆群']) as choice, patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'), weights=(35, 35, 10, 20), k=1)
+        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'), weights=(25, 25, 10, 20, 20), k=1)
         self.assertIn('史萊姆群', monster['name'])
         policy = asdict(replace(self.settings.raid, victory_xp=400, victory_gold=150, drop_chance=1.0))
         raid = self.repo.create(1, 2, monster, 100, policy)
@@ -237,6 +263,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2'}):
             self.service = RaidService(self.cog)
         self.repo = self.service.repo
+        self.service.notifications.ensure = AsyncMock(return_value=None)
         self.monster = dict(name='怪獸', description='安安構思的魔物', kind='巨獸')
         self.message = SimpleNamespace(edit=AsyncMock())
         self.channel = SimpleNamespace(guild=SimpleNamespace(get_member=lambda uid: SimpleNamespace(id=uid, display_name='玩家', bot=False)),
@@ -349,7 +376,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_imagination_fallback_and_channel_validation(self):
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'))
+        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹'))
         self.assertTrue(monster['name'])
         self.assertEqual(channel_ids('2, 2, 3'), {2, 3})
         for raw in ('abc', '-1'):

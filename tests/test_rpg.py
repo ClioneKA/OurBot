@@ -105,7 +105,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'冒險', '排行榜', '生成討伐'})
+                                 {'冒險', '排行榜', '生成討伐', '討伐通知'})
                 admin = SimpleNamespace(guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2),
                     permissions=SimpleNamespace(administrator=False),
                     response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
@@ -170,7 +170,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 home = interaction.response.edit_message.call_args.kwargs['view']
                 await home.handle(interaction, 'equipment')
                 panel = interaction.response.edit_message.call_args.kwargs['view']
-                await panel.handle(interaction, 'slot', '飾品4')
+                await panel.handle(interaction, 'slot', '飾品5')
                 await panel.handle(interaction, 'item', 'accessory:0')
                 before = cog.characters.snapshot(1, 10)['total'][0]
                 await panel.handle(interaction, 'wear')
@@ -182,9 +182,19 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await home.handle(interaction, 'backpack')
                 backpack = interaction.response.edit_message.call_args.kwargs['view']
                 self.assertIn('背包 1/1', backpack.embed().title)
+                await backpack.handle(interaction, 'give')
+                gift = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertEqual(gift.mode, 'give')
+                await gift.handle(interaction, 'back')
+                backpack = interaction.response.edit_message.call_args.kwargs['view']
                 await backpack.handle(interaction, 'home')
                 home = interaction.response.edit_message.call_args.kwargs['view']
                 await home.handle(interaction, 'shop')
+                shop = interaction.response.edit_message.call_args.kwargs['view']
+                await shop.handle(interaction, 'sell')
+                selling = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertEqual(selling.mode, 'sell')
+                await selling.handle(interaction, 'back')
                 shop = interaction.response.edit_message.call_args.kwargs['view']
                 await shop.handle(interaction, 'home')
                 home = interaction.response.edit_message.call_args.kwargs['view']

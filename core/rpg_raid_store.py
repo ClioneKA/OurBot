@@ -13,6 +13,7 @@ DROP_TABLES = {
     '毒蛛': tuple(f'raid:{i}' for i in range(5)),
     '史萊姆群': (),
     '鐵殼魔像': ('golem:hammer', 'golem:sword_shield', 'golem:bow', 'golem:staff'),
+    '荊棘妖樹': ('tree:infantry', 'tree:knight', 'tree:archer', 'tree:monk'),
 }
 
 

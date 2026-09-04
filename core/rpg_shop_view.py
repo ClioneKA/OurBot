@@ -36,7 +36,7 @@ class ShopView(discord.ui.View):
         self.buy_button.disabled = (not item or self.item_id in owned or
             state['level'] < stage_level(item.stage, self.cog.settings) or
             self.cog.store.gold(self.guild_id, self.owner.id) < item.price)
-        for button in (self.buy_button, self.refresh, self.close_panel):
+        for button in (self.buy_button, self.refresh, self.close_panel, self.sell_button):
             self.add_item(button)
         add_back(self, 1)
 
@@ -69,6 +69,9 @@ class ShopView(discord.ui.View):
             if action == 'home':
                 await navigate(self, interaction)
                 return
+            if action == 'sell':
+                await navigate(self, interaction, 'sell')
+                return
             if action == 'close':
                 self.closed = True
                 self.stop()
@@ -92,6 +95,10 @@ class ShopView(discord.ui.View):
     @discord.ui.button(label='購買', style=discord.ButtonStyle.success, row=1)
     async def buy_button(self, interaction, button):
         await self.handle(interaction, 'buy')
+
+    @discord.ui.button(label='賣出物品', row=1)
+    async def sell_button(self, interaction, button):
+        await self.handle(interaction, 'sell')
 
     @discord.ui.button(label='重新整理', row=1)
     async def refresh(self, interaction, button):
