@@ -17,6 +17,9 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         fetcher = patch.object(self.bot, 'fetch_guilds', side_effect=no_guilds)
         self.fetch_guilds = fetcher.start()
         self.addCleanup(fetcher.stop)
+        verifier = patch.object(self.bot, 'verify_global_commands', new_callable=AsyncMock)
+        self.verifier = verifier.start()
+        self.addCleanup(verifier.stop)
 
     async def install_command(self, name):
         if not self.bot.tree.get_commands():
@@ -126,6 +129,24 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         for value in ('abc', '-1', '0', str(2**64), '１２３'):
             with self.assertRaises(ValueError):
                 sync_guild_ids(value)
+
+    async def test_payload_explicitly_supports_server_install(self):
+        await self.install_command('test')
+        command = self.bot.tree.get_commands()[0]
+        self.assertEqual(command.to_dict(self.bot.tree)['integration_types'], [0])
+        discord.app_commands.guild_only()(command)
+        self.assertEqual(command.to_dict(self.bot.tree)['contexts'], [0])
+        self.assertEqual(command.to_dict(self.bot.tree)['integration_types'], [0])
+
+    async def test_remote_verification_reports_wrong_scope_and_overwrite(self):
+        remote = SimpleNamespace(id=2, name='test', to_dict=lambda: {
+            'integration_types': [1], 'contexts': [1], 'default_member_permissions': None})
+        with patch.object(self.bot.tree, 'fetch_commands', return_value=[remote]), \
+                self.assertLogs('ourbot', level='INFO') as logs:
+            await OurBot.verify_global_commands(self.bot, [SimpleNamespace(id=1)])
+        output = '\n'.join(logs.output)
+        self.assertIn('不一致', output)
+        self.assertIn('不允許伺服器', output)
 
 
 if __name__ == '__main__':

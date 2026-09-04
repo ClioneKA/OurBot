@@ -21,6 +21,8 @@
 
 排查時先確認 `log.txt` 出現「指令同步成功」。若只有模組載入紀錄，查看後續錯誤；若同步成功但 Discord 沒顯示，確認登入的 Application ID 是預期的 bot、邀請授權包含 `bot` 和 `applications.commands`，並檢查伺服器整合設定、使用者與頻道的應用程式指令權限，再重新載入 Discord。全域指令更新可能有客戶端快取，可使用指定伺服器同步排查。
 
+指令明確使用伺服器安裝範圍（`integration_types=[0]`，需要 discord.py 2.4 以上）。全域同步後另以 GET 讀回清單，記錄每個指令的安裝範圍、使用情境與預設權限。`contexts` 包含 `0` 表示可在伺服器頻道使用；未指定時採用 API 預設。`guild_only` 仍可用於全域指令，它限制使用場合，不代表伺服器專用註冊。若 GET 清單完整且範圍正確，請比較另一個 Discord 客戶端與頻道內 `/` 選單，區分整合頁顯示問題與實際不可使用。遠端指令 ID 不一致可能代表另一個程序使用相同 token 覆寫了指令。
+
 此 bot 使用全部 intents，請在 Discord Developer Portal 的 Bot 設定啟用所需的 Privileged Gateway Intents；未授權時 Gateway 連線會失敗，即使 REST 指令同步成功也無法正常回應。
 
 ## 行為設定

@@ -1,4 +1,4 @@
-discord.py
+discord.py>=2.4.0
 flask
 openai>=1.109.0
 python-dotenv

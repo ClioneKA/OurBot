@@ -29,7 +29,10 @@ def sync_guild_ids(value):
 
 class OurBot(commands.Bot):
     def __init__(self, guild_ids=()):
-        super().__init__(command_prefix=[], intents=discord.Intents.all())
+        super().__init__(
+            command_prefix=[], intents=discord.Intents.all(),
+            allowed_installs=discord.app_commands.AppInstallationType(guild=True, user=False),
+        )
         self.sync_guild_ids = tuple(guild_ids)
 
     async def setup_hook(self):
@@ -73,6 +76,28 @@ class OurBot(commands.Bot):
                 raise
             logger.info("%s 指令同步成功，Discord 回傳 %d 個：%s", scope, len(synced),
                         ", ".join(f"{command.name} ({command.id})" for command in synced))
+            if guild is None:
+                await self.verify_global_commands(synced)
+
+    async def verify_global_commands(self, synced):
+        try:
+            remote = await self.tree.fetch_commands()
+        except discord.HTTPException:
+            logger.exception("全域同步已回應成功，但遠端查核失敗")
+            return
+        logger.info("全域遠端查核：Application ID %s，GET 回傳 %d 個指令",
+                    self.application_id, len(remote))
+        if {c.id for c in synced} != {c.id for c in remote}:
+            logger.warning("遠端清單與剛同步的指令 ID 不一致，請檢查是否有其他程序覆寫指令")
+        for command in remote:
+            payload = command.to_dict()
+            installs = payload.get('integration_types')
+            contexts = payload.get('contexts')
+            logger.info("遠端指令 %s (%s)：integration_types=%s，contexts=%s，default_member_permissions=%s",
+                        command.name, command.id, installs, contexts,
+                        payload.get('default_member_permissions'))
+            if (installs is not None and 0 not in installs) or (contexts is not None and 0 not in contexts):
+                logger.warning("指令 %s 的遠端設定不允許伺服器安裝或伺服器頻道使用", command.name)
 
     async def clear_old_guild_commands(self):
         # setup_hook runs before the Gateway fills self.guilds; use the REST API.
