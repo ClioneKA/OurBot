@@ -68,7 +68,7 @@ text_cooldown_seconds = 60
 text_min_chars = 3
 voice_xp_per_minute = 10
 # 至少兩位未靜音、未拒聽的真人才累積語音經驗。
-voice_min_members = 1
+voice_min_members = 2
 # Lv.10 才能首次轉職；後續自動晉升等級需嚴格遞增。
 regular_level = 20
 veteran_level = 50
