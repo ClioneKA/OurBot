@@ -314,6 +314,22 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(battle.result, '戰敗')
         self.assertFalse(any('使用' in line for line in battle.log))
 
+    def test_poison_two_percent_for_both_teams_rounds_down_and_expires(self):
+        from unittest.mock import patch
+        for team in (0, 1):
+            for hp, damage in ((1000, 20), (199, 3), (49, 1)):
+                with self.subTest(team=team, hp=hp):
+                    victim = fighter(team=team, hp=hp, rules=[])
+                    victim.effects['poison'] = 2
+                    battle = Battle([victim, fighter(team=1 - team, rules=[])], seed=1)
+                    with patch.object(battle, 'act'):
+                        battle.step()
+                        self.assertEqual(victim.hp, hp - damage)
+                        battle.step()
+                        self.assertEqual(victim.hp, hp - damage * 2)
+                        battle.step()
+                        self.assertEqual(victim.hp, hp - damage * 2)
+
     def test_draw_cap_and_precise_hit(self):
         archer = fighter(job='弓兵', attack=1, rules=[Rule(2, 1, True, 'always', 'lowest')])
         archer.stats['命中率'] = 0

@@ -42,7 +42,7 @@ SKILLS = {
              Skill('精準射擊', 'precise', 3, '必中，造成 150% 傷害'),
              Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害'),
              Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 75% 傷害，分別判定命中'),
-             Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 5%')),
+             Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 2%（無條件捨去，最低 1）')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
              Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%'),
              Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff'),
@@ -396,7 +396,7 @@ class Battle:
             if actor.hp <= 0:
                 continue
             if actor.has('poison', self.round):
-                damage = max(1, actor.stats['HP'] // 20)
+                damage = max(1, actor.stats['HP'] // 50)
                 actor.hp = max(0, actor.hp - damage)
                 self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
                 if self.check_end():
