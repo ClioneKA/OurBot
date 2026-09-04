@@ -119,7 +119,7 @@ class AdventureView(discord.ui.View):
             embed.add_field(name='基礎能力效果（含飾品加成）', value=
                 '生命力：每點最大 HP +10（另有基礎 50 HP）。\n'
                 '力氣：每點攻擊 +2。\n'
-                '耐力：每點防禦 +4。\n'
+                '耐力：每點防禦 +3。\n'
                 '信仰：每點攻擊 +1、治療量 +3。\n'
                 '武器／套裝的 HP、攻擊、防禦與治療量直接加成另計。', inline=False)
             embed.add_field(name='靈巧與行動順序', value=

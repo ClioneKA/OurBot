@@ -31,7 +31,7 @@ class CharacterTests(unittest.TestCase):
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], 'starter:club')
         self.assertEqual(state['combat']['攻擊'], 35)
-        self.assertEqual(state['combat']['防禦'], 45)
+        self.assertEqual(state['combat']['防禦'], 35)
         self.assertEqual(state['stability'], (60, 110))
         self.characters.unequip(1, 1, '武器')
         reloaded = Characters(self.store, RPGSettings())
@@ -90,7 +90,7 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(after['combat']['攻擊'] - before['combat']['攻擊'], 3)
         self.assertEqual(after['combat']['治療量'] - before['combat']['治療量'], 9)
         self.assertEqual(after['combat']['防禦'], before['combat']['防禦'])
-        self.assertEqual(after['combat']['防禦'], after['total'][2] * 4 + after['combat_bonus']['防禦'])
+        self.assertEqual(after['combat']['防禦'], after['total'][2] * 3 + after['combat_bonus']['防禦'])
         self.assertEqual(after['combat']['攻擊'], after['total'][1] * 2 + after['total'][4] + after['combat_bonus']['攻擊'])
         self.assertFalse({'物攻', '物防', '法攻', '法防'} & set(after['combat']))
 

@@ -188,7 +188,7 @@ class Characters:
         bonus = tuple(sum(ITEMS[item].stats[i] for item in equipped.values()) for i in range(5))
         total = tuple(a + b for a, b in zip(base, bonus))
         vitality, strength, endurance, dexterity, faith = total
-        combat = {'HP': 50 + vitality * 10, '攻擊': strength * 2 + faith, '防禦': endurance * 4,
+        combat = {'HP': 50 + vitality * 10, '攻擊': strength * 2 + faith, '防禦': endurance * 3,
                   '治療量': faith * 3,
                   '命中率': min(99, 75 + dexterity // 5),
                   '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
