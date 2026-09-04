@@ -52,6 +52,9 @@ class OurBot(commands.Bot):
         logger.info("本機指令 %d 個：%s", len(local_commands),
                     ", ".join(command.name for command in local_commands))
 
+        if not self.sync_guild_ids:
+            await self.clear_old_guild_commands()
+
         # Global by default. Explicit guild targets allow immediate server testing.
         targets = [discord.Object(id=gid) for gid in self.sync_guild_ids] or [None]
         for guild in targets:
@@ -70,6 +73,29 @@ class OurBot(commands.Bot):
                 raise
             logger.info("%s 指令同步成功，Discord 回傳 %d 個：%s", scope, len(synced),
                         ", ".join(f"{command.name} ({command.id})" for command in synced))
+
+    async def clear_old_guild_commands(self):
+        # setup_hook runs before the Gateway fills self.guilds; use the REST API.
+        try:
+            guilds = [guild async for guild in self.fetch_guilds(limit=None)]
+        except Exception:
+            logger.exception("無法取得伺服器清單；停止清理與全域同步")
+            raise
+        for guild in guilds:
+            try:
+                old_commands = await self.tree.fetch_commands(guild=guild)
+                if not old_commands:
+                    continue
+                logger.info("清除伺服器 %s 的 %d 個舊指令：%s", guild.id,
+                            len(old_commands), ", ".join(c.name for c in old_commands))
+                self.tree.clear_commands(guild=guild)
+                remaining = await self.tree.sync(guild=guild)
+                if remaining:
+                    raise RuntimeError(f"伺服器 {guild.id} 清理後仍有指令，停止全域同步")
+                logger.info("伺服器 %s 舊指令已清除", guild.id)
+            except Exception:
+                logger.exception("伺服器 %s 舊指令清理失敗；停止全域同步", guild.id)
+                raise
 
     async def on_ready(self):
         logger.info("目前登入身份：%s；Application ID：%s；已加入 %d 個伺服器",

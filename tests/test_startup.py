@@ -11,6 +11,12 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.bot = OurBot()
         self.addAsyncCleanup(self.bot.close)
+        async def no_guilds(**kwargs):
+            for guild in ():
+                yield guild
+        fetcher = patch.object(self.bot, 'fetch_guilds', side_effect=no_guilds)
+        self.fetch_guilds = fetcher.start()
+        self.addCleanup(fetcher.stop)
 
     async def install_command(self, name):
         if not self.bot.tree.get_commands():
@@ -42,6 +48,52 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.kwargs['guild'].id for call in sync.await_args_list], [123, 456])
         for gid in (123, 456):
             self.assertEqual([c.name for c in self.bot.tree.get_commands(guild=discord.Object(id=gid))], ['ping'])
+        self.fetch_guilds.assert_not_called()
+
+    async def test_global_mode_clears_remote_guilds_before_sync(self):
+        async def guilds(**kwargs):
+            self.assertIsNone(kwargs['limit'])
+            for gid in (123, 456, 789):
+                yield discord.Object(id=gid)
+        self.fetch_guilds.side_effect = guilds
+        async def old_commands(*, guild):
+            return [] if guild.id == 456 else [SimpleNamespace(name='old')]
+        order = []
+        async def sync(*, guild):
+            order.append(guild.id if guild else None)
+            if guild:
+                self.assertEqual(self.bot.tree.get_commands(guild=guild), [])
+                return []
+            self.assertEqual([c.name for c in self.bot.tree.get_commands()], ['ping'])
+            return [SimpleNamespace(name='ping', id=1)]
+        with patch.object(self.bot, 'load_extension', side_effect=self.install_command), \
+                patch.object(self.bot.tree, 'fetch_commands', side_effect=old_commands), \
+                patch.object(self.bot.tree, 'sync', side_effect=sync):
+            await self.bot.setup_hook()
+        self.assertEqual(order, [123, 789, None])
+
+    async def test_cleanup_failure_stops_before_global_sync(self):
+        async def guilds(**kwargs):
+            yield discord.Object(id=123)
+        self.fetch_guilds.side_effect = guilds
+        with patch.object(self.bot, 'load_extension', side_effect=self.install_command), \
+                patch.object(self.bot.tree, 'fetch_commands', return_value=[SimpleNamespace(name='old')]), \
+                patch.object(self.bot.tree, 'sync', side_effect=RuntimeError('cleanup failed')) as sync, \
+                self.assertLogs('ourbot', level='ERROR'):
+            with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+                await self.bot.setup_hook()
+        self.assertEqual(sync.await_count, 1)
+        self.assertEqual(sync.await_args.kwargs['guild'].id, 123)
+        self.assertEqual([c.name for c in self.bot.tree.get_commands()], ['ping'])
+
+    async def test_guild_list_failure_prevents_all_sync(self):
+        self.fetch_guilds.side_effect = RuntimeError('listing failed')
+        with patch.object(self.bot, 'load_extension', side_effect=self.install_command), \
+                patch.object(self.bot.tree, 'sync', new_callable=AsyncMock) as sync, \
+                self.assertLogs('ourbot', level='ERROR'):
+            with self.assertRaisesRegex(RuntimeError, 'listing failed'):
+                await self.bot.setup_hook()
+        sync.assert_not_awaited()
 
     async def test_extension_failure_never_syncs_partial_tree(self):
         with patch.object(self.bot, 'load_extension', side_effect=RuntimeError('broken extension')), \
