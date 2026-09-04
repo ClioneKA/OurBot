@@ -314,14 +314,17 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(battle.result, '戰敗')
         self.assertFalse(any('使用' in line for line in battle.log))
 
-    def test_poison_two_percent_for_both_teams_rounds_down_and_expires(self):
+    def test_poison_monster_five_percent_player_two_percent_and_reload(self):
         from unittest.mock import patch
-        for team in (0, 1):
-            for hp, damage in ((1000, 20), (199, 3), (49, 1)):
+        for team, cases in ((0, ((1000, 50), (199, 9), (19, 1))),
+                            (1, ((1000, 20), (199, 3), (49, 1)))):
+            for hp, damage in cases:
                 with self.subTest(team=team, hp=hp):
                     victim = fighter(team=team, hp=hp, rules=[])
                     victim.effects['poison'] = 2
                     battle = Battle([victim, fighter(team=1 - team, rules=[])], seed=1)
+                    battle = load_battle(json.loads(json.dumps(dump_battle(battle))))
+                    victim = battle.fighters[0]
                     with patch.object(battle, 'act'):
                         battle.step()
                         self.assertEqual(victim.hp, hp - damage)

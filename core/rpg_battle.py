@@ -396,7 +396,9 @@ class Battle:
             if actor.hp <= 0:
                 continue
             if actor.has('poison', self.round):
-                damage = max(1, actor.stats['HP'] // 50)
+                # PvE poison only targets the opposing team: monsters poison players
+                # for 5%, while player poison arrows damage monsters for 2%.
+                damage = max(1, actor.stats['HP'] // (20 if actor.team == 0 else 50))
                 actor.hp = max(0, actor.hp - damage)
                 self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
                 if self.check_end():
