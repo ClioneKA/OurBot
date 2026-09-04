@@ -10,6 +10,12 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_accuracy_can_exceed_100_and_caps_at_150(self):
+        from core.rpg_character import combat_from_stats
+        for dexterity, accuracy in ((120, 99), (125, 100), (130, 101), (374, 149), (375, 150), (500, 150)):
+            with self.subTest(dexterity=dexterity):
+                self.assertEqual(combat_from_stats((10, 10, 10, dexterity, 10))['命中率'], accuracy)
+
     def test_goblin_loot_level_jobs_and_no_free_supplies(self):
         from core.rpg_character import item_text
         self.level(10)

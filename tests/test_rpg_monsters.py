@@ -84,14 +84,14 @@ class MonsterTests(unittest.TestCase):
         people = [participant() for _ in range(10)]
         state = people[0]['state']
         state['equipped']['飾品1'] = 'goblin:badge'
-        state['total'] = [50, 60, 70, 359, 80]
+        state['total'] = [50, 60, 70, 374, 80]
         state['combat'] = combat_from_stats(state['total'])
         state['combat']['攻擊'] += 54
         state['combat']['治療量'] += 20
         wearer = raid_battle(people, monster(), 10).fighters[0]
         self.assertEqual(wearer.stats, {'HP': 650, '攻擊': 284, '防禦': 240,
-                                     '治療量': 290, '命中率': 99, '閃避率': 35, '暴擊率': 50})
-        self.assertEqual(wearer.dexterity, 369)
+                                     '治療量': 290, '命中率': 150, '閃避率': 35, '暴擊率': 50})
+        self.assertEqual(wearer.dexterity, 384)
 
     def test_tiers_and_distinct_stats(self):
         expected = {
