@@ -88,7 +88,7 @@ class RaidSettings:
     victory_xp: int = field(default=300, metadata={'minimum': 1, 'maximum': 100000})
     victory_gold: int = field(default=100, metadata={'minimum': 0, 'maximum': 1000000})
     defeat_xp: int = field(default=30, metadata={'minimum': 0, 'maximum': 10000})
-    drop_chance: float = field(default=0.5, metadata={'minimum': 0.0, 'maximum': 1.0})
+    drop_chance: float = field(default=0.25, metadata={'minimum': 0.0, 'maximum': 1.0})
 
     def __post_init__(self):
         if self.min_interval_minutes > self.max_interval_minutes:

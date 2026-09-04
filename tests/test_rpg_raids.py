@@ -11,11 +11,148 @@ from core.rpg import RPGStore
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError
 from core.rpg_raids import RaidService, RaidSignup, channel_ids
-from core.rpg_raid_store import RaidStore
+from core.rpg_raid_store import RaidStore, DROP_TABLES
 from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_golem_generation_stats_and_exclusive_loot(self):
+        with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+            monster = await self.service.imagine('鐵殼魔像')
+        self.assertEqual(monster['kind'], '鐵殼魔像')
+        self.assertIn('魔像', monster['name'])
+        p = self.participant()
+        basic = raid_battle([p], self.monster, 1).fighters[-1]
+        golem = raid_battle([p], monster, 1).fighters[-1]
+        self.assertEqual(golem.stats['HP'], int(basic.stats['HP'] * 1.2))
+        self.assertEqual(golem.stats['防禦'], basic.stats['防禦'] * 2)
+        self.assertEqual(golem.stats['攻擊'], basic.stats['攻擊'])
+        raid = self.repo.create(1, 2, monster, 100, asdict(replace(self.settings.raid, drop_chance=1)))
+        self.assertEqual(raid['drop_pool'], ['golem:hammer', 'golem:sword_shield', 'golem:bow', 'golem:staff'])
+        from core.rpg_character import ITEMS
+        self.assertTrue(all(ITEMS[key].slot == '武器' for key in raid['drop_pool']))
+        self.assertIn('專屬裝備', self.service.lobby_embed(raid).fields[-1].value)
+        raid.update(status='running', participants=[p], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([p], monster, 1)
+        battle.result = '勝利'
+        result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertIn(result['rewards'][0]['item'], raid['drop_pool'])
+        self.store.award_voice([(1, 2, 200000000)])
+        for job in ('騎士', '裝甲步兵', '弓兵', '僧侶'):
+            self.characters.change_job(1, 2, job)
+            self.characters.claim(1, 2)
+        self.assertFalse(any(key.startswith('golem:') for key in self.characters.inventory(1, 2)))
+
+    async def test_type_bound_loot_tables_and_future_equipment(self):
+        self.assertEqual(self.settings.raid.drop_chance, 0.25)
+        for kind in ('巨獸', '毒蛛'):
+            self.assertEqual(DROP_TABLES[kind], tuple(f'raid:{i}' for i in range(5)))
+        p = self.participant()
+        for channel, kind, pool in ((30, '新怪物', ()), (31, '新裝備怪物', ('騎士:1:武器',)),
+                                    (32, '新套裝怪物', ('騎士:1:套裝',))):
+            monster = dict(self.monster, kind=kind)
+            with patch.dict(DROP_TABLES, {kind: pool} if pool else {}):
+                raid = self.repo.create(1, channel, monster, 100,
+                                        asdict(replace(self.settings.raid, drop_chance=1)))
+            self.assertEqual(raid['drop_pool'], list(pool))
+            raid.update(status='running', participants=[p], members=[1])
+            self.repo.save(raid)
+            battle = raid_battle([p], monster, 1)
+            battle.result = '勝利'
+            result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            self.assertEqual(result['rewards'][0]['item'], pool[0] if pool else None)
+        self.assertFalse(any(key.startswith('raid:') for key in self.characters.inventory(1, 1)))
+
+    async def test_difficulty_scales_announced_rewards_and_preserves_overrides(self):
+        policy = asdict(self.settings.raid)
+        cases = [(0.5, '巨獸', {}, 150, 50), (1.5, '巨獸', {}, 450, 150),
+                 (3.0, '巨獸', {}, 900, 300), (1.5, '史萊姆群', {}, 900, 300),
+                 (1.5, '史萊姆群', {'victory_xp': 7}, 7, 300),
+                 (1.5, '巨獸', {'victory_xp': 0, 'victory_gold': 9}, 0, 9),
+                 (1.089, '巨獸', {}, 326, 108)]
+        for channel, (multiplier, kind, overrides, xp, gold) in enumerate(cases, 20):
+            with self.store.db:
+                self.store.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?)', (1, channel, multiplier))
+            raid = self.repo.create(1, channel, dict(self.monster, kind=kind, strength=2), 100, policy, overrides)
+            saved = self.repo.get(raid['id'])
+            self.assertEqual((saved['reward_policy']['victory_xp'], saved['reward_policy']['victory_gold']), (xp, gold))
+            self.assertEqual(saved['reward_policy']['defeat_xp'], 30)
+            self.assertEqual(saved['reward_policy']['drop_chance'], 0 if kind == '史萊姆群' else 0.25)
+            self.assertIn(f'{xp} XP', self.service.lobby_embed(saved).fields[-1].value)
+            p = self.participant()
+            saved.update(status='running', participants=[p], members=[1])
+            self.repo.save(saved)
+            battle = raid_battle([p], saved['monster'], 1)
+            battle.result = '勝利'
+            result = self.repo.settle(saved['id'], dump_battle(battle), replace(self.settings.raid, victory_xp=999))
+            self.assertEqual((result['rewards'][0]['xp'], result['rewards'][0]['gold']), (xp, gold))
+        self.assertEqual(policy, asdict(self.settings.raid))
+
+    async def test_dynamic_difficulty_progression_limits_and_persistence(self):
+        p = self.participant()
+        policy = asdict(replace(self.settings.raid, drop_chance=0))
+        def finish(result, strength=1):
+            monster = dict(self.monster, strength=strength)
+            raid = self.repo.create(1, 2, monster, 100, policy)
+            current = self.repo.difficulty(1, 2)
+            self.assertEqual(raid['monster']['strength'], round(current * strength, 6))
+            self.assertEqual(monster['strength'], strength)
+            raid.update(status='running', participants=[p], members=[1])
+            self.repo.save(raid)
+            battle = raid_battle([p], raid['monster'], 1)
+            battle.result = result
+            settled = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            after = self.repo.difficulty(1, 2)
+            self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            self.assertEqual(self.repo.difficulty(1, 2), after)
+            self.assertEqual(settled['difficulty_change']['after'], after)
+            return settled
+        self.assertEqual(self.repo.difficulty(1, 2), 1)
+        finish('勝利')
+        self.assertEqual(self.repo.difficulty(1, 2), 1.1)
+        finished = finish('戰敗', 2)
+        self.assertEqual(finished['monster']['strength'], 2.2)
+        self.assertEqual(self.repo.difficulty(1, 2), 0.99)
+        finish('平手（達回合上限）')
+        self.assertEqual(self.repo.difficulty(1, 2), 0.891)
+        for _ in range(20):
+            finish('戰敗')
+        self.assertEqual(self.repo.difficulty(1, 2), 0.5)
+        for _ in range(25):
+            finish('勝利')
+        self.assertEqual(self.repo.difficulty(1, 2), 3)
+        self.assertEqual(self.repo.difficulty(1, 3), 1)
+        self.assertEqual(self.repo.difficulty(2, 2), 1)
+        path = self.store.db.execute('PRAGMA database_list').fetchone()[2]
+        reopened = RPGStore(path)
+        try:
+            self.assertEqual(RaidStore(reopened).difficulty(1, 2), 3)
+        finally:
+            reopened.close()
+
+    async def test_dynamic_difficulty_cancellation_and_atomic_rollback(self):
+        raid = self.lobby()
+        await self.service.advance(raid, self.channel, 400)
+        self.assertEqual(self.repo.difficulty(1, 2), 1)
+        raid = self.lobby()
+        p = self.participant()
+        raid.update(status='running', participants=[p], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([p], raid['monster'], 1)
+        battle.result = '勝利'
+        self.store.db.execute("CREATE TEMP TRIGGER reject_difficulty BEFORE INSERT ON rpg_raid_difficulty BEGIN SELECT RAISE(ABORT, 'test'); END")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertEqual(self.repo.difficulty(1, 2), 1)
+        self.assertEqual(self.store.xp(1, 1), 0)
+        self.assertEqual(self.store.gold(1, 1), 0)
+        self.assertEqual(self.characters.inventory(1, 1), ['starter:club'])
+        self.assertEqual(self.repo.get(raid['id'])['status'], 'running')
+        self.store.db.execute('DROP TRIGGER reject_difficulty')
+        self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertEqual(self.repo.difficulty(1, 2), 1.1)
+
     async def test_manual_options_persist_without_changing_defaults(self):
         class FakeChannel:
             id = 2
@@ -44,7 +181,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         result = self.repo.settle(raid['id'], dump_battle(custom), self.settings.raid)
         self.assertEqual(result['rewards'], [dict(id=1, xp=1000, gold=500, item=None)])
         self.assertEqual(self.service.settings.victory_xp, 300)
-        self.assertEqual(self.service.settings.drop_chance, 0.5)
+        self.assertEqual(self.service.settings.drop_chance, 0.25)
 
     async def test_invalid_manual_options_do_not_generate_monsters(self):
         self.service.imagine = AsyncMock()
@@ -57,7 +194,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_slime_rarity_fallback_and_saved_rewards(self):
         with patch('core.rpg_raids.random.choices', return_value=['史萊姆群']) as choice, patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群'), weights=(45, 45, 10), k=1)
+        choice.assert_called_once_with(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'), weights=(35, 35, 10, 20), k=1)
         self.assertIn('史萊姆群', monster['name'])
         policy = asdict(replace(self.settings.raid, victory_xp=400, victory_gold=150, drop_chance=1.0))
         raid = self.repo.create(1, 2, monster, 100, policy)
@@ -212,7 +349,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_imagination_fallback_and_channel_validation(self):
         with patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
             monster = await self.service.imagine()
-        self.assertIn(monster['kind'], ('巨獸', '毒蛛'))
+        self.assertIn(monster['kind'], ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'))
         self.assertTrue(monster['name'])
         self.assertEqual(channel_ids('2, 2, 3'), {2, 3})
         for raw in ('abc', '-1'):
@@ -352,11 +489,11 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         second.update(status='running', participants=[self.participant()], members=[1])
         self.repo.save(second)
         self.repo.settle(second['id'], dump_battle(battle), self.settings.raid)
-        self.assertEqual(self.store.gold(1, 1), 177)
+        self.assertEqual(self.store.gold(1, 1), 187)
         path = self.store.db.execute('PRAGMA database_list').fetchone()[2]
         reopened = RPGStore(path)
         try:
-            self.assertEqual(reopened.gold(1, 1), 177)
+            self.assertEqual(reopened.gold(1, 1), 187)
         finally:
             reopened.close()
 

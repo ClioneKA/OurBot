@@ -63,6 +63,17 @@ for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '�
                                 tuple(6 if i == index else 1 for i in range(5)))
 
 
+# Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
+ITEMS['golem:hammer'] = Item('鐵核重鎚', '武器', '裝甲步兵', 1, (0, 0, 0, 0, 0),
+                            (20, 30, 4, 0), (50, 150))
+ITEMS['golem:sword_shield'] = Item('鐵核劍盾', '武器', '騎士', 1, (0, 0, 0, 0, 0),
+                                  (60, 12, 12, 0), (70, 130))
+ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0),
+                         (0, 26, 2, 0), (65, 135))
+ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
+                           (10, 14, 0, 26), (85, 115))
+
+
 def stage_for(level, settings):
     return sum(level >= threshold for threshold in
                (settings.regular_level, settings.veteran_level, settings.elite_level))

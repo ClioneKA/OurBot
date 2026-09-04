@@ -81,4 +81,4 @@ max_participants = 20
 victory_xp = 300
 victory_gold = 100
 defeat_xp = 30
-drop_chance = 0.5
+drop_chance = 0.25

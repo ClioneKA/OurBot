@@ -10,6 +10,23 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_golem_ranged_weapons_require_job_and_regular_stage(self):
+        for job, key in (('弓兵', 'golem:bow'), ('僧侶', 'golem:staff')):
+            self.level(10)
+            self.characters.change_job(1, 1, job)
+            with self.store.db:
+                self.store.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (1,1,?)', (key,))
+            with self.assertRaises(CharacterError):
+                self.characters.equip(1, 1, key)
+            self.level(20)
+            self.characters.equip(1, 1, key)
+            state = self.characters.snapshot(1, 1)
+            self.assertEqual(state['equipped']['武器'], key)
+            self.assertEqual(state['stability'], ITEMS[key].stability)
+            self.assertEqual(state['bonus'], (0, 0, 0, 0, 0))
+            with self.assertRaises(CharacterError):
+                self.characters.buy(1, 1, key)
+
     def test_starter_club_once_and_unequipped_state_survives_reload(self):
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], 'starter:club')

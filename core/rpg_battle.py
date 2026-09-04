@@ -215,6 +215,18 @@ class Battle:
         return True
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '鐵殼魔像':
+            if actor.has('charged_punch', self.round):
+                actor.effects.pop('charged_punch', None)
+                target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+                if target is not None:
+                    self.log.append(f'{actor.name} 使用【鐵核重拳】')
+                    self.hit(actor, target, 2.5)
+                return
+            if self.round % 3 == 0:
+                actor.effects['charged_punch'] = self.round + 1
+                self.log.append(f'{actor.name} 使用【蓄力】：下一回合將使出 250% 倍率重拳！')
+                return
         if actor.team == 1 and actor.job == '史萊姆群':
             self.log.append(f'{actor.name} 使用【群體彈跳】')
             for _ in range(3):
@@ -309,6 +321,9 @@ def raid_battle(participants, monster, seed):
     stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
              '攻擊': int(22 + average * 6), '防禦': int(10 + average * 2),
              '治療量': 0, '命中率': 92, '閃避率': 5, '暴擊率': 10}
+    if monster['kind'] == '鐵殼魔像':
+        stats['HP'] = int(stats['HP'] * 1.2)
+        stats['防禦'] *= 2
     for stat in ('HP', '攻擊', '防禦'):
         stats[stat] = max(1, int(stats[stat] * monster.get('strength', 1)))
     fighters.append(Fighter(monster['name'], 1, monster['kind'], stats, int(12 + average * 2), []))

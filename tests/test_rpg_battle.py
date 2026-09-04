@@ -11,6 +11,30 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_golem_charge_survives_reload_and_punch_respects_taunt(self):
+        from unittest.mock import patch
+        tank = fighter('騎士', hp=3000)
+        ally = fighter('隊友', hp=1000)
+        ally.hp = 100
+        golem = fighter('魔像', 1, job='鐵殼魔像', rules=[])
+        battle = Battle([tank, ally, golem], seed=1)
+        battle.round = 3
+        with patch.object(battle, 'hit') as hit:
+            battle.act(golem)
+            hit.assert_not_called()
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        restored.round = 4
+        tank, ally, golem = restored.fighters
+        tank.effects['taunt'] = 5
+        with patch.object(restored, 'hit') as hit:
+            restored.act(golem)
+            hit.assert_called_once_with(golem, tank, 2.5)
+        self.assertNotIn('charged_punch', golem.effects)
+        restored.round = 5
+        with patch.object(restored, 'hit') as hit:
+            restored.act(golem)
+            hit.assert_called_once_with(golem, tank)
+
     def test_slime_three_hits_taunt_and_stop_when_no_targets(self):
         from unittest.mock import patch
         tank = fighter('騎士', hp=1000)

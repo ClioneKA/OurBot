@@ -15,7 +15,7 @@ from discord.ext import tasks
 
 from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
-from core.rpg_raid_store import RaidStore
+from core.rpg_raid_store import RaidStore, DROP_TABLES
 
 
 logger = logging.getLogger(__name__)
@@ -120,9 +120,11 @@ class RaidService:
         self.repo.schedule(channel, now + delay)
 
     async def imagine(self, kind=None):
-        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群'), weights=(45, 45, 10), k=1)[0]
+        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'), weights=(35, 35, 10, 20), k=1)[0]
         monster = dict(name=random.choice(('吞月棉花獸', '夜光茶壺怪', '迷霧糖霜蛛')),
                        description='安安：「吾輩剛剛想到的怪物跑出來了！有誰願意一起對付牠？」', kind=kind)
+        if kind == '鐵殼魔像':
+            monster.update(name='鐵殼魔像', description='安安：「吾輩做的鐵皮玩偶站起來了！當心牠蓄力後的重拳！」')
         if kind == '史萊姆群':
             monster.update(name='蹦跳果凍史萊姆群', description='安安：「吾輩的果凍變成一大群史萊姆了！快來幫忙收拾牠們！」')
         if not self.settings.ai_monsters or not os.getenv('OPENAI_API_KEY'):
@@ -140,6 +142,7 @@ class RaidService:
             response = await self.client.responses.create(
                 model=self.cog.ai_model, instructions=persona + '\n為 Discord 合作 RPG 構思一隻原創奇幻怪物。使用繁體中文，名稱最多20字、出場描述最多120字，以安安口吻邀請大家討伐。不要寫數值、獎勵、@提及或連結。',
                 input='怪物特色：' + {'巨獸': '每三回合對全隊橫掃。', '毒蛛': '普通攻擊附帶中毒。',
+                                     '鐵殼魔像': '高防禦魔像，每三回合蓄力，下一回合單體重拳。名稱須包含魔像。',
                                      '史萊姆群': '一群史萊姆共用血量，每回合連續三次彈跳撞擊。名稱須包含史萊姆群。'}[kind],
                 text={'format': schema}, max_output_tokens=800, store=False)
             data = json.loads(response.output_text)
@@ -153,6 +156,7 @@ class RaidService:
     def lobby_embed(self, raid):
         policy = SimpleNamespace(**raid['reward_policy']) if raid.get('reward_policy') else self.settings
         traits = {'巨獸': '每三回合對全隊橫掃', '毒蛛': '攻擊附帶中毒，可用淨化解除',
+                  '鐵殼魔像': '血量 1.2 倍、防禦 2 倍；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
                   '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(raid['monster']['name'], 20),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
@@ -161,7 +165,20 @@ class RaidService:
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
         embed.add_field(name='魔物特性', value=traits + '；開戰時按隊伍人數及等級決定強度。', inline=False)
         embed.add_field(name='強度倍率', value=f'{raid["monster"].get("strength", 1):g} 倍（血量、攻擊、防禦）')
-        loot_text = '不掉落飾品' if raid['monster']['kind'] == '史萊姆群' else f'{policy.drop_chance:.0%} 機率取得討伐飾品（可能重複）'
+        if raid.get('difficulty'):
+            d = raid['difficulty']
+            embed.add_field(name='頻道動態難度', value=f'{d["current"]:.3f} × 本場設定 {d["base_strength"]:g}\n'
+                            '勝利後 ×1.1，戰敗／回合上限後 ×0.9；動態難度範圍 0.5–3 倍。', inline=False)
+        pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
+        category = '討伐飾品' if pool and all(ITEMS[key].slot == '飾品' for key in pool) else '專屬裝備'
+        loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
+                     else f'{policy.drop_chance:.0%} 機率取得{category}（可能重複）')
+        scaling = raid.get('reward_scaling')
+        if scaling:
+            labels = {'victory_xp': '勝利經驗', 'victory_gold': '勝利金幣'}
+            scaled = '、'.join(labels[key] for key in scaling['fields'])
+            embed.add_field(name='難度報酬', value=(f'{scaled}已套用 {scaling["multiplier"]:.3f} 倍；下列為每人最終獎勵。'
+                            if scaled else '經驗與金幣採管理員指定的最終數額。'), inline=False)
         embed.add_field(name='獎勵', value=f'成功：每人 {policy.victory_xp} XP、{getattr(policy, "victory_gold", 0)} 金幣，{loot_text}。\n'
                         f'失敗或回合上限：每人 {policy.defeat_xp} XP，無金幣及掉落。倒下者仍依隊伍結果領獎。', inline=False)
         embed.set_footer(text='可先用 /冒險 → 裝備／能力 與 /冒險 → 技能 調整策略。沒有 NPC 隊友；至少一人即可開戰。')
@@ -174,6 +191,9 @@ class RaidService:
         embed.add_field(name='魔物 HP', value=f'{boss.hp:,}/{boss.stats["HP"]:,}')
         roster = '\n'.join(f'{f.name}：{f.hp}/{f.stats["HP"]}' for f in battle.fighters[:-1])
         embed.add_field(name='討伐隊伍', value=roster[:1024], inline=False)
+        if raid.get('difficulty_change'):
+            change = raid['difficulty_change']
+            embed.add_field(name='下次討伐動態難度', value=f'{change["before"]:.3f} → {change["after"]:.3f} 倍', inline=False)
         if raid.get('rewards'):
             lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣' + (f'、{ITEMS[r["item"]].name}' if r['item'] else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
@@ -237,7 +257,7 @@ class RaidService:
 
     async def spawn(self, channel, *, kind=None, name=None, strength=1.0,
                     victory_xp=None, victory_gold=None, drop_percent=None):
-        if kind is not None and kind not in ('巨獸', '毒蛛', '史萊姆群'):
+        if kind is not None and kind not in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像'):
             raise CharacterError('無效的怪物類型。')
         if not 0.1 <= strength <= 10:
             raise CharacterError('強度倍率必須介於 0.1–10。')
