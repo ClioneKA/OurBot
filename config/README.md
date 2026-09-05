@@ -41,7 +41,7 @@
 | `[ai.media]` | 圖片／語音回覆開關、長度、冷卻與額度 |
 | `[tts]` | MiniMax 語音模型與音色 ID |
 | `[rpg]` | RPG 等級開關、文字 XP／冷卻／長度、語音 XP／人數；詳見 [RPG 說明](RPG.md) |
-| `[rpg.raid]` | 討伐活動、AI 怪物、隨機間隔、間隔減半時段、人數與獎勵；專用頻道在 `.env` 的 `RPG_RAID_CHANNEL_IDS` 設定 |
+| `[rpg.raid]` | 討伐活動、AI 怪物、一般 30–60 分鐘隨機間隔、台灣時間 12:00–14:00／18:00–23:00 減半為 15–30 分鐘、人數與獎勵；專用頻道在 `.env` 的 `RPG_RAID_CHANNEL_IDS` 設定 |
 | `persona.txt`、`prompt_*.txt` | 人格與情境提示詞 |
 
 初次部署時複製 `.env.example` 為 `.env`，填入密鑰與部署資訊，再調整 `settings.toml`。請勿把密鑰填入 TOML；TOML 與提示詞會納入 Git，`.env` 不會。

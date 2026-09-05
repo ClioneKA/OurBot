@@ -83,7 +83,7 @@ enabled = true
 ai_monsters = true
 min_interval_minutes = 30
 max_interval_minutes = 60
-# 重新抽選時間落在以下台灣時段時，將上述隨機間隔減半；可用逗號分隔多個時段。
+# 重新抽選時間落在以下台灣時段時，將上述 30–60 分鐘減半為 15–30 分鐘；可用逗號分隔多個時段。
 half_interval_periods = "12:00-14:00,18:00-23:00"
 schedule_timezone_offset_hours = 8
 max_participants = 20
