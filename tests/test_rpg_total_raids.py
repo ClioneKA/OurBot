@@ -172,9 +172,11 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
             room = await self.service.begin(room['id'], host)
         battle = load_total_battle(room['battle'])
         fighter = battle.fighters[0]
+        boss = battle.fighters[-1]
         fighter.effects.update(guard=1, poison=2)
         fighter.guard_bonus = 15
         fighter.status_stacks['corruption'] = 2
+        boss.effects.update({'stance': 1, 'break': 1})
         buffs, debuffs = effect_status(fighter, battle)
         self.assertIn('護衛(防禦+15・1回合)', buffs)
         self.assertIn('中毒(2回合)', debuffs)
@@ -182,6 +184,9 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         complete = [f'完整紀錄 {index}：' + '測' * 80 for index in range(20)]
         battle.mechanics['last_round_log'] = complete
         embed = self.service.battle_embed(room, battle)
+        boss_status = next(field.value for field in embed.fields if field.name == 'Boss HP')
+        self.assertIn('Buff：防禦姿態(減傷35%・1回合)', boss_status)
+        self.assertIn('Debuff：破甲(防禦-40%・1回合)', boss_status)
         team = next(field.value for field in embed.fields if field.name == '隊伍狀態')
         self.assertIn('Buff：護衛', team)
         self.assertIn('Debuff：中毒', team)

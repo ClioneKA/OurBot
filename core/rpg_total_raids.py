@@ -609,10 +609,14 @@ class TotalRaidService:
         embed = discord.Embed(
             title=f'{room["boss"]} #{room["number"]}｜{status}', color=0xDC2626,
         )
-        enemies = '\n'.join(
-            f'**{fighter.name}**\n{hp_bar(fighter.hp, fighter.stats["HP"])}  '
-            f'{fighter.hp:,}/{fighter.stats["HP"]:,}'
-            for fighter in battle.fighters if fighter.team == 1)
+        enemy_lines = []
+        for fighter in (item for item in battle.fighters if item.team == 1):
+            buffs, debuffs = effect_status(fighter, battle)
+            enemy_lines.append(
+                f'**{fighter.name}**\n{hp_bar(fighter.hp, fighter.stats["HP"])}  '
+                f'{fighter.hp:,}/{fighter.stats["HP"]:,}\n'
+                f'Buff：{buffs}\nDebuff：{debuffs}')
+        enemies = '\n\n'.join(enemy_lines)
         embed.add_field(name='Boss HP', value=enemies, inline=False)
         if not battle.result:
             intent = battle.intent()
