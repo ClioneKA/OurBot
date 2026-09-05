@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from core.rpg import RPGStore
 from core.rpg_character import Characters
-from core.rpg_provision_view import ProvisionView
+from core.rpg_provision_view import ProvisionLoadoutView, ProvisionView
 from core.rpg_provisions import Provisions
 from core.settings import RPGSettings
 
@@ -33,16 +33,26 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,1)', (key,))
 
-    async def test_craft_and_select_food(self):
+    async def test_crafting_panel_only_crafts_food(self):
         self.assertLessEqual(len(self.view.to_components()), 5)
+        self.assertEqual(len(self.view.children), 6)
         self.grant('fishing:pond:common')
         self.grant('farming:potato')
         await self.view.handle(self.interaction, 'craft')
         self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 1)
-        await self.view.handle(self.interaction, 'loadout_food', 'food:pond:common')
+        self.assertEqual(self.provisions.loadout(1, 1), {})
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('成功製作', embed.fields[-1].value)
+
+    async def test_equipment_loadout_panel_selects_food(self):
+        self.grant('food:pond:common')
+        loadout_view = ProvisionLoadoutView(self.cog, self.interaction)
+        self.addCleanup(loadout_view.stop)
+        await loadout_view.handle(self.interaction, 'loadout_food', 'food:pond:common')
         self.assertEqual(self.provisions.loadout(1, 1)['food'], 'food:pond:common')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('鯽魚馬鈴薯湯', embed.fields[1].value)
+        self.assertIn('鯽魚馬鈴薯湯', embed.fields[0].value)
+        self.assertLessEqual(len(loadout_view.to_components()), 5)
 
     async def test_switches_recipe_group(self):
         await self.view.handle(self.interaction, 'recipe_group', 'potion2')

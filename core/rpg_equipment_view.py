@@ -57,9 +57,9 @@ class EquipmentView(discord.ui.View):
         self.add_item(PanelSelect('item', placeholder='選擇要穿戴的物品' if options else '這個欄位沒有可用裝備',
                                  row=1, disabled=not options, options=options or [
                                      discord.SelectOption(label='沒有可用裝備', value='empty')]))
-        for button in (self.wear, self.remove, self.refresh, self.close_panel):
+        for button in (self.wear, self.remove, self.provisions, self.refresh, self.close_panel):
             self.add_item(button)
-        add_back(self, 2)
+        add_back(self, 3)
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']
         return state
@@ -83,6 +83,9 @@ class EquipmentView(discord.ui.View):
             notice = None
             if action == 'home':
                 await navigate(self, interaction)
+                return
+            if action == 'provision_loadout':
+                await navigate(self, interaction, 'provision_loadout')
                 return
             if action == 'close':
                 self.closed = True
@@ -122,6 +125,10 @@ class EquipmentView(discord.ui.View):
     @discord.ui.button(label='卸下', style=discord.ButtonStyle.secondary, row=2)
     async def remove(self, interaction, button):
         await self.handle(interaction, 'remove')
+
+    @discord.ui.button(label='討伐補給', style=discord.ButtonStyle.secondary, row=2)
+    async def provisions(self, interaction, button):
+        await self.handle(interaction, 'provision_loadout')
 
     @discord.ui.button(label='重新整理', style=discord.ButtonStyle.secondary, row=2)
     async def refresh(self, interaction, button):

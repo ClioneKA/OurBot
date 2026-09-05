@@ -39,6 +39,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'provisions':
         from core.rpg_provision_view import ProvisionView
         next_view = ProvisionView(view.cog, view.origin)
+    elif page == 'provision_loadout':
+        from core.rpg_provision_view import ProvisionLoadoutView
+        next_view = ProvisionLoadoutView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -131,7 +134,7 @@ class AdventureView(discord.ui.View):
                 '透過生活技能取得料理、煉金與製作素材。\n\n'
                 '**釣魚**：派遣至釣場，完成後收竿取得漁獲並提升獨立的釣魚等級。\n'
                 '**農耕**：中庭花圃自 Lv.1 開放，監獄菜園自 Lv.20 開放；可種植已解鎖植物，等級越高收成越多。\n'
-                '**料理／煉金**：製作並選擇討伐攜帶的料理與藥水。', color=0x38BDF8)
+                '**料理／煉金**：使用釣魚與農耕素材製作料理及藥水；攜帶設定在裝備／能力的討伐補給。', color=0x38BDF8)
         elif self.page == 'jobs':
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
             embed = discord.Embed(title='安安大冒險｜轉職', description=
