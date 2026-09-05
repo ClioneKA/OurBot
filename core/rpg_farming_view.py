@@ -55,6 +55,7 @@ class FarmingView(discord.ui.View):
         ready = bool(active and time.time() >= session['ready_at'])
         self._button('種植', 'plant', 2, active, discord.ButtonStyle.success)
         self._button('收成', 'harvest', 2, not ready, discord.ButtonStyle.primary)
+        self._button('中斷種植', 'cancel', 2, not active, discord.ButtonStyle.danger)
         self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 2)
         self._button('返回生活', 'life', 3)
         self._button('重新整理', 'refresh', 3)
@@ -72,7 +73,7 @@ class FarmingView(discord.ui.View):
             session = state['sessions'].get(location_id)
             if state['level'] < LOCATION_LEVELS[location_id]:
                 value = f'農耕 Lv.{LOCATION_LEVELS[location_id]} 解鎖'
-            elif not session or session['status'] == 'harvested':
+            elif not session or session['status'] != 'active':
                 value = '目前閒置'
             else:
                 plant = PLANTS[session['plant_id']]
@@ -127,6 +128,10 @@ class FarmingView(discord.ui.View):
                               f'、等級加成 {result["level_bonus"]}），獲得 {result["xp"]:,} 農耕 XP。')
                     if result['new_level'] > result['old_level']:
                         notice += f'\n農耕等級提升至 Lv.{result["new_level"]}！'
+                elif action == 'cancel':
+                    result = self.cog.farming.cancel(self.guild_id, self.owner.id, self.location_id)
+                    notice = (f'已中斷{LOCATIONS[result["location_id"]]}的{PLANTS[result["plant_id"]].name}種植；'
+                              '本次不會獲得作物或農耕 XP。')
                 elif action == 'notify':
                     state = self.cog.farming.state(self.guild_id, self.owner.id)
                     enabled = self.cog.farming.set_notify(self.guild_id, self.owner.id, not state['notify'])

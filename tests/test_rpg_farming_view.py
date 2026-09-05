@@ -50,6 +50,18 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('收成 馬鈴薯 ×2', embed.fields[-1].value)
 
+    async def test_cancel_has_no_rewards(self):
+        with patch('core.rpg_farming.time.time', return_value=100), \
+             patch('core.rpg_farming_view.time.time', return_value=100):
+            await self.view.handle(self.interaction, 'plant')
+            await self.view.handle(self.interaction, 'cancel')
+        state = self.farming.state(1, 1)
+        self.assertEqual((state['sessions']['courtyard']['status'], state['xp']), ('cancelled', 0))
+        self.assertNotIn('farming:potato', self.characters.inventory_counts(1, 1))
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertEqual(embed.fields[0].value, '目前閒置')
+        self.assertIn('不會獲得作物或農耕 XP', embed.fields[-1].value)
+
 
 if __name__ == '__main__':
     unittest.main()

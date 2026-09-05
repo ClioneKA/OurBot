@@ -62,6 +62,7 @@ class FishingView(discord.ui.View):
                   'fishing:rod:magic' if current == 'fishing:rod:simple' else None)
         self._button('開始釣魚', 'start', 3, bool(active), discord.ButtonStyle.success)
         self._button('收竿', 'claim', 3, not ready, discord.ButtonStyle.primary)
+        self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
         self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
         self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
         self._button('返回生活', 'life', 4)
@@ -152,6 +153,10 @@ class FishingView(discord.ui.View):
                               f'本次熟練產量為 {result["mastery_percent"]}%。')
                 elif action == 'claim':
                     notice = self._claim_notice(self.cog.fishing.claim(self.guild_id, self.owner.id))
+                elif action == 'cancel':
+                    result = self.cog.fishing.cancel(self.guild_id, self.owner.id)
+                    notice = (f'已中斷在{SPOTS[result["spot_id"]].name}的釣魚行程；'
+                              '本次不會獲得任何物品或釣魚 XP。')
                 elif action == 'craft':
                     item = self.cog.fishing.craft_next(self.guild_id, self.owner.id)
                     notice = f'成功製作 {item.name}，並已自動換上。'

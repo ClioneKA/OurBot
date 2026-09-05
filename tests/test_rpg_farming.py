@@ -75,6 +75,24 @@ class FarmingTests(unittest.TestCase):
         result = self.farming.harvest(1, 1, 'courtyard', now=7600)
         self.assertEqual((result['level_bonus'], result['quantity']), (3, 5))
 
+    def test_cancel_selected_plot_discards_all_progress_and_rewards(self):
+        self.set_level(20)
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=0)
+        self.farming.plant(1, 1, 'prison', 'potato', now=10)
+        result = self.farming.cancel(1, 1, 'courtyard')
+        self.assertEqual(result, {'location_id': 'courtyard', 'plant_id': 'potato'})
+        state = self.farming.state(1, 1)
+        self.assertEqual(state['sessions']['courtyard']['status'], 'cancelled')
+        self.assertEqual(state['sessions']['prison']['status'], 'active')
+        self.assertEqual(state['xp'], level_floor(20))
+        self.assertNotIn('farming:potato', self.characters.inventory_counts(1, 1))
+        with self.assertRaisesRegex(CharacterError, '已經中斷'):
+            self.farming.harvest(1, 1, 'courtyard', now=999999)
+        with self.assertRaisesRegex(CharacterError, '沒有進行中'):
+            self.farming.cancel(1, 1, 'courtyard')
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=20)
+        self.assertEqual(self.farming.state(1, 1)['sessions']['courtyard']['status'], 'active')
+
     def test_maturity_notifications_are_per_plot_and_exactly_once(self):
         self.set_level(20)
         self.assertFalse(self.farming.state(1, 1)['notify'])

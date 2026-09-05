@@ -136,6 +136,8 @@ class Farming:
                 result = json.loads(saved)
                 result['replayed'] = True
                 return result
+            if status != 'active':
+                raise CharacterError('這批植物已經中斷種植，無法收成。')
             if now < ready_at:
                 raise CharacterError('植物尚未成熟。')
             crop = PLANTS[plant_id]
@@ -162,6 +164,21 @@ class Farming:
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')),
                  guild, user, location_id))
             return result
+
+    def cancel(self, guild, user, location_id):
+        if location_id not in LOCATIONS:
+            raise CharacterError('請重新選擇農耕地點。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('''SELECT plant_id FROM rpg_farming_sessions
+                WHERE guild_id=? AND user_id=? AND location_id=? AND status='active' ''',
+                (guild, user, location_id)).fetchone()
+            if not row:
+                raise CharacterError(f'{LOCATIONS[location_id]}目前沒有進行中的種植。')
+            self.db.execute('''UPDATE rpg_farming_sessions SET status='cancelled',result=NULL
+                WHERE guild_id=? AND user_id=? AND location_id=?''',
+                (guild, user, location_id))
+        return dict(location_id=location_id, plant_id=row[0])
 
     def set_notify(self, guild, user, enabled):
         with self.db:

@@ -84,6 +84,21 @@ class FishingTests(unittest.TestCase):
                                 SequenceRandom([0.54]))
         self.assertEqual(picked, 'fishing:lake:rare')
 
+    def test_cancel_discards_all_progress_and_rewards(self):
+        self.fishing.start(1, 1, 'pond', 'long', now=100)
+        result = self.fishing.cancel(1, 1)
+        self.assertEqual(result, {'spot_id': 'pond', 'duration_id': 'long'})
+        state = self.fishing.state(1, 1)
+        self.assertEqual(state['session']['status'], 'cancelled')
+        self.assertEqual(state['xp'], 0)
+        self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
+        with self.assertRaisesRegex(CharacterError, '已經中斷'):
+            self.fishing.claim(1, 1, now=999999)
+        with self.assertRaisesRegex(CharacterError, '沒有進行中'):
+            self.fishing.cancel(1, 1)
+        self.fishing.start(1, 1, 'pond', 'short', now=200)
+        self.assertEqual(self.fishing.state(1, 1)['session']['status'], 'active')
+
     def test_level_twenty_lake_xp_crafting_and_restart(self):
         self.fishing.state(1, 1)
         with self.store.db:

@@ -69,6 +69,16 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(stranger, 'start')
         stranger.response.send_message.assert_awaited_once()
 
+    async def test_cancel_has_no_rewards(self):
+        with patch('core.rpg_fishing.time.time', return_value=100), \
+             patch('core.rpg_fishing_view.time.time', return_value=100):
+            await self.view.handle(self.interaction, 'start')
+            await self.view.handle(self.interaction, 'cancel')
+        state = self.fishing.state(1, 1)
+        self.assertEqual((state['session']['status'], state['xp']), ('cancelled', 0))
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('不會獲得任何物品或釣魚 XP', embed.fields[-1].value)
+
 
 if __name__ == '__main__':
     unittest.main()

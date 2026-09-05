@@ -162,6 +162,8 @@ class Fishing:
                 result = json.loads(saved)
                 result['replayed'] = True
                 return result
+            if status != 'active':
+                raise CharacterError('這次釣魚已經中斷，無法收竿領取獎勵。')
             if now < ready_at:
                 raise CharacterError('還沒釣完，時間結束後才能收竿。')
             spot = SPOTS[spot_id]
@@ -197,6 +199,20 @@ class Fishing:
                 WHERE guild_id=? AND user_id=?''',
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')), guild, user))
             return result
+
+    def cancel(self, guild, user):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('''SELECT spot_id,duration_id FROM rpg_fishing_sessions
+                WHERE guild_id=? AND user_id=? AND status='active' ''',
+                (guild, user)).fetchone()
+            if not row:
+                raise CharacterError('目前沒有進行中的釣魚行程。')
+            self.db.execute('''UPDATE rpg_fishing_sessions
+                SET status='cancelled',result=NULL WHERE guild_id=? AND user_id=?''',
+                (guild, user))
+        spot_id, duration_id = row
+        return dict(spot_id=spot_id, duration_id=duration_id)
 
     def equip(self, guild, user, rod_id):
         if rod_id not in ROD_BONUS:
