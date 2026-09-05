@@ -4,7 +4,7 @@ from decimal import Decimal
 import random
 
 from core.rpg_character import CharacterError, ITEMS, combat_from_stats
-from core.rpg_monsters import monster_name
+from core.rpg_monsters import REFERENCE_LEVELS, monster_name
 from core.rpg import level_for
 
 
@@ -908,8 +908,15 @@ def raid_battle(participants, monster, seed):
                 fighter.hp = fighter.stats['HP']
             provision_logs.append(
                 f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
-    average = sum(p['state']['level'] for p in participants) / len(participants)
-    stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
+    participant_average = sum(p['state']['level'] for p in participants) / len(participants)
+    average = participant_average
+    if monster.get('balance_version', 1) >= 2 and monster.get('tier') in REFERENCE_LEVELS:
+        average = REFERENCE_LEVELS[monster['tier']]
+        base_hp = len(participants) * (150 + average * 28)
+    else:
+        # Announced V1 encounters retain their player-level scaling.
+        base_hp = sum(150 + p['state']['level'] * 28 for p in participants)
+    stats = {'HP': int(base_hp),
              '攻擊': int(22 + average * 6 + max(0, average - 20)),
              '防禦': int(10 + average * 2),
              '治療量': 0, '命中率': 92, '閃避率': 5, '暴擊率': 10}
@@ -923,8 +930,23 @@ def raid_battle(participants, monster, seed):
     elif monster['kind'] == '鐵殼魔像':
         stats['HP'] = int(stats['HP'] * 1.2)
         stats['防禦'] *= 2
-    for stat in ('HP', '攻擊', '防禦'):
-        stats[stat] = max(1, int(stats[stat] * monster.get('strength', 1)))
+    if monster.get('balance_version', 1) >= 2:
+        if monster.get('tier') in REFERENCE_LEVELS:
+            reference = REFERENCE_LEVELS[monster['tier']]
+            level_delta = Decimal(str(participant_average)) / Decimal(reference) - Decimal(1)
+            level_hp = max(Decimal('0.6'), min(Decimal('2'), Decimal(1) + level_delta * Decimal('0.4')))
+            level_attack = max(Decimal('0.85'), min(Decimal('1.25'),
+                               Decimal(1) + level_delta * Decimal('0.1')))
+            stats['HP'] = max(1, int(stats['HP'] * level_hp))
+            stats['攻擊'] = max(1, int(stats['攻擊'] * level_attack))
+        manual = monster.get('manual_strength', monster.get('strength', 1))
+        difficulty = monster.get('difficulty_multiplier', 1)
+        dynamic = {'HP': difficulty, '攻擊': 1 + (difficulty - 1) * 0.4, '防禦': 1}
+        for stat in ('HP', '攻擊', '防禦'):
+            stats[stat] = max(1, int(stats[stat] * manual * dynamic[stat]))
+    else:
+        for stat in ('HP', '攻擊', '防禦'):
+            stats[stat] = max(1, int(stats[stat] * monster.get('strength', 1)))
     count = profile['count'] if profile else 1
     for i in range(count):
         individual = dict(stats)

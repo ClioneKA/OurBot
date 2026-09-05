@@ -185,7 +185,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                  (1.089, '巨獸', {}, 326, 108)]
         for channel, (multiplier, kind, overrides, xp, gold) in enumerate(cases, 20):
             with self.store.db:
-                self.store.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?)', (1, channel, multiplier))
+                self.store.db.execute(
+                    'INSERT INTO rpg_raid_difficulty(guild_id,channel_id,multiplier,balance_version) '
+                    'VALUES (?,?,?,1)', (1, channel, multiplier))
             raid = self.repo.create(1, channel, dict(self.monster, kind=kind, strength=2), 100, policy, overrides)
             saved = self.repo.get(raid['id'])
             self.assertEqual((saved['reward_policy']['victory_xp'], saved['reward_policy']['victory_gold']), (xp, gold))
@@ -243,6 +245,44 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         finally:
             reopened.close()
 
+    async def test_v2_difficulty_is_narrow_performance_aware_and_ignores_rare_quality(self):
+        from core.rpg_monsters import prepare_monster
+
+        participant = self.participant()
+
+        def finish(result, round_number, remaining_percent=0, quality='普通'):
+            monster = prepare_monster(dict(self.monster), quality=quality)
+            raid = self.repo.create(1, 8, monster, 100, asdict(self.settings.raid))
+            raid.update(status='running', participants=[participant], members=[1])
+            self.repo.save(raid)
+            battle = raid_battle([participant], raid['monster'], 1)
+            enemy = battle.living(1)[0]
+            enemy.hp = enemy.stats['HP'] * remaining_percent // 100
+            battle.result = result
+            battle.round = round_number
+            return self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+
+        with self.store.db:
+            self.store.db.execute(
+                'INSERT INTO rpg_raid_difficulty(guild_id,channel_id,multiplier,balance_version) '
+                'VALUES (1,8,2.5,1)')
+        first = finish('勝利', 12)
+        self.assertEqual(first['difficulty']['current'], 1)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.03)
+        finish('勝利', 25)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.03)
+        finish('戰敗', 12, remaining_percent=80)
+        self.assertEqual(self.repo.difficulty(1, 8), 0.9991)
+        finish('勝利', 10, quality='首領')
+        self.assertEqual(self.repo.difficulty(1, 8), 0.9991)
+
+        with self.store.db:
+            self.store.db.execute(
+                'UPDATE rpg_raid_difficulty SET multiplier=1.1,balance_version=2 '
+                'WHERE guild_id=1 AND channel_id=8')
+        finish('勝利', 5)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.1)
+
     async def test_dynamic_difficulty_cancellation_and_atomic_rollback(self):
         raid = self.lobby()
         await self.service.advance(raid, self.channel, 400)
@@ -289,7 +329,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raid['reward_policy']['victory_gold'], 500)
         self.assertEqual(raid['reward_policy']['drop_chance'], 0)
         p = self.participant()
-        regular = raid_battle([p], dict(raid['monster'], strength=1), 1)
+        regular = raid_battle([p], dict(raid['monster'], strength=1, manual_strength=1), 1)
         custom = raid_battle([p], raid['monster'], 1)
         self.assertEqual(sum(f.stats['HP'] for f in custom.living(1)),
                          2 * sum(f.stats['HP'] for f in regular.living(1)))

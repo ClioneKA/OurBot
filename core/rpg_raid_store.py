@@ -41,12 +41,26 @@ class RaidStore:
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_mid_raid_bags (channel_id INTEGER PRIMARY KEY, remaining TEXT NOT NULL)')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raid_difficulty (
                 guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, multiplier REAL NOT NULL,
+                balance_version INTEGER NOT NULL DEFAULT 2,
                 PRIMARY KEY (guild_id, channel_id))''')
+            difficulty_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_raid_difficulty)')}
+            if 'balance_version' not in difficulty_columns:
+                # Existing multipliers calibrated the V1 player-level formula and
+                # must not carry into the fixed-tier V2 model.
+                self.db.execute(
+                    'ALTER TABLE rpg_raid_difficulty ADD COLUMN balance_version INTEGER NOT NULL DEFAULT 1')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_battle_results (
                 raid_id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL,
                 monster_kind TEXT NOT NULL, result TEXT NOT NULL, rounds INTEGER NOT NULL,
                 difficulty REAL NOT NULL, strength REAL NOT NULL, participant_count INTEGER NOT NULL,
-                completed_at REAL NOT NULL)''')
+                completed_at REAL NOT NULL, quality TEXT NOT NULL DEFAULT '舊制',
+                balance_version INTEGER NOT NULL DEFAULT 1)''')
+            result_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_battle_results)')}
+            if 'quality' not in result_columns:
+                self.db.execute("ALTER TABLE rpg_battle_results ADD COLUMN quality TEXT NOT NULL DEFAULT '舊制'")
+            if 'balance_version' not in result_columns:
+                self.db.execute(
+                    'ALTER TABLE rpg_battle_results ADD COLUMN balance_version INTEGER NOT NULL DEFAULT 1')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_battle_participants (
                 raid_id TEXT NOT NULL, user_id INTEGER NOT NULL, job TEXT NOT NULL, level INTEGER NOT NULL,
                 max_hp INTEGER NOT NULL, final_hp INTEGER NOT NULL, damage_dealt INTEGER NOT NULL,
@@ -64,10 +78,13 @@ class RaidStore:
                 self.db.execute('ALTER TABLE rpg_battle_participants ADD COLUMN support_damage INTEGER NOT NULL DEFAULT 0')
             self.db.execute('CREATE INDEX IF NOT EXISTS rpg_battle_results_guild_time ON rpg_battle_results(guild_id, completed_at)')
 
-    def difficulty(self, guild, channel):
-        row = self.db.execute('SELECT multiplier FROM rpg_raid_difficulty WHERE guild_id=? AND channel_id=?',
+    def difficulty(self, guild, channel, balance_version=None):
+        row = self.db.execute(
+            'SELECT multiplier,balance_version FROM rpg_raid_difficulty WHERE guild_id=? AND channel_id=?',
                               (guild, channel)).fetchone()
-        return row[0] if row else 1.0
+        if not row or balance_version is not None and row[1] != balance_version:
+            return 1.0
+        return row[0]
 
     def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None, pool='regular'):
         if 'quality' in monster:
@@ -97,7 +114,8 @@ class RaidStore:
                     fixed_drop_mode='single_random', pool=pool)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            dynamic = self.difficulty(guild, channel)
+            balance_version = monster.get('balance_version', 1)
+            dynamic = self.difficulty(guild, channel, balance_version)
             if reward_policy is not None:
                 # Freeze final rewards at announcement; explicit admin amounts remain final.
                 policy = dict(reward_policy)
@@ -109,7 +127,11 @@ class RaidStore:
                 raid['reward_policy'] = policy
                 raid['reward_scaling'] = dict(multiplier=dynamic, fields=scaled)
             base_strength = monster.get('strength', 1.0)
-            raid['monster'] = dict(monster, strength=round(base_strength * dynamic, 6))
+            if balance_version >= 2:
+                raid['monster'] = dict(monster, strength=base_strength, manual_strength=base_strength,
+                                       difficulty_multiplier=dynamic)
+            else:
+                raid['monster'] = dict(monster, strength=round(base_strength * dynamic, 6))
             raid['difficulty'] = dict(current=dynamic, base_strength=base_strength)
             self.db.execute('INSERT INTO rpg_raids(id,guild_id,channel_id,status,data) VALUES (?,?,?,?,?)',
                             (raid['id'], guild, channel, raid['status'], json.dumps(raid, ensure_ascii=False)))
@@ -243,10 +265,19 @@ class RaidStore:
                 rewards.append(reward)
             raid.update(status='completed', battle=battle_data, rewards=rewards)
             difficulty = raid.get('difficulty', {}).get('current', 1.0)
-            self.db.execute('INSERT OR REPLACE INTO rpg_battle_results VALUES (?,?,?,?,?,?,?,?,?,?)',
+            recorded_strength = raid['monster'].get('strength', 1.0)
+            if raid['monster'].get('balance_version', 1) >= 2:
+                recorded_strength = (raid['monster'].get('manual_strength', 1.0)
+                                     * raid['monster'].get('difficulty_multiplier', 1.0))
+            self.db.execute('''INSERT OR REPLACE INTO rpg_battle_results
+                (raid_id,guild_id,channel_id,monster_kind,result,rounds,difficulty,strength,
+                 participant_count,completed_at,quality,balance_version)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
                             (raid['id'], raid['guild_id'], raid['channel_id'], raid['monster']['kind'],
                              battle_data['result'], battle_data['round'], difficulty,
-                             raid['monster'].get('strength', 1.0), len(raid['participants']), time.time()))
+                             recorded_strength, len(raid['participants']), time.time(),
+                             raid['monster'].get('quality', '舊制'),
+                             raid['monster'].get('balance_version', 1)))
             player_fighters = [fighter for fighter in battle_data['fighters'] if fighter['team'] == 0]
             for index, participant in enumerate(raid['participants']):
                 fighter = next((item for item in player_fighters if item.get('user_id') == participant['id']),
@@ -268,12 +299,36 @@ class RaidStore:
                      stats.get('direct_damage', stats.get('damage_dealt', 0)),
                      stats.get('support_damage', 0)))
             if raid['participants']:
-                before = self.difficulty(raid['guild_id'], raid['channel_id'])
-                after = round(max(0.5, min(3.0, before * (1.1 if victory else 0.9))), 6)
-                self.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?) '
-                                'ON CONFLICT(guild_id,channel_id) DO UPDATE SET multiplier=excluded.multiplier',
-                                (raid['guild_id'], raid['channel_id'], after))
-                raid['difficulty_change'] = dict(before=before, after=after)
+                balance_version = raid['monster'].get('balance_version', 1)
+                before = self.difficulty(raid['guild_id'], raid['channel_id'], balance_version)
+                if balance_version >= 2:
+                    progress = depleted / maximum if maximum else 0
+                    quality = raid['monster'].get('quality', '普通')
+                    weight = {'普通': 1, '精英': 0.5, '首領': 0, '傳說': 0}.get(quality, 0)
+                    if victory:
+                        change = 0.03 if battle_data['round'] <= 15 else 0.015 if battle_data['round'] <= 22 else 0
+                    elif '回合上限' in battle_data['result']:
+                        change = -0.02 if progress < 0.6 else -0.01 if progress < 0.85 else 0
+                    else:
+                        change = -0.03 if progress < 0.6 else -0.02 if progress < 0.75 else -0.01
+                    after = round(max(0.9, min(1.1, before * (1 + change * weight))), 6)
+                    self.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?,?) '
+                                    'ON CONFLICT(guild_id,channel_id) DO UPDATE SET '
+                                    'multiplier=excluded.multiplier,balance_version=excluded.balance_version',
+                                    (raid['guild_id'], raid['channel_id'], after, balance_version))
+                    raid['difficulty_change'] = dict(before=before, after=after)
+                else:
+                    row = self.db.execute(
+                        'SELECT balance_version FROM rpg_raid_difficulty WHERE guild_id=? AND channel_id=?',
+                        (raid['guild_id'], raid['channel_id'])).fetchone()
+                    # Finishing an old snapshot must not overwrite a V2 channel.
+                    if not row or row[0] < 2:
+                        after = round(max(0.5, min(3.0, before * (1.1 if victory else 0.9))), 6)
+                        self.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?,1) '
+                                        'ON CONFLICT(guild_id,channel_id) DO UPDATE SET '
+                                        'multiplier=excluded.multiplier,balance_version=1',
+                                        (raid['guild_id'], raid['channel_id'], after))
+                        raid['difficulty_change'] = dict(before=before, after=after)
             self._save(raid)
             return raid
 
@@ -281,9 +336,12 @@ class RaidStore:
         overall = self.db.execute('''SELECT COUNT(*), COALESCE(SUM(result='勝利'), 0),
             COALESCE(AVG(rounds), 0), COALESCE(AVG(participant_count), 0)
             FROM rpg_battle_results WHERE guild_id=? AND completed_at>=?''', (guild_id, since)).fetchone()
-        monsters = self.db.execute('''SELECT monster_kind, COUNT(*), SUM(result='勝利'), AVG(rounds), AVG(strength)
+        monsters = self.db.execute('''SELECT
+            CASE WHEN quality='舊制' THEN monster_kind ELSE quality || '・' || monster_kind END,
+            COUNT(*), SUM(result='勝利'), AVG(rounds), AVG(strength)
             FROM rpg_battle_results WHERE guild_id=? AND completed_at>=?
-            GROUP BY monster_kind ORDER BY COUNT(*) DESC, monster_kind LIMIT 8''', (guild_id, since)).fetchall()
+            GROUP BY monster_kind,quality ORDER BY COUNT(*) DESC, monster_kind,quality LIMIT 8''',
+                                   (guild_id, since)).fetchall()
         jobs = self.db.execute('''SELECT p.job, COUNT(*), SUM(r.result='勝利'), AVG(p.direct_damage),
             AVG(p.support_damage), AVG(p.healing_done), AVG(p.damage_taken)
             FROM rpg_battle_participants p JOIN rpg_battle_results r ON r.raid_id=p.raid_id

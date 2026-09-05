@@ -212,8 +212,8 @@ class RaidService:
                   '月影妖狐': '每三回合月影斬：150% 單體攻擊，閃避率 +15% 至下一回合結束',
                   '血翼蝠王': '每兩回合汲血撕咬：150% 單體攻擊，回復實際扣血量的 30%',
                   '哥布林戰團': '隊長與兩名打手獨立血量；隊長每三回合鼓舞全團，攻擊 +25% 至下一回合結束，當回合不普攻',
-                  '荊棘妖樹': '每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），跳過下一次行動，可淨化；不受嘲諷影響',
-                  '鐵殼魔像': '血量 1.2 倍、防禦 2 倍；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
+                  '荊棘妖樹': '高血量、速度慢；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），跳過下一次行動，可淨化；不受嘲諷影響',
+                  '鐵殼魔像': '高防禦、速度慢；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
                   '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響',
                   '深淵鐘龍': '蓄力時獲得鐘甲，直接命中可削減層數；鐘甲未破將釋放最高 300% 全體傷害；免疫暈眩',
                   '王城傀儡師': '劍傀儡護主、咒傀儡替本體減傷；每三回合修復，半血後吸收存活傀儡',
@@ -226,7 +226,7 @@ class RaidService:
                       '毒蛛': '血薄、防禦低、速度快、閃避高；攻擊附帶中毒，可淨化',
                       '史萊姆群': '三隻獨立血量的史萊姆，每隻每回合一次 45% 撞擊；倒下後停止攻擊，可用群攻對付',
                       '鐵殼魔像': '高防禦、速度慢；第 3、6、9…回合蓄力，下一回合 250% 單體重拳',
-                      '荊棘妖樹': '高血量、低攻擊；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化',
+                      '荊棘妖樹': '高血量、速度慢；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化',
                       '深淵鐘龍': '免疫暈眩；蓄力鐘甲須靠全隊直接命中擊碎，失敗將承受最高 300% 全體傷害',
                       '王城傀儡師': '本體與兩具傀儡各自獨立血量；善用群攻製造兩具傀儡同時倒下的破綻',
                       '瘟疫縫合獸': '腐敗三層在行動前爆裂並波及全隊；淨化優先於治療可阻止共享血肉回血'}[raid['monster']['kind']]
@@ -236,12 +236,22 @@ class RaidService:
         requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') == 'mid' else ''
         embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
-        embed.add_field(name='魔物特性', value=traits + '；開戰時按隊伍人數及等級決定強度。', inline=False)
-        embed.add_field(name='強度倍率', value=f'{raid["monster"].get("strength", 1):g} 倍（血量、攻擊、防禦）')
+        v2 = raid['monster'].get('balance_version', 1) >= 2
+        scaling_text = ('；以內容階級為基準，隊伍平均等級主要調整血量並小幅調整攻擊。' if v2
+                        else '；開戰時按隊伍人數及等級決定強度。')
+        embed.add_field(name='魔物特性', value=traits + scaling_text, inline=False)
+        strength = raid['monster'].get('manual_strength', raid['monster'].get('strength', 1))
+        embed.add_field(name='強度倍率', value=f'{strength:g} 倍（管理員設定）' if v2
+                        else f'{strength:g} 倍（血量、攻擊、防禦）')
         if raid.get('difficulty'):
             d = raid['difficulty']
-            embed.add_field(name='頻道動態難度', value=f'{d["current"]:.3f} × 本場設定 {d["base_strength"]:g}\n'
-                            '勝利後 ×1.1，戰敗／回合上限後 ×0.9；動態難度範圍 0.5–3 倍。', inline=False)
+            if v2:
+                difficulty_text = (f'{d["current"]:.3f}（HP 完整套用、攻擊套用 40% 幅度、防禦不變）\n'
+                                   '依完成回合與削減 HP 微調；精英半額，首領／傳說不調整；範圍 0.9–1.1。')
+            else:
+                difficulty_text = (f'{d["current"]:.3f} × 本場設定 {d["base_strength"]:g}\n'
+                                   '勝利後 ×1.1，戰敗／回合上限後 ×0.9；動態難度範圍 0.5–3 倍。')
+            embed.add_field(name='頻道動態難度', value=difficulty_text, inline=False)
         pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
         category = '討伐飾品' if pool and all(ITEMS[key].slot == '飾品' for key in pool) else '專屬裝備'
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
