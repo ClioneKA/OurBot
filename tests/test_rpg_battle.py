@@ -17,6 +17,17 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(archer_rules[2].condition, 'enemies3')
         self.assertEqual(cleric_rules[1].target, 'strongest')
 
+    def test_tank_professions_use_higher_defense_effectiveness(self):
+        results = {}
+        for job in ('民兵', '裝甲步兵', '騎士', '弓兵', '僧侶'):
+            actor = fighter(attack=200, rules=[])
+            target = fighter(job, 1, job=job, hp=1000, rules=[])
+            target.stats['防禦'] = 100
+            Battle([actor, target], seed=1).hit(actor, target, precise=True)
+            results[job] = target.combat_stats['damage_taken']
+        self.assertEqual(results, {'民兵': 165, '裝甲步兵': 160, '騎士': 155,
+                                   '弓兵': 165, '僧侶': 165})
+
     def test_configurable_numeric_conditions_use_the_saved_threshold(self):
         enemy = fighter('敵人', 1, hp=100, rules=[])
         actor = fighter(hp=100, rules=[Rule(1, 1, True, 'self40', 'lowest', None, 35)])

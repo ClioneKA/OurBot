@@ -117,6 +117,15 @@ class MonsterTests(unittest.TestCase):
             self.assertEqual((f.stats['HP'], f.stats['攻擊'], f.stats['防禦']), (hp, attack, defense))
             self.assertEqual((f.dexterity, f.stats['命中率'], f.stats['暴擊率']), (36, 88, 10))
 
+    def test_monster_attack_gains_an_extra_point_per_level_after_twenty(self):
+        values = []
+        for level in (20, 50, 90):
+            player = participant()
+            player['state']['level'] = level
+            enemy = raid_battle([player], monster('巨獸'), 1).living(1)[0]
+            values.append(enemy.stats['攻擊'])
+        self.assertEqual(values, [170, 422, 758])
+
     def test_group_area_targeting_deaths_and_restart(self):
         battle = raid_battle([participant()], monster('史萊姆群'), 123)
         player, *slimes = battle.fighters

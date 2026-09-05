@@ -74,6 +74,9 @@ SKILLS = {
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'greater_heal'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
+# Defense is a role property of the target. Monsters and non-tank professions
+# retain the original coefficient.
+DEFENSE_EFFECTIVENESS = {'裝甲步兵': 0.40, '騎士': 0.45}
 
 
 def unlocked_skills(job, level):
@@ -399,9 +402,10 @@ class Battle:
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
         critical = self.rng.random() * 100 < actor.stats['暴擊率']
+        defense_effectiveness = DEFENSE_EFFECTIVENESS.get(target.job, 0.35)
 
         def final_damage(attack_value, defense_value):
-            value = max(1, int(attack_value * power - defense_value * 0.35))
+            value = max(1, int(attack_value * power - defense_value * defense_effectiveness))
             value = max(1, value * stability // 100)
             if critical:
                 value = int(value * 1.5)
@@ -680,7 +684,8 @@ def raid_battle(participants, monster, seed):
                 f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
     average = sum(p['state']['level'] for p in participants) / len(participants)
     stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
-             '攻擊': int(22 + average * 6), '防禦': int(10 + average * 2),
+             '攻擊': int(22 + average * 6 + max(0, average - 20)),
+             '防禦': int(10 + average * 2),
              '治療量': 0, '命中率': 92, '閃避率': 5, '暴擊率': 10}
     profile = monster.get('profile')
     speed = int(12 + average * 2)

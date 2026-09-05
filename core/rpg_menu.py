@@ -168,7 +168,7 @@ class AdventureView(discord.ui.View):
                 '以上除法皆無條件捨去。每回合靈巧高者先行動，同值隨機；不增加行動次數或縮短冷卻。', inline=False)
             embed.add_field(name='能力如何影響戰鬥', value=
                 '實際命中機率＝自身命中率－目標閃避率，限制在 10%～99%（精準射擊必中）。\n'
-                '基礎傷害＝攻擊 × 技能倍率－防禦 × 0.35，再計算武器穩定度、暴擊與減傷，最低 1。\n'
+                '基礎傷害＝攻擊 × 技能倍率－防禦 × 職業係數；騎士 0.45、裝甲步兵 0.40、其餘與魔物 0.35，再計算武器穩定度、暴擊與減傷，最低 1。\n'
                 '最大 HP 也提高騎士護衛與重整旗鼓的效果；治療量影響包紮與僧侶治療技能。', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
