@@ -1,4 +1,5 @@
 """Cooking, alchemy, persistent loadouts, and exactly-once raid consumption."""
+from collections import Counter
 import json
 
 from core.rpg_character import CharacterError, ITEMS
@@ -48,25 +49,41 @@ class Provisions:
                 raid_id TEXT NOT NULL, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 data TEXT NOT NULL, PRIMARY KEY(raid_id,user_id))''')
 
-    def craft(self, guild, user, item_id):
+    def max_craftable(self, guild, user, item_id):
         recipe = RECIPES.get(item_id)
         if not recipe:
             raise CharacterError('請重新選擇料理或藥水。')
+        required = Counter(recipe['ingredients'])
+        counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
+            WHERE guild_id=? AND user_id=?''', (guild, user)))
+        return min(counts.get(key, 0) // amount for key, amount in required.items())
+
+    def craft(self, guild, user, item_id, quantity=1):
+        recipe = RECIPES.get(item_id)
+        if not recipe:
+            raise CharacterError('請重新選擇料理或藥水。')
+        if type(quantity) is not int or quantity < 1:
+            raise CharacterError('製作數量必須是正整數。')
+        required = Counter(recipe['ingredients'])
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
                 WHERE guild_id=? AND user_id=?''', (guild, user)))
-            missing = [ITEMS[key].name for key in recipe['ingredients'] if counts.get(key, 0) < 1]
+            missing = [f'{ITEMS[key].name} {counts.get(key, 0)}/{amount * quantity}'
+                       for key, amount in required.items()
+                       if counts.get(key, 0) < amount * quantity]
             if missing:
-                raise CharacterError('缺少材料：' + '、'.join(missing))
-            for key in recipe['ingredients']:
-                self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
-                    WHERE guild_id=? AND user_id=? AND item_id=?''', (guild, user, key))
+                raise CharacterError('材料不足：' + '、'.join(missing))
+            for key, amount in required.items():
+                self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
+                    WHERE guild_id=? AND user_id=? AND item_id=?''',
+                    (amount * quantity, guild, user, key))
                 self.db.execute('''DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=?
                     AND item_id=? AND quantity=0''', (guild, user, key))
             self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
-                VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
-                DO UPDATE SET quantity=quantity+1''', (guild, user, item_id))
+                VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
+                DO UPDATE SET quantity=quantity+excluded.quantity''',
+                (guild, user, item_id, quantity))
         return ITEMS[item_id]
 
     def loadout(self, guild, user):

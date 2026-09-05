@@ -45,6 +45,30 @@ class ProvisionTests(unittest.TestCase):
         self.assertNotIn(crop, counts)
         self.assertEqual(counts[key], 1)
 
+    def test_batch_crafting_five_all_and_insufficient_rollback(self):
+        key = 'food:pond:common'
+        fish, crop = FOODS[key]['ingredients']
+        self.grant(fish, 8)
+        self.grant(crop, 6)
+        self.assertEqual(self.provisions.max_craftable(1, 1, key), 6)
+        self.provisions.craft(1, 1, key, 5)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual((counts[fish], counts[crop], counts[key]), (3, 1, 5))
+        before = counts.copy()
+        with self.assertRaisesRegex(CharacterError, '材料不足'):
+            self.provisions.craft(1, 1, key, 2)
+        self.assertEqual(self.characters.inventory_counts(1, 1), before)
+        remaining = self.provisions.max_craftable(1, 1, key)
+        self.provisions.craft(1, 1, key, remaining)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts[key], 6)
+        self.assertEqual(self.provisions.max_craftable(1, 1, key), 0)
+
+    def test_batch_quantity_must_be_positive_integer(self):
+        for quantity in (0, -1, 1.5, True):
+            with self.subTest(quantity=quantity), self.assertRaises(CharacterError):
+                self.provisions.craft(1, 1, 'food:pond:common', quantity)
+
     def test_loadout_consumes_once_and_freezes_effect(self):
         food, potion = 'food:pond:rare', 'potion:1:attack'
         self.grant(food, 2)

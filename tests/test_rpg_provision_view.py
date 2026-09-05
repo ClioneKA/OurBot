@@ -29,13 +29,13 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
 
-    def grant(self, key):
+    def grant(self, key, quantity=1):
         with self.store.db:
-            self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,1)', (key,))
+            self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,?)', (key, quantity))
 
     async def test_crafting_panel_only_crafts_food(self):
         self.assertLessEqual(len(self.view.to_components()), 5)
-        self.assertEqual(len(self.view.children), 6)
+        self.assertEqual(len(self.view.children), 8)
         self.grant('fishing:pond:common')
         self.grant('farming:potato')
         await self.view.handle(self.interaction, 'craft')
@@ -43,6 +43,17 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.provisions.loadout(1, 1), {})
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('成功製作', embed.fields[-1].value)
+
+    async def test_crafting_panel_can_make_five_or_all(self):
+        self.grant('fishing:pond:common', 8)
+        self.grant('farming:potato', 6)
+        await self.view.handle(self.interaction, 'craft:5')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 5)
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('×5', embed.fields[-1].value)
+        self.assertIn('最多可製作：1 個', embed.fields[0].value)
+        await self.view.handle(self.interaction, 'craft:all')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 6)
 
     async def test_equipment_loadout_panel_selects_food(self):
         self.grant('food:pond:common')
