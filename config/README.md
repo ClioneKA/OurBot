@@ -37,7 +37,7 @@
 | `settings.toml` 的 `[ai]` | 一般模型、回覆機率、聊天歷史與輸入輸出長度 |
 | `[ai.search]` | 搜尋開關、模型與每日額度 |
 | `[ai.limits]` | 個人／頻道冷卻、整體限頻、每日額度與重置時區 |
-| `[ai.memory]` | 印象摘要與好感度設定；`summary_model` 留空時使用 `ai.model` |
+| `[ai.memory]` | 印象、好感度及伺服器共同記憶設定；`summary_model` 留空時使用 `ai.model` |
 | `[ai.media]` | 圖片／語音回覆開關、長度、冷卻與額度 |
 | `[tts]` | MiniMax 語音模型與音色 ID |
 | `[rpg]` | RPG 等級開關、文字 XP／冷卻／長度、語音 XP／人數；詳見 [RPG 說明](RPG.md) |

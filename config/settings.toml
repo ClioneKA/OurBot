@@ -40,6 +40,10 @@ summary_max_output_tokens = 2000
 summary_model = ""
 # 好感度每天最多自動變動幾次；範圍固定為 -100 到 100。
 affinity_daily_changes = 3
+# 伺服器共同記憶至少需幾段聊天證據，並限制保存及每次提示的數量。
+guild_memory_min_evidence = 2
+guild_memory_limit = 30
+guild_memory_prompt_limit = 20
 
 [ai.media]
 # 人格回覆媒體。預設只有直接提及／回覆時能使用，隨機插話只傳文字。

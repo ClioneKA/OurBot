@@ -26,6 +26,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.ai.limits.user_daily_limit, 7)
         self.assertTrue(settings.ai.search.enabled)
         self.assertEqual(settings.ai.memory.summary_model, '')
+        self.assertEqual(settings.ai.memory.guild_memory_limit, 30)
+        self.assertEqual(settings.ai.memory.guild_memory_min_evidence, 2)
 
     def test_invalid_types_ranges_and_unknown_keys(self):
         cases = [

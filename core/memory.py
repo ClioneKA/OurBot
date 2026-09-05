@@ -23,8 +23,20 @@ class ImpressionObservation:
     content: str
 
 
+@dataclass(frozen=True)
+class GuildMemory:
+    id: int
+    category: str
+    content: str
+    importance: int
+    evidence_count: int
+    updated_at: str
+
+
 class MemoryStore:
-    """以伺服器及使用者隔離的稱謂、互動印象與使用量資料。"""
+    """保存伺服器共同記憶，以及按伺服器與使用者隔離的個人資料。"""
+
+    GUILD_MEMORY_CATEGORIES = {"identity", "culture", "preference", "activity", "other"}
 
     def __init__(self, path: str, max_per_user: int = 100):
         self.path = Path(path).resolve()
@@ -128,8 +140,131 @@ class MemoryStore:
                     guild_id INTEGER PRIMARY KEY,
                     reply_count INTEGER NOT NULL DEFAULT 0
                 );
+
+                CREATE TABLE IF NOT EXISTS guild_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    category TEXT NOT NULL CHECK(category IN (
+                        'identity', 'culture', 'preference', 'activity', 'other'
+                    )),
+                    content TEXT NOT NULL,
+                    importance INTEGER NOT NULL DEFAULT 3
+                        CHECK(importance BETWEEN 1 AND 5),
+                    evidence_count INTEGER NOT NULL DEFAULT 2,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(guild_id, content)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_guild_memories_owner
+                ON guild_memories(guild_id, importance DESC, updated_at DESC);
                 """
             )
+
+    def list_guild_memories(
+        self, guild_id: int, limit: int = 30
+    ) -> List[GuildMemory]:
+        with self.lock, self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, category, content, importance, evidence_count,
+                       updated_at
+                FROM guild_memories
+                WHERE guild_id = ?
+                ORDER BY importance DESC, evidence_count DESC,
+                         updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (guild_id, max(1, min(limit, 100))),
+            ).fetchall()
+        return [GuildMemory(**dict(row)) for row in rows]
+
+    def apply_guild_memory_candidates(
+        self,
+        guild_id: int,
+        candidates: List[Dict[str, object]],
+        max_per_guild: int = 30,
+        min_evidence: int = 2,
+    ) -> None:
+        """新增或修正模型提出的共同記憶，並限制每個伺服器的總量。"""
+        max_per_guild = max(1, min(max_per_guild, 100))
+        min_evidence = max(2, min(min_evidence, 20))
+        with self.lock, self._connection() as connection:
+            for candidate in candidates:
+                content = " ".join(str(candidate.get("content", "")).strip().split())[:200]
+                category = str(candidate.get("category", ""))
+                try:
+                    memory_id = int(candidate.get("id", 0))
+                    importance = max(1, min(int(candidate.get("importance", 3)), 5))
+                    evidence_count = max(0, min(int(candidate.get("evidence_count", 0)), 1000))
+                except (TypeError, ValueError):
+                    continue
+                if not content or category not in self.GUILD_MEMORY_CATEGORIES:
+                    continue
+
+                existing = None
+                if memory_id > 0:
+                    existing = connection.execute(
+                        "SELECT id FROM guild_memories WHERE id = ? AND guild_id = ?",
+                        (memory_id, guild_id),
+                    ).fetchone()
+                    if existing is None:
+                        continue
+                if existing is not None:
+                    if evidence_count < min_evidence:
+                        continue
+                    try:
+                        connection.execute(
+                            """
+                            UPDATE guild_memories
+                            SET category = ?, content = ?, importance = ?,
+                                evidence_count = evidence_count + ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ? AND guild_id = ?
+                            """,
+                            (category, content, importance, evidence_count, memory_id, guild_id),
+                        )
+                    except sqlite3.IntegrityError:
+                        pass
+                    continue
+
+                if evidence_count < min_evidence:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO guild_memories(
+                        guild_id, category, content, importance, evidence_count
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(guild_id, content) DO UPDATE SET
+                        category = excluded.category,
+                        importance = MAX(importance, excluded.importance),
+                        evidence_count = evidence_count + excluded.evidence_count,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (guild_id, category, content, importance, evidence_count),
+                )
+
+            connection.execute(
+                """
+                DELETE FROM guild_memories
+                WHERE guild_id = ? AND id NOT IN (
+                    SELECT id FROM guild_memories
+                    WHERE guild_id = ?
+                    ORDER BY importance DESC, evidence_count DESC,
+                             updated_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (guild_id, guild_id, max_per_guild),
+            )
+
+    def forget_guild_memory(self, guild_id: int, memory_id: int) -> bool:
+        with self.lock, self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM guild_memories WHERE guild_id = ? AND id = ?",
+                (guild_id, memory_id),
+            )
+            return cursor.rowcount > 0
 
     def get_impression(self, guild_id: int, user_id: int) -> Optional[str]:
         with self.lock, self._connection() as connection:

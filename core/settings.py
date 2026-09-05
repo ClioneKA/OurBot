@@ -43,6 +43,9 @@ class MemorySettings:
     summary_max_output_tokens: int = field(default=2000, metadata={'minimum': 200, 'maximum': 8000})
     summary_model: str = field(default='', metadata={})
     affinity_daily_changes: int = field(default=3, metadata={'minimum': 1, 'maximum': 20})
+    guild_memory_limit: int = field(default=30, metadata={'minimum': 1, 'maximum': 100})
+    guild_memory_prompt_limit: int = field(default=20, metadata={'minimum': 1, 'maximum': 50})
+    guild_memory_min_evidence: int = field(default=2, metadata={'minimum': 2, 'maximum': 20})
 
 
 @dataclass(frozen=True)
