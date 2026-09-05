@@ -59,6 +59,13 @@ class ProgressionTests(unittest.TestCase):
         self.tactics.equip(1, 1, '僧侶', 3, 3)
         self.assertEqual(rule_skill('僧侶', self.tactics.rules(1, 1, '僧侶')[1]).name, '淨化')
 
+    def test_re_equipping_bless_restores_strongest_target_default(self):
+        self.store.award_voice([(1, 1, level_floor(20))])
+        self.tactics.equip(1, 1, '僧侶', 2, 4)
+        self.tactics.equip(1, 1, '僧侶', 2, 2)
+        rule = next(rule for rule in self.tactics.rules(1, 1, '僧侶') if rule.slot == 2)
+        self.assertEqual((rule.condition, rule.target), ('always', 'strongest'))
+
     def test_target_validation_follows_equipped_skill(self):
         self.store.award_voice([(1, 1, level_floor(20))])
         self.tactics.equip(1, 1, '騎士', 3, 4)

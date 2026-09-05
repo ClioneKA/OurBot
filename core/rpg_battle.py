@@ -10,7 +10,8 @@ from core.rpg import level_for
 
 CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 40%',
               'ally50': '隊伍有人 HP ≤ 50%', 'enemies3': '存活敵人 ≥ 3',
-              'ally_debuff': '隊友有可淨化負面狀態（含自己）'}
+              'ally_debuff': '隊友有可淨化負面狀態（含自己）',
+              'enemy_charging': '敵人正在蓄力'}
 TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': '自己',
            'debuffed': '有可淨化負面狀態的隊友'}
 
@@ -34,24 +35,24 @@ class Skill:
 SKILLS = {
     '民兵': (Skill('奮力一擊', 'strike', 2, '造成 160% 傷害'),
              Skill('包紮', 'heal', 3, '以治療量的 50% 恢復一名隊友生命', 'ally50'),
-             Skill('防禦', 'stance', 3, '自身減傷 20%', 'self40')),
+             Skill('防禦', 'stance', 3, '自身減傷 20%，持續至下一回合結束', 'self40')),
     '裝甲步兵': (Skill('重擊', 'strike', 2, '造成 160% 傷害'),
-                 Skill('破甲', 'break', 3, '造成傷害並降低目標防禦 40%'),
-                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%', 'self40'),
+                 Skill('破甲', 'break', 3, '造成 100% 傷害並降低目標防禦 40%，持續至下一回合結束'),
+                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40'),
                  Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
                  Skill('重裝猛擊', 'crush', 4, '對單一敵人造成 220% 傷害')),
-    '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊，自身減傷 15%'),
-             Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值', 'ally50'),
-             Skill('堅守', 'stance', 3, '自身減傷 50%', 'self40'),
-             Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後暈眩至下一回合結束（跳過一次行動）'),
+    '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊並使自身減傷 15%，持續至下一回合結束'),
+             Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值，持續至下一回合結束', 'ally50'),
+             Skill('堅守', 'stance', 3, '自身減傷 50%，持續至下一回合結束', 'self40'),
+             Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後打斷蓄力並暈眩至下一回合結束（跳過一次行動）'),
              Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 25%', 'self40')),
     '弓兵': (Skill('連射', 'double', 2, '兩次 85% 傷害，各自判定命中'),
              Skill('精準射擊', 'precise', 3, '必中，造成 150% 傷害'),
-             Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害'),
+             Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害', 'enemies3'),
              Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 75% 傷害，分別判定命中'),
              Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 2%（無條件捨去，最低 1）')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
-             Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%'),
+             Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%，持續至下一回合結束'),
              Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff'),
              Skill('群體治療', 'group_heal', 4, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
              Skill('強效治療', 'greater_heal', 4, '恢復一名隊友 180% 治療量的 HP', 'ally50')),
@@ -70,6 +71,14 @@ def rule_skill(job, rule):
     return SKILLS[job][(rule.skill_id or rule.slot) - 1]
 
 
+def default_target(skill):
+    if skill.effect == 'cleanse':
+        return 'debuffed'
+    if skill.effect == 'bless':
+        return 'strongest'
+    return 'lowest'
+
+
 @dataclass(frozen=True)
 class Rule:
     slot: int
@@ -81,7 +90,7 @@ class Rule:
 
 
 def default_rules(job):
-    return [Rule(i, i, True, skill.condition, 'debuffed' if skill.effect == 'cleanse' else 'lowest')
+    return [Rule(i, i, True, skill.condition, default_target(skill))
             for i, skill in enumerate(SKILLS[job][:3], 1)]
 
 
@@ -147,7 +156,7 @@ class Tactics:
             skill = SKILLS[job][skill_id - 1]
             self.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                             (guild, user, job, slot, current.priority, int(current.enabled), skill.condition,
-                             'debuffed' if skill.effect == 'cleanse' else 'lowest', skill_id))
+                             default_target(skill), skill_id))
 
 
 @dataclass
@@ -274,6 +283,8 @@ class Battle:
                 continue
             if rule.condition == 'ally_debuff' and not any(
                     any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun')) for f in allies):
+                continue
+            if rule.condition == 'enemy_charging' and not any(f.has('charged_punch', self.round) for f in enemies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect in ('heal', 'greater_heal', 'group_heal'):
@@ -472,6 +483,8 @@ class Battle:
                 target.effects['break'] = self.round + 1
             if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
                 status = 'stun' if effect == 'shield_bash' else 'poison'
+                if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
+                    self.log.append(f'{target.name} 的蓄力被打斷')
                 target.effects[status] = max(target.effects.get(status, 0), self.round + (1 if status == 'stun' else 2))
                 if status == 'poison':
                     target.effect_sources['poison'] = actor.user_id

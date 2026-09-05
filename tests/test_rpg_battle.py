@@ -11,6 +11,12 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_default_arrow_rain_and_bless_rules_avoid_wasted_casts(self):
+        archer_rules = default_rules('弓兵')
+        cleric_rules = default_rules('僧侶')
+        self.assertEqual(archer_rules[2].condition, 'enemies3')
+        self.assertEqual(cleric_rules[1].target, 'strongest')
+
     def test_food_triggers_once_and_rare_regen_starts_next_round(self):
         from unittest.mock import patch
         player = fighter(hp=200, rules=[])
@@ -264,6 +270,21 @@ class BattleTests(unittest.TestCase):
         with patch.object(restored, 'hit') as hit:
             restored.act(golem)
             hit.assert_called_once_with(golem, tank)
+
+    def test_shield_bash_can_require_and_interrupt_charge(self):
+        knight = fighter('騎士', job='騎士', rules=[
+            Rule(1, 1, True, 'enemy_charging', 'strongest', 4)
+        ])
+        golem = fighter('魔像', 1, job='鐵殼魔像', hp=1000, attack=100, rules=[])
+        battle = Battle([knight, golem], seed=1)
+        battle.round = 1
+        self.assertIsNone(battle.select(knight))
+        golem.effects['charged_punch'] = 2
+        self.assertEqual(battle.select(knight)[1].name, '盾擊')
+        battle.act(knight)
+        self.assertNotIn('charged_punch', golem.effects)
+        self.assertTrue(golem.has('stun', 1))
+        self.assertTrue(any('蓄力被打斷' in line for line in battle.log))
 
     def test_slime_three_hits_taunt_and_stop_when_no_targets(self):
         from unittest.mock import patch
