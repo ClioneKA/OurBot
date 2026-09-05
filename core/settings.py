@@ -135,6 +135,8 @@ class RPGSettings:
     veteran_level: int = field(default=50, metadata={'minimum': 12, 'maximum': 119})
     elite_level: int = field(default=90, metadata={'minimum': 13, 'maximum': 120})
     raid: RaidSettings = field(default_factory=RaidSettings)
+    mid_raid: RaidSettings = field(default_factory=lambda: RaidSettings(
+        min_interval_minutes=90, max_interval_minutes=180, victory_xp=600, victory_gold=200))
 
     def __post_init__(self):
         if not 10 < self.regular_level < self.veteran_level < self.elite_level:

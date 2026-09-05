@@ -23,16 +23,18 @@ from core.settings import daily_periods
 
 
 logger = logging.getLogger(__name__)
+REGULAR_KINDS = ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王')
+MID_KINDS = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
 
 
-def channel_ids(raw):
+def channel_ids(raw, label='RPG_RAID_CHANNEL_IDS'):
     try:
         result = {int(part.strip()) for part in raw.split(',') if part.strip()}
         if any(value <= 0 for value in result):
             raise ValueError
         return result
     except ValueError as exc:
-        raise ValueError('RPG_RAID_CHANNEL_IDS 必須是逗號分隔的正整數頻道 ID') from exc
+        raise ValueError(f'{label} 必須是逗號分隔的正整數頻道 ID') from exc
 
 
 def safe_text(value, length):
@@ -51,13 +53,14 @@ class RaidSignup(discord.ui.View):
             await interaction.response.send_message('只有伺服器成員可參加。', ephemeral=True)
             return
         try:
-            if not self.service.settings.enabled or interaction.channel_id not in self.service.channels:
+            settings = self.service.settings_for_channel(interaction.channel_id)
+            if not settings.enabled or interaction.channel_id not in self.service.all_channels:
                 raise CharacterError('本頻道的討伐活動已停用。')
             raid = self.service.repo.get(self.raid_id)
             if not raid or interaction.channel_id != raid['channel_id']:
                 raise CharacterError('無效的討伐頻道。')
             raid = self.service.repo.join(self.raid_id, interaction.guild_id, interaction.user.id,
-                                          time.time(), self.service.settings.max_participants, leave=leave)
+                                          time.time(), settings.max_participants, leave=leave)
             text = '已退出討伐。' if leave else '報名成功！截止時會使用你當時的裝備與技能設定自動戰鬥。'
         except CharacterError as exc:
             text = str(exc)
@@ -78,6 +81,11 @@ class RaidService:
         self.cog, self.bot = cog, cog.bot
         self.settings = cog.settings.raid
         self.channels = channel_ids(os.getenv('RPG_RAID_CHANNEL_IDS', ''))
+        self.mid_settings = cog.settings.mid_raid
+        self.mid_channels = channel_ids(os.getenv('RPG_MID_RAID_CHANNEL_IDS', ''), 'RPG_MID_RAID_CHANNEL_IDS')
+        if self.channels & self.mid_channels:
+            raise ValueError('一般討伐與中階討伐頻道不可重複')
+        self.all_channels = self.channels | self.mid_channels
         self.repo = RaidStore(cog.store)
         self.notifications = RaidNotifications(cog.store)
         self.views = {}
@@ -92,6 +100,8 @@ class RaidService:
                 # A crash during send can leave an orphan message; its buttons stay closed.
                 raid.update(status='cancelled', delivered=True)
                 self.repo.save(raid)
+                if raid.get('pool') == 'mid' and raid.get('bag_draw'):
+                    self.repo.return_mid_kind(raid['channel_id'], raid['monster']['kind'])
             elif raid['status'] == 'lobby' and raid['message_id']:
                 view = self.signup(raid)
                 self.bot.add_view(view, message_id=raid['message_id'])
@@ -121,12 +131,13 @@ class RaidService:
         return self.views[raid['id']]
 
     def next_spawn(self, channel, now):
-        minimum = self.settings.min_interval_minutes * 60
-        maximum = self.settings.max_interval_minutes * 60
+        settings = self.settings_for_channel(channel)
+        minimum = settings.min_interval_minutes * 60
+        maximum = settings.max_interval_minutes * 60
         local_now = datetime.fromtimestamp(
-            now, timezone(timedelta(hours=self.settings.schedule_timezone_offset_hours)))
+            now, timezone(timedelta(hours=settings.schedule_timezone_offset_hours)))
         minute = local_now.hour * 60 + local_now.minute
-        for start, end in daily_periods(self.settings.half_interval_periods):
+        for start, end in daily_periods(settings.half_interval_periods):
             in_period = start <= minute < end if start < end else minute >= start or minute < end
             if in_period:
                 minimum //= 2
@@ -135,8 +146,11 @@ class RaidService:
         delay = random.randint(minimum, maximum)
         self.repo.schedule(channel, now + delay)
 
+    def settings_for_channel(self, channel):
+        return self.mid_settings if channel in self.mid_channels else self.settings
+
     async def imagine(self, kind=None):
-        kind = kind or random.choices(('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'), weights=(20, 20, 5, 11, 11, 11, 11, 11), k=1)[0]
+        kind = kind or random.choices(REGULAR_KINDS, weights=(20, 20, 5, 11, 11, 11, 11, 11), k=1)[0]
         monster = dict(name=random.choice(('吞月棉花獸', '夜光茶壺怪', '迷霧糖霜蛛')),
                        description='安安：「吾輩剛剛想到的怪物跑出來了！有誰願意一起對付牠？」', kind=kind)
         if kind == '月影妖狐':
@@ -151,7 +165,14 @@ class RaidService:
             monster.update(name='鐵殼魔像', description='安安：「吾輩做的鐵皮玩偶站起來了！當心牠蓄力後的重拳！」')
         if kind == '史萊姆群':
             monster.update(name='蹦跳果凍史萊姆群', description='安安：「吾輩的果凍變成一大群史萊姆了！快來幫忙收拾牠們！」')
-        if not self.settings.ai_monsters or not os.getenv('OPENAI_API_KEY'):
+        if kind == '深淵鐘龍':
+            monster.update(name='深淵鐘龍', description='安安：「鐘聲從深淵裡傳上來了！快在牠敲響終末之前擊碎鐘甲！」')
+        if kind == '王城傀儡師':
+            monster.update(name='王城傀儡師', description='安安：「廢棄王城的絲線動起來了！先拆掉護主的兩具傀儡！」')
+        if kind == '瘟疫縫合獸':
+            monster.update(name='瘟疫縫合獸', description='安安：「那頭縫合怪物正在散播腐敗！記得先淨化再治療！」')
+        ai_settings = self.mid_settings if kind in MID_KINDS else self.settings
+        if not ai_settings.ai_monsters or not os.getenv('OPENAI_API_KEY'):
             return monster
         try:
             if self.client is None:
@@ -171,7 +192,10 @@ class RaidService:
                                      '哥布林戰團': '一名隊長與兩名打手，各自獨立血量；隊長每三回合鼓舞全團。名稱須包含哥布林戰團。',
                                      '荊棘妖樹': '每三回合再生回血並纏繞暈眩部分玩家。名稱須包含妖樹。',
                                      '鐵殼魔像': '高防禦魔像，每三回合蓄力，下一回合單體重拳。名稱須包含魔像。',
-                                     '史萊姆群': '一群史萊姆共用血量，每回合連續三次彈跳撞擊。名稱須包含史萊姆群。'}[kind],
+                                     '史萊姆群': '一群史萊姆共用血量，每回合連續三次彈跳撞擊。名稱須包含史萊姆群。',
+                                     '深淵鐘龍': '以可被多次直接命中擊碎的鐘甲蓄力全體終末鐘聲，免疫暈眩。名稱須包含鐘龍。',
+                                     '王城傀儡師': '與劍傀儡、咒傀儡共同作戰，會修復或吸收傀儡。名稱須包含傀儡師。',
+                                     '瘟疫縫合獸': '疊加可淨化的腐敗，三層會爆裂；治療腐敗者會使怪物回血。名稱須包含縫合獸。'}[kind],
                 text={'format': schema}, max_output_tokens=800, store=False)
             data = json.loads(response.output_text)
             if not all(isinstance(data.get(k), str) and data[k].strip() for k in ('name', 'description')):
@@ -182,14 +206,18 @@ class RaidService:
         return monster
 
     def lobby_embed(self, raid):
-        policy = SimpleNamespace(**raid['reward_policy']) if raid.get('reward_policy') else self.settings
+        channel_settings = self.settings_for_channel(raid['channel_id']) if hasattr(self, 'settings_for_channel') else self.settings
+        policy = SimpleNamespace(**raid['reward_policy']) if raid.get('reward_policy') else channel_settings
         traits = {'巨獸': '每三回合對全隊橫掃', '毒蛛': '攻擊附帶中毒，可用淨化解除',
                   '月影妖狐': '每三回合月影斬：150% 單體攻擊，閃避率 +15% 至下一回合結束',
                   '血翼蝠王': '每兩回合汲血撕咬：150% 單體攻擊，回復實際扣血量的 30%',
                   '哥布林戰團': '隊長與兩名打手獨立血量；隊長每三回合鼓舞全團，攻擊 +25% 至下一回合結束，當回合不普攻',
                   '荊棘妖樹': '每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），跳過下一次行動，可淨化；不受嘲諷影響',
                   '鐵殼魔像': '血量 1.2 倍、防禦 2 倍；第 3、6、9…回合蓄力，下一回合 250% 重拳，受嘲諷影響',
-                  '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響'}[raid['monster']['kind']]
+                  '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響',
+                  '深淵鐘龍': '蓄力時獲得鐘甲，直接命中可削減層數；鐘甲未破將釋放最高 300% 全體傷害；免疫暈眩',
+                  '王城傀儡師': '劍傀儡護主、咒傀儡替本體減傷；每三回合修復，半血後吸收存活傀儡',
+                  '瘟疫縫合獸': '攻擊疊加腐敗，三層在行動前爆裂；腐敗者受到技能治療會使怪物回血，可淨化'}[raid['monster']['kind']]
         if raid['monster'].get('profile'):
             traits = {'巨獸': '血厚、攻擊高、防禦偏低、速度慢；每三回合對全隊橫掃',
                       '月影妖狐': '血薄、速度快、閃避高；每三回合月影斬：150% 單體攻擊，閃避率 +15% 至下一回合結束；精準射擊必中',
@@ -198,11 +226,14 @@ class RaidService:
                       '毒蛛': '血薄、防禦低、速度快、閃避高；攻擊附帶中毒，可淨化',
                       '史萊姆群': '三隻獨立血量的史萊姆，每隻每回合一次 45% 撞擊；倒下後停止攻擊，可用群攻對付',
                       '鐵殼魔像': '高防禦、速度慢；第 3、6、9…回合蓄力，下一回合 250% 單體重拳',
-                      '荊棘妖樹': '高血量、低攻擊；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化'}[raid['monster']['kind']]
+                      '荊棘妖樹': '高血量、低攻擊；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化',
+                      '深淵鐘龍': '免疫暈眩；蓄力鐘甲須靠全隊直接命中擊碎，失敗將承受最高 300% 全體傷害',
+                      '王城傀儡師': '本體與兩具傀儡各自獨立血量；善用群攻製造兩具傀儡同時倒下的破綻',
+                      '瘟疫縫合獸': '腐敗三層在行動前爆裂並波及全隊；淨化優先於治療可阻止共享血肉回血'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
-        embed.add_field(name=f'參與者 {len(raid["members"])}/{self.settings.max_participants}',
+        embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}',
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
         embed.add_field(name='魔物特性', value=traits + '；開戰時按隊伍人數及等級決定強度。', inline=False)
         embed.add_field(name='強度倍率', value=f'{raid["monster"].get("strength", 1):g} 倍（血量、攻擊、防禦）')
@@ -214,6 +245,8 @@ class RaidService:
         category = '討伐飾品' if pool and all(ITEMS[key].slot == '飾品' for key in pool) else '專屬裝備'
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
                      else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
+        if raid.get('fixed_drop'):
+            loot_text += f'；勝利固定取得 {ITEMS[raid["fixed_drop"]].name}'
         scaling = raid.get('reward_scaling')
         if scaling:
             labels = {'victory_xp': '勝利經驗', 'victory_gold': '勝利金幣'}
@@ -243,7 +276,9 @@ class RaidService:
                 percent = (maximum - remaining) * 100 / maximum if maximum else 0
                 embed.add_field(name='失敗獎勵比例', value=f'怪物剩餘 HP：{remaining:,}/{maximum:,}；'
                                 f'依已削減血量 {percent:.2f}% 發放經驗與金幣（無條件捨去），無掉落。', inline=False)
-            lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣' + (f'、{ITEMS[r["item"]].name}' if r['item'] else '') for r in raid['rewards']]
+            lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣'
+                     + (f'、{ITEMS[r["item"]].name}' if r['item'] else '')
+                     + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
             players = [fighter for fighter in battle.fighters if fighter.team == 0]
             players.sort(key=lambda fighter: (fighter.combat_stats['direct_damage']
@@ -262,8 +297,10 @@ class RaidService:
 
     async def advance(self, raid, channel, now):
         message = channel.get_partial_message(raid['message_id'])
+        settings = self.settings_for_channel(raid['channel_id'])
         if raid['status'] == 'lobby':
-            if raid['channel_id'] not in self.channels or not self.settings.enabled:
+            expected_channels = self.mid_channels if raid.get('pool') == 'mid' else self.channels
+            if raid['channel_id'] not in expected_channels or not settings.enabled:
                 raid.update(status='cancelled', reason='討伐活動已停用。')
                 self.repo.save(raid)
             elif now < raid['deadline']:
@@ -302,7 +339,7 @@ class RaidService:
             battle.step()
             raid['battle'] = dump_battle(battle)
             if battle.result:
-                raid = self.repo.settle(raid['id'], raid['battle'], self.settings)
+                raid = self.repo.settle(raid['id'], raid['battle'], settings)
             else:
                 self.repo.save(raid)
                 await message.edit(embed=self.battle_embed(raid, battle), view=None, allowed_mentions=discord.AllowedMentions.none())
@@ -315,7 +352,9 @@ class RaidService:
                 f'承傷 {f.combat_stats["damage_taken"]}, 命中 {f.combat_stats["hits"]}/{f.combat_stats["attacks"]}, '
                 f'暴擊 {f.combat_stats["critical_hits"]}, 技能 {json.dumps(f.combat_stats["skills_used"], ensure_ascii=False)}'
                 for f in battle.fighters if f.team == 0) + '\n\n獎勵：\n' + '\n'.join(
-                f'{r["id"]}: {r["xp"]} XP, {r.get("gold", 0)} 金幣, {ITEMS[r["item"]].name if r["item"] else "無掉落"}' for r in raid['rewards'])
+                f'{r["id"]}: {r["xp"]} XP, {r.get("gold", 0)} 金幣, '
+                f'{ITEMS[r["item"]].name if r["item"] else "無隨機掉落"}'
+                f'{", " + ITEMS[r["fixed_item"]].name if r.get("fixed_item") else ""}' for r in raid['rewards'])
             await message.edit(embed=self.battle_embed(raid, battle), view=None,
                                attachments=[discord.File(io.BytesIO(report.encode('utf-8')), filename='討伐戰報.txt')],
                                allowed_mentions=discord.AllowedMentions.none())
@@ -328,7 +367,7 @@ class RaidService:
 
     async def spawn(self, channel, *, kind=None, name=None, strength=1.0,
                     victory_xp=None, victory_gold=None, drop_percent=None):
-        if kind is not None and kind not in ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王'):
+        if kind is not None and kind not in REGULAR_KINDS + MID_KINDS:
             raise CharacterError('無效的怪物類型。')
         if not 0.1 <= strength <= 10:
             raise CharacterError('強度倍率必須介於 0.1–10。')
@@ -341,10 +380,15 @@ class RaidService:
                 if not isinstance(value, int) or not 0 <= value <= limit:
                     raise CharacterError(f'{key} 必須介於 0–{limit}。')
                 overrides[key] = value / 100 if key == 'drop_chance' else value
-        if not self.settings.enabled:
-            raise CharacterError('討伐活動目前已停用。')
-        if not isinstance(channel, discord.TextChannel) or channel.id not in self.channels:
+        if not isinstance(channel, discord.TextChannel) or channel.id not in self.all_channels:
             raise CharacterError('請在已設定的討伐文字頻道使用此指令。')
+        pool = 'mid' if channel.id in self.mid_channels else 'regular'
+        settings = self.settings_for_channel(channel.id)
+        allowed = MID_KINDS if pool == 'mid' else REGULAR_KINDS
+        if kind is not None and kind not in allowed:
+            raise CharacterError(f'這個頻道只能生成{"中階" if pool == "mid" else "一般"}討伐怪物。')
+        if not settings.enabled:
+            raise CharacterError(f'{"中階" if pool == "mid" else "一般"}討伐活動目前已停用。')
         if channel.guild.unavailable:
             raise CharacterError('伺服器暫時無法使用，請稍後再試。')
         if channel.id in self.spawning or any(r['channel_id'] == channel.id for r in self.repo.pending()):
@@ -355,16 +399,23 @@ class RaidService:
         self.spawn_tasks.add(task)
         self.next_spawn(channel.id, time.time())
         raid = None
+        bag_draw = False
         try:
+            if kind is None and pool == 'mid':
+                kind = self.repo.next_mid_kind(channel.id, MID_KINDS)
+                bag_draw = True
             monster = dict(await self.imagine(kind) if kind is not None else await self.imagine())
             monster['strength'] = strength
             if name is not None:
                 monster['name'] = name.strip()
             monster = prepare_monster(monster)
-            raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(self.settings), overrides)
+            raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(settings), overrides,
+                                    pool=pool)
+            raid['bag_draw'] = bag_draw
+            self.repo.save(raid)
             role = None
             try:
-                role = await self.notifications.ensure(channel.guild)
+                role = await self.notifications.ensure(channel.guild, pool)
             except (CharacterError, discord.HTTPException) as exc:
                 logger.warning('Raid notification role unavailable for guild %s: %s', channel.guild.id, exc)
             message = await channel.send(content=role.mention if role else None,
@@ -381,6 +432,8 @@ class RaidService:
                 view = self.views.pop(raid['id'], None)
                 if view:
                     view.stop()
+            if bag_draw:
+                self.repo.return_mid_kind(channel.id, kind)
             raise
         finally:
             self.spawning.discard(channel.id)
@@ -411,12 +464,14 @@ class RaidService:
                     view.stop()
             except Exception:
                 logger.exception('Raid update failed: %s', raid['id'])
-        if not self.settings.enabled:
+        if not self.settings.enabled and not self.mid_settings.enabled:
             return
         occupied = {r['channel_id'] for r in self.repo.pending()}
-        for channel_id in self.channels - occupied:
+        for channel_id in self.all_channels - occupied:
             channel = self.bot.get_channel(channel_id)
             if not isinstance(channel, discord.TextChannel) or channel.guild.unavailable:
+                continue
+            if not self.settings_for_channel(channel_id).enabled:
                 continue
             due = self.repo.next_at(channel_id)
             if due is None:

@@ -17,6 +17,45 @@ from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mid_tier_channel_pool_rewards_and_fixed_paint_drop(self):
+        from cmds.rpg import RPG
+        choices = next(p.choices for p in RPG.spawn_raid.parameters if p.name == 'kind')
+        self.assertTrue({'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸'} <= {choice.value for choice in choices})
+
+        class FakeChannel:
+            id = 3
+            guild = SimpleNamespace(id=1, unavailable=False)
+
+        channel = FakeChannel()
+        channel.send = AsyncMock(return_value=SimpleNamespace(id=9))
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel), patch.dict('os.environ', {'OPENAI_API_KEY': ''}), \
+                patch('core.rpg_monsters.random.choices', return_value=['普通']):
+            with self.assertRaises(CharacterError):
+                await service.spawn(channel, kind='巨獸')
+            await service.spawn(channel, kind='深淵鐘龍')
+        raid = next(item for item in service.repo.pending() if item['channel_id'] == 3)
+        self.assertEqual((raid['pool'], raid['monster']['tier']), ('mid', 3))
+        self.assertEqual((raid['reward_policy']['victory_xp'], raid['reward_policy']['victory_gold']), (600, 200))
+        self.assertEqual(raid['fixed_drop'], 'paint:red')
+        participant = self.participant()
+        raid.update(status='running', participants=[participant], members=[1])
+        service.repo.save(raid)
+        battle = raid_battle([participant], raid['monster'], 1)
+        battle.result = '勝利'
+        settled = service.repo.settle(raid['id'], dump_battle(battle), self.settings.mid_raid)
+        self.assertEqual(settled['rewards'][0]['fixed_item'], 'paint:red')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['paint:red'], 1)
+
+    async def test_mid_tier_shuffle_bag_contains_each_monster_once(self):
+        kinds = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
+        first = [self.repo.next_mid_kind(99, kinds) for _ in range(3)]
+        second = [self.repo.next_mid_kind(99, kinds) for _ in range(3)]
+        self.assertEqual(set(first), set(kinds))
+        self.assertEqual(set(second), set(kinds))
+
     async def test_fox_bat_generation_loot_and_command_choices(self):
         from core.rpg_monsters import prepare_monster
         from cmds.rpg import RPG

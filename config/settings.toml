@@ -90,5 +90,16 @@ max_participants = 20
 victory_xp = 300
 victory_gold = 100
 # 舊設定相容欄位；失敗改依怪物已削減 HP 比例發放勝利經驗與金幣，此值不再用於結算。
-defeat_xp = 30
+drop_chance = 0.125
+
+[rpg.mid_raid]
+enabled = true
+ai_monsters = true
+min_interval_minutes = 45
+max_interval_minutes = 90
+half_interval_periods = "12:00-14:00,18:00-23:00"
+schedule_timezone_offset_hours = 8
+max_participants = 20
+victory_xp = 600
+victory_gold = 200
 drop_chance = 0.125

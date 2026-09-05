@@ -229,6 +229,11 @@ class Fighter:
     stability: tuple = (100, 100)
     armed: bool = True
     lifesteal: int = 0
+    damage_guard_chance: int = 0
+    vulnerable_chance: int = 0
+    vulnerable_percent: int = 0
+    healing_share: int = 0
+    status_stacks: dict = field(default_factory=dict)
     user_id: int | None = None
     combat_stats: dict = field(default_factory=empty_combat_stats)
     food_name: str = ''
@@ -262,20 +267,34 @@ class Battle:
         self.max_rounds = max_rounds
         self.result = None
         self.log = []
+        self.mechanics = {}
 
     @staticmethod
     def record_skill(actor, name):
         used = actor.combat_stats['skills_used']
         used[name] = used.get(name, 0) + 1
 
-    @staticmethod
-    def heal(actor, target, requested):
+    def heal(self, actor, target, requested, trigger_share=True):
         requested = max(0, int(requested))
         amount = min(target.stats['HP'] - target.hp, requested)
         target.hp += amount
         actor.combat_stats['healing_done'] += amount
         actor.combat_stats['overhealing'] += requested - amount
         target.combat_stats['healing_received'] += amount
+        if amount and trigger_share and target.team == 0 and target.status_stacks.get('corruption', 0):
+            beast = next((f for f in self.living(1) if f.job == '瘟疫縫合獸'), None)
+            if beast is not None:
+                rate = 30 if self.mechanics.get('plague_phase_two') else 20
+                stolen = self.restore(beast, amount * rate // 100)
+                if stolen:
+                    self.log.append(f'{beast.name} 的【共享血肉】恢復 {stolen} HP。')
+        if amount and trigger_share and target.healing_share:
+            allies = [f for f in self.living(target.team) if f is not target and f.hp < f.stats['HP']]
+            if allies:
+                ally = min(allies, key=lambda f: f.hp / f.stats['HP'])
+                shared = self.heal(target, ally, amount * target.healing_share // 100, trigger_share=False)
+                if shared:
+                    self.log.append(f'{target.name} 的【雙生護符】使 {ally.name} 恢復 {shared} HP。')
         return amount
 
     @staticmethod
@@ -307,6 +326,10 @@ class Battle:
         return next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
 
     def check_end(self):
+        master = next((f for f in self.fighters if f.team == 1 and f.job == '王城傀儡師'), None)
+        if master is not None and master.hp <= 0:
+            for puppet in (f for f in self.fighters if f.team == 1 and f.job in ('劍傀儡', '咒傀儡')):
+                puppet.hp = 0
         if not self.living(0) and not self.living(1):
             self.result = '平手'
         elif not self.living(1):
@@ -317,7 +340,8 @@ class Battle:
 
     def target(self, actor, candidates, rule, offensive=False):
         if rule.target == 'debuffed':
-            candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))]
+            candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))
+                          or f.status_stacks.get('corruption', 0)]
         if offensive:
             taunters = [f for f in candidates if f.has('taunt', self.round)]
             candidates = taunters or candidates
@@ -325,6 +349,9 @@ class Battle:
             return actor if actor in candidates else None
         if not candidates:
             return None
+        if rule.target == 'debuffed':
+            return max(candidates, key=lambda f: (f.status_stacks.get('corruption', 0),
+                                                   -f.hp / f.stats['HP']))
         if rule.target == 'strongest':
             return max(candidates, key=lambda f: f.stats['攻擊'])
         return min(candidates, key=lambda f: f.hp / f.stats['HP'])
@@ -353,9 +380,12 @@ class Battle:
             if rule.condition == 'round_gte' and self.round < threshold:
                 continue
             if rule.condition == 'ally_debuff' and not any(
-                    any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun')) for f in allies):
+                    any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))
+                    or f.status_stacks.get('corruption', 0) for f in allies):
                 continue
-            if rule.condition == 'enemy_charging' and not any(f.has('charged_punch', self.round) for f in enemies):
+            if rule.condition == 'enemy_charging' and not any(
+                    f.has('charged_punch', self.round) or
+                    (f.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) for f in enemies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect in ('heal', 'greater_heal', 'group_heal'):
@@ -402,6 +432,10 @@ class Battle:
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
         critical = self.rng.random() * 100 < actor.stats['暴擊率']
+        guarded = bool(target.damage_guard_chance and self.rng.random() * 100 < target.damage_guard_chance)
+        puppet_shield = (target.job == '王城傀儡師'
+                         and any(f.job == '咒傀儡' for f in self.living(target.team))
+                         and not self.mechanics.get('puppet_phase_two'))
         defense_effectiveness = DEFENSE_EFFECTIVENESS.get(target.job, 0.35)
 
         def final_damage(attack_value, defense_value):
@@ -414,22 +448,33 @@ class Battle:
                 value = max(1, int(value * multiplier))
             if target.has('taunt', self.round):
                 value = max(1, int(value * 0.85))
+            if puppet_shield:
+                value = max(1, value // 2)
+            if guarded:
+                value = max(1, value // 2)
             return value
 
         damage = final_damage(attack, defense)
         base_damage = final_damage(base_attack, base_defense)
         broken_damage = final_damage(base_attack, defense)
+        vulnerable = target.has('vulnerable', self.round)
+        pre_vulnerable_damage = damage
+        if vulnerable:
+            damage = max(1, damage * 110 // 100)
         actual_damage = min(target.hp, damage)
+        pre_vulnerable_actual = min(target.hp, pre_vulnerable_damage)
         base_actual = min(target.hp, base_damage)
         broken_actual = min(target.hp, broken_damage)
         break_assist = max(0, broken_actual - base_actual) if broken else 0
-        bless_assist = max(0, actual_damage - broken_actual) if blessed else 0
+        bless_assist = max(0, pre_vulnerable_actual - broken_actual) if blessed else 0
+        vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
         target.hp = max(0, target.hp - damage)
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
         actor.combat_stats['damage_dealt'] += actual_damage
-        actor.combat_stats['direct_damage'] += actual_damage - break_assist - bless_assist
-        for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor)):
+        actor.combat_stats['direct_damage'] += actual_damage - break_assist - bless_assist - vulnerable_assist
+        for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor),
+                                         ('vulnerable', vulnerable_assist, target)):
             if not amount:
                 continue
             source = self.effect_source(affected, effect)
@@ -442,7 +487,22 @@ class Battle:
             actor.combat_stats['knockouts'] += 1
             target.combat_stats['deaths'] += 1
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
-                        f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}{"，倒下" if target.hp == 0 else ""}')
+                        f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}'
+                        f'{"（套裝減傷）" if guarded else ""}{"，倒下" if target.hp == 0 else ""}')
+        if actor.team == 0 and target.job == '深淵鐘龍' and self.mechanics.get('clock_charging'):
+            layers = self.mechanics.get('clock_armor', 0)
+            if layers > 0:
+                removed = 2 if precise or critical else 1
+                self.mechanics['clock_armor'] = max(0, layers - removed)
+                self.log.append(f'{target.name} 的鐘甲減少 {min(layers, removed)} 層，剩餘 {self.mechanics["clock_armor"]} 層。')
+        if (actor.team == 0 and target.hp > 0 and actor.vulnerable_chance
+                and self.rng.random() * 100 < actor.vulnerable_chance):
+            target.effects['vulnerable'] = self.round + 1
+            if actor.user_id is not None:
+                target.effect_sources['vulnerable'] = actor.user_id
+            else:
+                target.effect_sources.pop('vulnerable', None)
+            self.log.append(f'{target.name} 陷入易傷，受到的直接傷害 +{actor.vulnerable_percent}% 至第 {self.round + 1} 回合結束。')
         self.maybe_eat(target)
         drain = actor.lifesteal if lifesteal is None else lifesteal
         healing = self.heal(actor, actor, actual_damage * drain // 100)
@@ -450,7 +510,119 @@ class Battle:
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
         return True
 
+    def add_corruption(self, target, amount=1):
+        before = target.status_stacks.get('corruption', 0)
+        target.status_stacks['corruption'] = min(3, before + amount)
+        self.log.append(f'{target.name} 的腐敗變為 {target.status_stacks["corruption"]} 層（3 層將在行動前爆裂）。')
+
+    def clockwork_act(self, actor):
+        if actor.hp * 2 <= actor.stats['HP'] and not self.mechanics.get('clock_phase_two'):
+            self.mechanics['clock_phase_two'] = True
+            self.log.append(f'{actor.name} 進入第二階段：終末鳴鐘的週期縮短，鐘甲額外 +2 層！')
+        if self.mechanics.get('clock_charging'):
+            layers = self.mechanics.get('clock_armor', 0)
+            self.mechanics['clock_charging'] = False
+            if not layers:
+                actor.effects['break'] = self.round + 1
+                self.log.append(f'{actor.name} 的鐘甲崩解！終末鐘聲取消，防禦降低 40% 至第 {self.round + 1} 回合結束。')
+            else:
+                power = min(3.0, 0.9 + layers * 0.15)
+                self.record_skill(actor, '終末鐘聲')
+                self.log.append(f'{actor.name} 釋放【終末鐘聲】：剩餘 {layers} 層鐘甲，全體 {power * 100:g}% 傷害！')
+                for enemy in self.living(0):
+                    self.hit(actor, enemy, power)
+            self.mechanics['next_clock_charge'] = self.round + (2 if self.mechanics.get('clock_phase_two') else 3)
+            return
+        if self.round >= self.mechanics.get('next_clock_charge', 3):
+            players = len(self.living(0))
+            layers = max(2, players + players // 3) + (2 if self.mechanics.get('clock_phase_two') else 0)
+            self.mechanics.update(clock_charging=True, clock_armor=layers)
+            self.record_skill(actor, '終末鳴鐘')
+            self.log.append(f'{actor.name} 使用【終末鳴鐘】：獲得 {layers} 層鐘甲，下回合將釋放終末鐘聲！')
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None:
+            self.hit(actor, target)
+
+    def puppeteer_act(self, actor):
+        puppets = [f for f in self.fighters if f.team == 1 and f.job in ('劍傀儡', '咒傀儡')]
+        if actor.hp * 2 <= actor.stats['HP'] and not self.mechanics.get('puppet_phase_two'):
+            self.mechanics['puppet_phase_two'] = True
+            living = [f for f in puppets if f.hp > 0]
+            names = {f.job for f in living}
+            for puppet in living:
+                puppet.hp = 0
+            if '劍傀儡' in names:
+                actor.stats['攻擊'] = max(1, actor.stats['攻擊'] * 125 // 100)
+            if '咒傀儡' in names:
+                actor.lifesteal = max(actor.lifesteal, 20)
+            gained = '、'.join(sorted(names)) or '沒有存活傀儡'
+            self.log.append(f'{actor.name} 使用【最後謝幕】，吸收：{gained}；永久停止重編絲線。')
+            return
+        if self.mechanics.get('puppet_phase_two'):
+            if self.round % 3 == 0:
+                self.record_skill(actor, '王城謝幕')
+                power = 0.9 + 0.25 * int(actor.stats['攻擊'] > self.mechanics.get('puppet_base_attack', actor.stats['攻擊']))
+                power += 0.25 * int(actor.lifesteal >= 20)
+                self.log.append(f'{actor.name} 使用【王城謝幕】')
+                for enemy in self.living(0):
+                    self.hit(actor, enemy, power)
+                return
+        elif self.round % 3 == 0:
+            self.record_skill(actor, '重編絲線')
+            dead = [f for f in puppets if f.hp <= 0]
+            if len(dead) == 2:
+                actor.effects['break'] = self.round + 1
+                self.log.append(f'{actor.name} 的【重編絲線】失敗，防禦降低 40% 至第 {self.round + 1} 回合結束。')
+            elif dead:
+                target = dead[0]
+                target.hp = max(1, target.stats['HP'] * 30 // 100)
+                self.log.append(f'{actor.name} 使用【重編絲線】，{target.name} 以 {target.hp} HP 復活。')
+            else:
+                target = min(puppets, key=lambda f: f.hp / f.stats['HP'])
+                healing = self.restore(target, target.stats['HP'] * 15 // 100)
+                self.log.append(f'{actor.name} 使用【重編絲線】，{target.name} 恢復 {healing} HP。')
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None:
+            self.hit(actor, target)
+
     def act(self, actor):
+        if actor.team == 1 and actor.job == '深淵鐘龍':
+            self.clockwork_act(actor)
+            return
+        if actor.team == 1 and actor.job == '王城傀儡師':
+            self.puppeteer_act(actor)
+            return
+        if actor.team == 1 and actor.job == '劍傀儡' and self.round % 2 == 0:
+            self.record_skill(actor, '旋刃')
+            self.log.append(f'{actor.name} 使用【旋刃】')
+            for enemy in self.living(0):
+                self.hit(actor, enemy, 0.55)
+            return
+        if actor.team == 1 and actor.job == '咒傀儡' and self.round % 3 == 0:
+            self.record_skill(actor, '斷線咒')
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'strongest'))
+            self.log.append(f'{actor.name} 使用【斷線咒】')
+            if target is not None and self.hit(actor, target, 0.8) and target.hp > 0:
+                target.effects['break'] = self.round + 1
+                self.log.append(f'{target.name} 遭到破甲，可用淨化解除。')
+            return
+        if actor.team == 1 and actor.job == '瘟疫縫合獸':
+            if actor.hp * 2 <= actor.stats['HP'] and not self.mechanics.get('plague_phase_two'):
+                self.mechanics['plague_phase_two'] = True
+                self.log.append(f'{actor.name} 進入第二階段【傷口崩解】！')
+            pulse = self.round % (2 if self.mechanics.get('plague_phase_two') else 3) == 0
+            if pulse:
+                self.record_skill(actor, '瘟疫脈衝')
+                self.log.append(f'{actor.name} 使用【瘟疫脈衝】')
+                for enemy in self.living(0):
+                    self.add_corruption(enemy)
+                return
         if actor.team == 1 and actor.job == '月影妖狐' and self.round % 3 == 0:
             self.record_skill(actor, '月影斬')
             actor.effects['moon_shadow'] = self.round + 1
@@ -528,6 +700,8 @@ class Battle:
             if hit and actor.job == '毒蛛' and target.hp > 0:
                 target.effects['poison'] = self.round + 2
                 target.effect_sources['poison'] = actor.user_id
+            if hit and actor.job == '瘟疫縫合獸' and target.hp > 0:
+                self.add_corruption(target)
             return
         rule, skill, target = selected
         self.record_skill(actor, skill.name)
@@ -550,6 +724,7 @@ class Battle:
             target.effects.pop('stun', None)
             target.effects.pop('poison', None)
             target.effects.pop('break', None)
+            target.status_stacks.pop('corruption', None)
             target.effect_sources.pop('poison', None)
             target.effect_sources.pop('break', None)
             self.log.append(f'移除 {target.name} 的負面狀態')
@@ -581,6 +756,9 @@ class Battle:
                 target.effect_sources['break'] = actor.user_id
             if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
                 status = 'stun' if effect == 'shield_bash' else 'poison'
+                if status == 'stun' and target.job == '深淵鐘龍':
+                    self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
+                    return
                 if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
                     self.log.append(f'{target.name} 的蓄力被打斷')
                 target.effects[status] = max(target.effects.get(status, 0), self.round + (1 if status == 'stun' else 2))
@@ -599,6 +777,42 @@ class Battle:
         for actor in order:
             if actor.hp <= 0:
                 continue
+            if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
+                actor.status_stacks.pop('corruption', None)
+                damage = max(1, actor.stats['HP'] * 12 // 100)
+                actual = min(actor.hp, damage)
+                actor.hp -= actual
+                actor.combat_stats['damage_taken'] += actual
+                if actual and actor.hp == 0:
+                    actor.combat_stats['deaths'] += 1
+                self.log.append(f'{actor.name} 的【腐敗爆裂】：自身損失 {actual} HP，腐敗歸零。')
+                self.maybe_eat(actor)
+                for ally in [f for f in self.living(0) if f is not actor]:
+                    splash = max(1, ally.stats['HP'] * 3 // 100)
+                    taken = min(ally.hp, splash)
+                    ally.hp -= taken
+                    ally.combat_stats['damage_taken'] += taken
+                    if taken and ally.hp == 0:
+                        ally.combat_stats['deaths'] += 1
+                    self.log.append(f'{ally.name} 受到腐敗波及，損失 {taken} HP。')
+                    self.maybe_eat(ally)
+                beast = next((f for f in self.living(1) if f.job == '瘟疫縫合獸'), None)
+                if beast is not None:
+                    rate = 2 if self.mechanics.get('plague_phase_two') else 1.5
+                    backlash = max(1, int(beast.stats['HP'] * rate / 100))
+                    actual_backlash = min(beast.hp, backlash)
+                    beast.hp -= actual_backlash
+                    beast.combat_stats['damage_taken'] += actual_backlash
+                    actor.combat_stats['damage_dealt'] += actual_backlash
+                    actor.combat_stats['support_damage'] += actual_backlash
+                    if actual_backlash and beast.hp == 0:
+                        actor.combat_stats['knockouts'] += 1
+                        beast.combat_stats['deaths'] += 1
+                    self.log.append(f'{beast.name} 遭縫線逆流，損失 {actual_backlash} HP。')
+                if self.check_end():
+                    break
+                if actor.hp == 0:
+                    continue
             if actor.has('poison', self.round):
                 # PvE poison only targets the opposing team: monsters poison players
                 # for 5%, while player poison arrows damage monsters for 2%.
@@ -645,6 +859,10 @@ def raid_battle(participants, monster, seed):
                         p['state']['total'][3], [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         lifesteal=p['state'].get('lifesteal', 0),
+                        damage_guard_chance=p['state'].get('damage_guard_chance', 0),
+                        vulnerable_chance=p['state'].get('vulnerable_chance', 0),
+                        vulnerable_percent=p['state'].get('vulnerable_percent', 0),
+                        healing_share=p['state'].get('healing_share', 0),
                         armed=bool(p['state'].get('equipped', {}).get('武器')),
                         user_id=p.get('id')) for p in participants]
     badge_logs = []
@@ -702,14 +920,29 @@ def raid_battle(participants, monster, seed):
     count = profile['count'] if profile else 1
     for i in range(count):
         individual = dict(stats)
-        individual['HP'] = max(1, stats['HP'] // count + (i < stats['HP'] % count))
+        if monster['kind'] == '王城傀儡師':
+            shares = (50, 25, 25)
+            individual['HP'] = max(1, stats['HP'] * shares[i] // 100
+                                   + (stats['HP'] - sum(stats['HP'] * share // 100 for share in shares) if i == 0 else 0))
+        else:
+            individual['HP'] = max(1, stats['HP'] // count + (i < stats['HP'] % count))
         name = monster_name(monster) + (f'・{i + 1}' if count > 1 else '')
         job = '史萊姆' if count > 1 and monster['kind'] == '史萊姆群' else monster['kind']
         if monster['kind'] == '哥布林戰團':
             job = '哥布林隊長' if i == 0 else '哥布林打手'
             name = monster_name(monster) + ('・隊長' if i == 0 else f'・打手{i}')
+        if monster['kind'] == '王城傀儡師':
+            job = ('王城傀儡師', '劍傀儡', '咒傀儡')[i]
+            name = monster_name(monster) if i == 0 else f'{monster_name(monster)}・{job}'
+            individual['攻擊'] = max(1, individual['攻擊'] * (100, 60, 40)[i] // 100)
+            individual['防禦'] = max(1, individual['防禦'] * (100, 120, 80)[i] // 100)
         fighters.append(Fighter(name, 1, job, individual, speed, []))
     battle = Battle(fighters, seed=seed)
+    if monster['kind'] == '深淵鐘龍':
+        battle.mechanics['next_clock_charge'] = 3
+    if monster['kind'] == '王城傀儡師':
+        battle.mechanics['puppet_base_attack'] = fighters[-3].stats['攻擊']
+        fighters[-2].effects['taunt'] = battle.max_rounds
     battle.log.extend(badge_logs)
     battle.log.extend(provision_logs)
     return battle
@@ -719,7 +952,7 @@ def dump_battle(battle):
     from dataclasses import asdict
     return dict(fighters=[asdict(f) for f in battle.fighters], round=battle.round,
                 max_rounds=battle.max_rounds, result=battle.result, log=battle.log,
-                random_state=battle.rng.getstate())
+                random_state=battle.rng.getstate(), mechanics=battle.mechanics)
 
 
 def load_battle(data):
@@ -737,6 +970,11 @@ def load_battle(data):
         f.stability = tuple(data_f.get('stability', (100, 100)))
         f.armed = data_f.get('armed', True)
         f.lifesteal = data_f.get('lifesteal', 0)
+        f.damage_guard_chance = data_f.get('damage_guard_chance', 0)
+        f.vulnerable_chance = data_f.get('vulnerable_chance', 0)
+        f.vulnerable_percent = data_f.get('vulnerable_percent', 0)
+        f.healing_share = data_f.get('healing_share', 0)
+        f.status_stacks = data_f.get('status_stacks', {})
         f.user_id = data_f.get('user_id')
         f.food_name = data_f.get('food_name', '')
         f.food_heal_permille = data_f.get('food_heal_permille', 0)
@@ -756,5 +994,6 @@ def load_battle(data):
         fighters.append(f)
     battle = Battle(fighters, max_rounds=data['max_rounds'])
     battle.round, battle.result, battle.log = data['round'], data['result'], list(data['log'])
+    battle.mechanics = dict(data.get('mechanics', {}))
     battle.rng.setstate(tuples(data['random_state']))
     return battle

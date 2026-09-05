@@ -69,6 +69,10 @@ class Item:
     party_bonus: bool = False
     evasion: int = 0
     lifesteal: int = 0
+    damage_guard_chance: int = 0
+    vulnerable_chance: int = 0
+    vulnerable_percent: int = 0
+    healing_share: int = 0
     category: str = '裝備'
     description: str = ''
     sell_price: int | None = None
@@ -143,6 +147,38 @@ for job, key, name, bonuses in (
                               bonuses, STABILITY[job], required_level=20, lifesteal=3)
 
 
+# Tier-3 raid equipment. These pieces sit between regular T20 and veteran T50 gear.
+for job, key, name, bonuses in (
+    ('裝甲步兵', 'infantry', '鳴鐘戰甲', (190, 12, 53, 0)),
+    ('騎士', 'knight', '鎮鐘重鎧', (240, 0, 57, 0)),
+    ('弓兵', 'archer', '寂響獵裝', (238, 17, 50, 0)),
+    ('僧侶', 'monk', '靜鐘僧袍', (238, 0, 50, 42)),
+):
+    ITEMS[f'clock:{key}'] = Item(name, '套裝', job, 1, (0, 0, 0, 0, 0), bonuses,
+                                required_level=30, damage_guard_chance=5)
+
+ITEMS['puppet:twin_charm'] = Item('雙生護符', '飾品', '', 1, (2, 2, 2, 2, 2),
+                                  required_level=30, healing_share=10)
+
+for job, key, name, bonuses in (
+    ('裝甲步兵', 'axe', '疫骨戰斧', (45, 65, 12, 0)),
+    ('騎士', 'sword_shield', '縫血劍盾', (90, 45, 21, 0)),
+    ('弓兵', 'bow', '腐毒長弓', (0, 48, 0, 0)),
+    ('僧侶', 'staff', '瘟心權杖', (0, 59, 0, 48)),
+):
+    ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
+                                 STABILITY[job], required_level=30,
+                                 vulnerable_chance=5, vulnerable_percent=10)
+
+for key, name, description in (
+    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍取得，未來可與另外兩種原色組合。'),
+    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師取得，未來可與另外兩種原色組合。'),
+    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸取得，未來可與另外兩種原色組合。'),
+):
+    ITEMS[key] = Item(name, '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+                      description=description)
+
+
 # Fishing items use the existing stackable inventory while remaining separate from
 # combat equipment.  sell_price is the exact shop payout; legacy equipment keeps
 # using 20% of its value.
@@ -213,7 +249,7 @@ for tier, prefix, percent, chance, sell_price in (
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):
         ITEMS[key] = replace(item, value=300)
-    elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:')):
+    elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:', 'clock:', 'puppet:', 'plague:')):
         ITEMS[key] = replace(item, value=750)
 
 
@@ -269,6 +305,12 @@ def item_text(item):
         parts.append(f'閃避率 +{item.evasion}%')
     if item.lifesteal:
         parts.append(f'吸血 {item.lifesteal}%（直接傷害實際扣血量）')
+    if item.damage_guard_chance:
+        parts.append(f'受到直接傷害時有 {item.damage_guard_chance}% 機率使該次最終傷害降低 50%')
+    if item.vulnerable_chance:
+        parts.append(f'每次直接命中有 {item.vulnerable_chance}% 機率使目標易傷 +{item.vulnerable_percent}% 至下一回合結束')
+    if item.healing_share:
+        parts.append(f'實際受到治療時，額外治療血量比例最低的另一名隊友 {item.healing_share}%')
     if item.description:
         parts.append(item.description)
     return '、'.join(parts) or '無加成'
@@ -363,7 +405,11 @@ class Characters:
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
                     combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100),
-                    lifesteal=weapon.lifesteal if weapon else 0)
+                    lifesteal=weapon.lifesteal if weapon else 0,
+                    damage_guard_chance=max((ITEMS[key].damage_guard_chance for key in equipped.values()), default=0),
+                    vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
+                    vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
+                    healing_share=max((ITEMS[key].healing_share for key in equipped.values()), default=0))
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)

@@ -53,3 +53,16 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CharacterError):
             await self.service.subscribe(self.guild, self.member)
         self.member.add_roles.assert_not_awaited()
+
+    async def test_mid_tier_role_is_independent(self):
+        await self.service.ensure(self.guild)
+        second = SimpleNamespace(id=43, mention='<@&43>', managed=False, mentionable=True,
+                                 permissions=discord.Permissions.none(), is_default=lambda: False,
+                                 is_assignable=lambda: True)
+        async def create(**kwargs):
+            self.assertEqual(kwargs['name'], '安安大冒險・中階討伐通知')
+            self.roles[43] = second
+            return second
+        self.guild.create_role = AsyncMock(side_effect=create)
+        await self.service.subscribe(self.guild, self.member, kind='mid')
+        self.member.add_roles.assert_awaited_with(second, reason='玩家領取中階討伐通知', atomic=True)

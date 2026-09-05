@@ -11,6 +11,28 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_tier_three_items_require_level_thirty_and_snapshot_effects(self):
+        from core.rpg_character import item_text
+        self.level(10)
+        self.characters.change_job(1, 1, '弓兵')
+        for key in ('clock:archer', 'plague:bow', 'puppet:twin_charm'):
+            with self.store.db:
+                self.store.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (1,1,?)', (key,))
+            with self.assertRaises(CharacterError):
+                self.characters.equip(1, 1, key)
+        self.level(30)
+        self.characters.equip(1, 1, 'clock:archer')
+        self.characters.equip(1, 1, 'plague:bow')
+        self.characters.equip(1, 1, 'puppet:twin_charm')
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual(state['damage_guard_chance'], 5)
+        self.assertEqual((state['vulnerable_chance'], state['vulnerable_percent']), (5, 10))
+        self.assertEqual(state['healing_share'], 10)
+        self.assertEqual(ITEMS['puppet:twin_charm'].stats, (2, 2, 2, 2, 2))
+        self.assertIn('額外治療', item_text(ITEMS['puppet:twin_charm']))
+        self.assertFalse(item_sellable(ITEMS['paint:red']))
+        self.assertTrue(ITEMS['paint:red'].transferable)
+
     def test_fox_pendant_and_bat_weapons(self):
         from core.rpg_character import item_text
         from core.rpg_battle import raid_battle, dump_battle, load_battle

@@ -10,6 +10,9 @@ from core.rpg_character import CharacterError
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
 DROP_TABLES = {
+    '深淵鐘龍': ('clock:infantry', 'clock:knight', 'clock:archer', 'clock:monk'),
+    '王城傀儡師': ('puppet:twin_charm',),
+    '瘟疫縫合獸': ('plague:axe', 'plague:sword_shield', 'plague:bow', 'plague:staff'),
     '月影妖狐': ('fox:pendant',),
     '血翼蝠王': ('bat:axe', 'bat:sword_shield', 'bat:bow', 'bat:staff'),
     '哥布林戰團': ('goblin:badge', 'goblin:axe', 'goblin:sword_shield', 'goblin:bow', 'goblin:staff'),
@@ -19,6 +22,7 @@ DROP_TABLES = {
     '鐵殼魔像': ('golem:hammer', 'golem:sword_shield', 'golem:bow', 'golem:staff'),
     '荊棘妖樹': ('tree:infantry', 'tree:knight', 'tree:archer', 'tree:monk'),
 }
+FIXED_DROPS = {'深淵鐘龍': 'paint:red', '王城傀儡師': 'paint:yellow', '瘟疫縫合獸': 'paint:blue'}
 
 
 class RaidStore:
@@ -30,6 +34,7 @@ class RaidStore:
                 status TEXT, data TEXT, delivered INTEGER NOT NULL DEFAULT 0)''')
             self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_raid ON rpg_raids(channel_id) WHERE status IN ('posting','lobby','running')")
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_raid_schedule (channel_id INTEGER PRIMARY KEY, next_at REAL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS rpg_mid_raid_bags (channel_id INTEGER PRIMARY KEY, remaining TEXT NOT NULL)')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raid_difficulty (
                 guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, multiplier REAL NOT NULL,
                 PRIMARY KEY (guild_id, channel_id))''')
@@ -60,7 +65,7 @@ class RaidStore:
                               (guild, channel)).fetchone()
         return row[0] if row else 1.0
 
-    def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None):
+    def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None, pool='regular'):
         if 'quality' in monster:
             from dataclasses import asdict
             from core.settings import RaidSettings
@@ -83,7 +88,8 @@ class RaidStore:
         raid = dict(id=uuid.uuid4().hex, guild_id=guild, channel_id=channel, status='posting',
                     monster=monster, members=[], deadline=now + 300, message_id=None,
                     seed=random.randrange(2**31), participants=[], delivered=False, reward_policy=reward_policy,
-                    drop_version=4, drop_pool=list(DROP_TABLES.get(monster['kind'], ())))
+                    drop_version=5, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
+                    fixed_drop=FIXED_DROPS.get(monster['kind']), pool=pool)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             dynamic = self.difficulty(guild, channel)
@@ -126,6 +132,31 @@ class RaidStore:
     def schedule(self, channel, next_at):
         with self.db:
             self.db.execute('INSERT OR REPLACE INTO rpg_raid_schedule VALUES (?, ?)', (channel, next_at))
+
+    def next_mid_kind(self, channel, kinds):
+        """Draw from a persisted shuffle bag so every mid-tier monster appears once per cycle."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('SELECT remaining FROM rpg_mid_raid_bags WHERE channel_id=?', (channel,)).fetchone()
+            remaining = json.loads(row[0]) if row else []
+            remaining = [kind for kind in remaining if kind in kinds]
+            if not remaining:
+                remaining = list(kinds)
+                random.shuffle(remaining)
+            kind = remaining.pop()
+            self.db.execute('INSERT OR REPLACE INTO rpg_mid_raid_bags VALUES (?,?)',
+                            (channel, json.dumps(remaining, ensure_ascii=False)))
+            return kind
+
+    def return_mid_kind(self, channel, kind):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('SELECT remaining FROM rpg_mid_raid_bags WHERE channel_id=?', (channel,)).fetchone()
+            remaining = json.loads(row[0]) if row else []
+            if kind not in remaining:
+                remaining.append(kind)
+            self.db.execute('INSERT OR REPLACE INTO rpg_mid_raid_bags VALUES (?,?)',
+                            (channel, json.dumps(remaining, ensure_ascii=False)))
 
     def join(self, raid_id, guild, user, now, maximum, leave=False):
         with self.db:
@@ -175,12 +206,17 @@ class RaidStore:
             rewards = []
             for p in raid['participants']:
                 drop = None
+                fixed_drop = raid.get('fixed_drop')
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < settings.drop_chance:
                     drop = rng.choice(pool)
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], drop))
+                if victory and fixed_drop:
+                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
+                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
+                                    (raid['guild_id'], p['id'], fixed_drop))
                 self.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?) '
                                 'ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp',
                                 (raid['guild_id'], p['id'], xp))
@@ -188,7 +224,10 @@ class RaidStore:
                     self.db.execute('INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
                                     (raid['guild_id'], p['id'], gold))
-                rewards.append(dict(id=p['id'], xp=xp, gold=gold, item=drop))
+                reward = dict(id=p['id'], xp=xp, gold=gold, item=drop)
+                if victory and fixed_drop:
+                    reward['fixed_item'] = fixed_drop
+                rewards.append(reward)
             raid.update(status='completed', battle=battle_data, rewards=rewards)
             difficulty = raid.get('difficulty', {}).get('current', 1.0)
             self.db.execute('INSERT OR REPLACE INTO rpg_battle_results VALUES (?,?,?,?,?,?,?,?,?,?)',

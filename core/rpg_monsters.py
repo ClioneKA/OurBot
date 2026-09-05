@@ -4,7 +4,7 @@ from decimal import Decimal
 
 
 # HP, attack, defense. Tiers are internal and never part of display names.
-TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3)}
+TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15)}
 # tier, HP, attack, defense, speed, accuracy, evasion, critical
 PROFILES = {
     '月影妖狐': (2, 0.8, 0.9, 0.7, 1.5, 95, 20, 15),
@@ -15,6 +15,9 @@ PROFILES = {
     '鐵殼魔像': (2, 1.2, 1.1, 2, 0.5, 90, 0, 5),
     '荊棘妖樹': (2, 1.4, 0.75, 1.3, 0.6, 92, 0, 5),
     '哥布林戰團': (2, 1.2, 0.5, 0.8, 1.1, 92, 8, 10),
+    '深淵鐘龍': (3, 1.2, 1.0, 1.15, 0.75, 92, 0, 10),
+    '王城傀儡師': (3, 1.05, 0.65, 0.9, 1.0, 94, 8, 10),
+    '瘟疫縫合獸': (3, 1.15, 0.8, 1.0, 0.9, 93, 3, 8),
 }
 # probability, HP, attack, defense, victory rewards, equipment drop chance
 QUALITIES = {
@@ -40,7 +43,7 @@ def prepare_monster(monster):
         hp=product(base[0], thp, hp), attack=product(base[1], tatk, attack),
         defense=product(base[2], tdef, defense), speed=speed,
         hit=hit, dodge=dodge, crit=crit,
-        count=3 if monster['kind'] in ('史萊姆群', '哥布林戰團') else 1),
+        count=3 if monster['kind'] in ('史萊姆群', '哥布林戰團', '王城傀儡師') else 1),
         quality_reward=reward, quality_drop=drop)
 
 

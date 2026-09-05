@@ -1,6 +1,7 @@
 from dataclasses import asdict
 import json
 import unittest
+from unittest.mock import patch
 
 from core.rpg_battle import Battle, Fighter, Rule, default_rules, dump_battle, load_battle, raid_battle
 
@@ -11,6 +12,71 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_clock_dragon_armor_requires_hits_and_survives_restart(self):
+        player = fighter('弓兵', job='弓兵', attack=100, rules=[])
+        dragon = fighter('深淵鐘龍', 1, job='深淵鐘龍', hp=5000, rules=[])
+        battle = Battle([player, dragon], seed=1)
+        battle.round = 3
+        battle.mechanics['next_clock_charge'] = 3
+        battle.act(dragon)
+        self.assertEqual(battle.mechanics['clock_armor'], 2)
+        battle.hit(player, dragon, precise=True)
+        self.assertEqual(battle.mechanics['clock_armor'], 0)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        restored.round = 4
+        restored.act(restored.fighters[1])
+        self.assertTrue(restored.fighters[1].has('break', 5))
+        self.assertFalse(restored.mechanics['clock_charging'])
+        self.assertIn('鐘甲崩解', restored.log[-1])
+
+    def test_puppeteer_repairs_and_absorbs_living_puppets(self):
+        player = fighter(rules=[])
+        master = fighter('傀儡師', 1, job='王城傀儡師', hp=1000, attack=100, rules=[])
+        sword = fighter('劍傀儡', 1, job='劍傀儡', hp=400, rules=[])
+        curse = fighter('咒傀儡', 1, job='咒傀儡', hp=400, rules=[])
+        battle = Battle([player, master, sword, curse], seed=1)
+        battle.mechanics['puppet_base_attack'] = 100
+        sword.hp = 0
+        battle.round = 3
+        battle.act(master)
+        self.assertEqual(sword.hp, 120)
+        master.hp = 500
+        battle.round = 4
+        battle.act(master)
+        self.assertTrue(battle.mechanics['puppet_phase_two'])
+        self.assertEqual((sword.hp, curse.hp), (0, 0))
+        self.assertEqual((master.stats['攻擊'], master.lifesteal), (125, 20))
+
+    def test_corruption_explodes_and_cleanse_recognizes_it(self):
+        player = fighter('玩家', hp=1000, dex=100, rules=[])
+        ally = fighter('隊友', hp=1000, dex=90, rules=[])
+        beast = fighter('縫合獸', 1, job='瘟疫縫合獸', hp=10000, dex=1, rules=[])
+        battle = Battle([player, ally, beast], seed=1)
+        player.status_stacks['corruption'] = 3
+        with patch.object(battle, 'act'):
+            battle.step()
+        self.assertNotIn('corruption', player.status_stacks)
+        self.assertEqual((player.hp, ally.hp, beast.hp), (880, 970, 9850))
+
+    def test_tier_three_equipment_combat_triggers(self):
+        wearer = fighter('佩戴者', hp=1000, rules=[])
+        ally = fighter('隊友', hp=1000, rules=[])
+        enemy = fighter('敵人', 1, hp=5000, attack=200, rules=[])
+        battle = Battle([wearer, ally, enemy], seed=1)
+        wearer.damage_guard_chance = 100
+        battle.hit(enemy, wearer, precise=True)
+        self.assertEqual(wearer.hp, 904)
+        wearer.healing_share = 10
+        ally.hp = 500
+        battle.heal(wearer, wearer, 100)
+        self.assertEqual(ally.hp, 509)
+        wearer.vulnerable_chance = 100
+        wearer.vulnerable_percent = 10
+        battle.hit(wearer, enemy, precise=True)
+        before = enemy.hp
+        battle.hit(wearer, enemy, precise=True)
+        self.assertEqual(before - enemy.hp, 36)
+
     def test_default_arrow_rain_and_bless_rules_avoid_wasted_casts(self):
         archer_rules = default_rules('弓兵')
         cleric_rules = default_rules('僧侶')
