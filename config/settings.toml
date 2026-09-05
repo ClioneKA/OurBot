@@ -103,3 +103,9 @@ max_participants = 20
 victory_xp = 600
 victory_gold = 200
 drop_chance = 0.125
+
+[rpg.total_raid]
+enabled = true
+max_participants = 6
+action_timeout_seconds = 60
+max_rounds = 20

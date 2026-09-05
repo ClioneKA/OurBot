@@ -122,6 +122,14 @@ class RaidSettings:
 
 
 @dataclass(frozen=True)
+class TotalRaidSettings:
+    enabled: bool = field(default=True, metadata={})
+    max_participants: int = field(default=6, metadata={'minimum': 1, 'maximum': 6})
+    action_timeout_seconds: int = field(default=60, metadata={'minimum': 15, 'maximum': 600})
+    max_rounds: int = field(default=20, metadata={'minimum': 1, 'maximum': 100})
+
+
+@dataclass(frozen=True)
 class RPGSettings:
     enabled: bool = field(default=True, metadata={})
     text_xp: int = field(default=15, metadata={'minimum': 1, 'maximum': 1000})
@@ -137,6 +145,7 @@ class RPGSettings:
     raid: RaidSettings = field(default_factory=RaidSettings)
     mid_raid: RaidSettings = field(default_factory=lambda: RaidSettings(
         min_interval_minutes=90, max_interval_minutes=180, victory_xp=600, victory_gold=200))
+    total_raid: TotalRaidSettings = field(default_factory=TotalRaidSettings)
 
     def __post_init__(self):
         if not 10 < self.regular_level < self.veteran_level < self.elite_level:

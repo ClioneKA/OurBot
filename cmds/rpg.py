@@ -14,6 +14,8 @@ from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, stage_level
 from core.rpg_battle import Tactics, TARGETS, FIXED_TARGETS, condition_text, rule_skill
 from core.rpg_raids import RaidService
+from core.rpg_total_raids import TotalRaidService, TOTAL_RAID_BOSSES
+from core.rpg_total_battle import TotalRaidError
 from core.rpg_fishing import Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_provisions import Provisions
@@ -35,6 +37,7 @@ class RPG(commands.Cog):
         self.tactics = Tactics(self.store)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)
+        self.total_raids = TotalRaidService(self)
 
     async def cog_load(self):
         for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notified_active():
@@ -49,12 +52,14 @@ class RPG(commands.Cog):
         self.fishing_notification_tick.start()
         self.farming_notification_tick.start()
         self.raids.start()
+        self.total_raids.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
         self.fishing_notification_tick.cancel()
         self.farming_notification_tick.cancel()
         await self.raids.close()
+        await self.total_raids.close()
         for view in tuple(self.menu_views):
             view.closed = True
             view.stop()
@@ -289,6 +294,31 @@ class RPG(commands.Cog):
             await interaction.followup.send('生成討伐失敗，請確認機器人的頻道權限後再試。', ephemeral=True)
             return
         await interaction.followup.send(f'討伐已發布，五分鐘後開戰：{message.jump_url}', ephemeral=True)
+
+    @app_commands.command(name='開始總力戰', description='管理員建立一個測試用總力戰房間')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.rename(boss='首領')
+    @app_commands.choices(boss=[app_commands.Choice(name=name, value=name) for name in TOTAL_RAID_BOSSES])
+    async def create_total_raid(self, interaction: discord.Interaction, boss: str = '訓練用假人'):
+        if interaction.guild is None or not interaction.permissions.administrator:
+            await interaction.response.send_message('只有伺服器管理員可以建立總力戰房間。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            room, channel = await self.total_raids.create_room(interaction.guild, interaction.user, boss)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except discord.Forbidden:
+            await interaction.followup.send('無法建立總力戰頻道，請確認安安具有管理頻道權限。', ephemeral=True)
+            return
+        except discord.HTTPException:
+            logging.exception('Total raid room creation failed')
+            await interaction.followup.send('Discord 暫時無法建立總力戰房間，請稍後再試。', ephemeral=True)
+            return
+        await interaction.followup.send(
+            f'已建立 {room["boss"]} #{room["number"]}：{channel.mention}', ephemeral=True)
 
     @app_commands.command(name='戰鬥統計', description='管理員查看近期討伐的平衡數據')
     @app_commands.guild_only()

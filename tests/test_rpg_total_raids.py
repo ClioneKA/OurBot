@@ -1,0 +1,144 @@
+from pathlib import Path
+from types import SimpleNamespace
+import tempfile
+import unittest
+from unittest.mock import AsyncMock, patch
+
+from core.rpg import RPGStore
+from core.rpg_battle import Tactics
+from core.rpg_character import CharacterError, Characters
+from core.rpg_total_battle import ACTION_ATTACK, load_total_battle
+from core.rpg_total_raids import TotalRaidError, TotalRaidService, TotalRaidStore
+from core.settings import RPGSettings
+
+
+class HashableMember:
+    def __init__(self, user_id, name='玩家', bot=False):
+        self.id, self.display_name, self.bot = user_id, name, bot
+
+    def __str__(self):
+        return self.display_name
+
+
+class FakeCategory:
+    def __init__(self, category_id, channel=None):
+        self.id, self.channel = category_id, channel
+        self.create_text_channel = AsyncMock(return_value=channel)
+
+
+class FakeChannel:
+    def __init__(self, channel_id, guild):
+        self.id, self.guild = channel_id, guild
+        self.mention = f'<#{channel_id}>'
+        self.message = SimpleNamespace(id=999, edit=AsyncMock())
+        self.send = AsyncMock(return_value=self.message)
+
+    def get_partial_message(self, _message_id):
+        return self.message
+
+
+class FakeBot:
+    def __init__(self):
+        self.channels = {}
+        self.add_view = unittest.mock.Mock()
+
+    def get_channel(self, channel_id):
+        return self.channels.get(channel_id)
+
+    def is_ready(self):
+        return True
+
+
+class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = RPGStore(Path(self.temp.name) / 'rpg.db')
+        self.settings = RPGSettings()
+        self.characters = Characters(self.store, self.settings)
+        self.tactics = Tactics(self.store)
+        self.bot = FakeBot()
+        self.cog = SimpleNamespace(
+            bot=self.bot, store=self.store, settings=self.settings,
+            characters=self.characters, tactics=self.tactics,
+        )
+        with patch.dict('os.environ', {'RPG_TOTAL_RAID_CATEGORY_IDS': '50'}):
+            self.service = TotalRaidService(self.cog)
+
+    async def asyncTearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    async def test_numbering_is_persistent_per_boss(self):
+        repo = TotalRaidStore(self.store)
+        self.assertEqual(repo.reserve_number(1, '訓練用假人'), 1)
+        self.assertEqual(repo.reserve_number(1, '訓練用假人'), 2)
+        self.assertEqual(repo.reserve_number(2, '訓練用假人'), 1)
+
+    async def test_admin_room_creation_names_channel_and_auto_joins_host(self):
+        host = HashableMember(1, '房主')
+        guild = SimpleNamespace(id=10, default_role=object(), me=object())
+        channel = FakeChannel(70, guild)
+        category = FakeCategory(50, channel)
+        guild.get_channel = lambda channel_id: category if channel_id == 50 else None
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory):
+            room, created = await self.service.create_room(guild, host, '訓練用假人')
+        self.assertIs(created, channel)
+        self.assertEqual(room['members'], [1])
+        kwargs = category.create_text_channel.call_args.kwargs
+        self.assertEqual(kwargs['name'], '總力戰-訓練用假人-1')
+        self.assertIn(host, kwargs['overwrites'])
+        channel.send.assert_awaited_once()
+        self.assertEqual(self.service.repo.get(room['id'])['message_id'], 999)
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory):
+            with self.assertRaisesRegex(CharacterError, '另一個總力戰'):
+                await self.service.create_room(guild, host, '訓練用假人')
+
+    async def test_lobby_membership_host_rule_capacity_and_other_room(self):
+        first = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
+        with self.assertRaisesRegex(TotalRaidError, '房主不能退出'):
+            await self.service.change_member(first['id'], HashableMember(1), leave=True)
+        for user_id in range(2, 7):
+            await self.service.change_member(first['id'], HashableMember(user_id))
+        with self.assertRaisesRegex(TotalRaidError, '隊伍已滿'):
+            await self.service.change_member(first['id'], HashableMember(7))
+        second = self.service.repo.create(1, 50, 71, 10, '訓練用假人', 2)
+        with self.assertRaisesRegex(TotalRaidError, '另一個總力戰'):
+            await self.service.change_member(second['id'], HashableMember(2))
+
+    async def test_only_host_starts_and_single_player_can_submit_round(self):
+        host = HashableMember(1, '房主')
+        guild = SimpleNamespace(id=1, get_member=lambda uid: host if uid == 1 else None)
+        channel = FakeChannel(70, guild)
+        self.bot.channels[70] = channel
+        room = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
+        room['message_id'] = 999
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            with self.assertRaisesRegex(TotalRaidError, '只有開房'):
+                await self.service.begin(room['id'], HashableMember(2))
+            started = await self.service.begin(room['id'], host)
+            battle = load_total_battle(started['battle'])
+            target = battle.key(battle.living(1)[0])
+            await self.service.submit_action(room['id'], 1, ACTION_ATTACK, target, None)
+        saved = self.service.repo.get(room['id'])
+        self.assertEqual(load_total_battle(saved['battle']).round, 1)
+        self.assertEqual(saved['status'], 'running')
+        self.assertGreater(saved['round_deadline'], started['round_deadline'] - 1)
+
+    async def test_lobby_embed_shows_six_person_limit(self):
+        room = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
+        embed = self.service.lobby_embed(room)
+        self.assertEqual(embed.fields[1].value, '1/6')
+        self.assertIn('不發放獎勵', embed.description)
+
+    async def test_only_host_can_close_abandoned_lobby(self):
+        room = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
+        with self.assertRaisesRegex(TotalRaidError, '只有開房'):
+            await self.service.cancel_lobby(room['id'], HashableMember(2))
+        await self.service.cancel_lobby(room['id'], HashableMember(1))
+        self.assertEqual(self.service.repo.get(room['id'])['status'], 'cancelled')
+        self.assertEqual(self.service.repo.active(), [])
+
+
+if __name__ == '__main__':
+    unittest.main()

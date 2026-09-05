@@ -704,6 +704,14 @@ class Battle:
                 self.add_corruption(target)
             return
         rule, skill, target = selected
+        self.use_skill(actor, rule, skill, target)
+
+    def use_skill(self, actor, rule, skill, target):
+        """Resolve an already-selected skill.
+
+        Automatic raids choose the skill through ``select``; interactive battle
+        modes can call this method after validating a player's explicit choice.
+        """
         self.record_skill(actor, skill.name)
         actor.ready[rule.slot] = self.round + skill.cooldown + 1
         self.log.append(f'{actor.name} 使用【{skill.name}】')
