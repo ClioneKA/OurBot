@@ -247,7 +247,10 @@ class RaidService:
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
                      else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
         if raid.get('fixed_drop'):
-            loot_text += f'；勝利固定取得 {ITEMS[raid["fixed_drop"]].name}'
+            if raid.get('fixed_drop_mode', 'per_participant') == 'single_random':
+                loot_text += f'；勝利時全隊固定掉落 1 個 {ITEMS[raid["fixed_drop"]].name}，隨機給一名參戰者'
+            else:
+                loot_text += f'；勝利每人固定取得 {ITEMS[raid["fixed_drop"]].name}'
         scaling = raid.get('reward_scaling')
         if scaling:
             labels = {'victory_xp': '勝利經驗', 'victory_gold': '勝利金幣'}

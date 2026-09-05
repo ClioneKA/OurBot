@@ -171,9 +171,9 @@ for job, key, name, bonuses in (
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (
-    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍取得，未來可與另外兩種原色組合。'),
-    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師取得，未來可與另外兩種原色組合。'),
-    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸取得，未來可與另外兩種原色組合。'),
+    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
+    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
+    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
 ):
     ITEMS[key] = Item(name, '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
                       description=description)

@@ -49,6 +49,20 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settled['rewards'][0]['fixed_item'], 'paint:red')
         self.assertEqual(self.characters.inventory_counts(1, 1)['paint:red'], 1)
 
+        team_raid = self.repo.create(1, 3, raid['monster'], 200,
+                                     asdict(replace(self.settings.mid_raid, drop_chance=0)))
+        team = [self.participant(uid) for uid in (11, 12, 13)]
+        team_raid.update(status='running', participants=team, members=[11, 12, 13])
+        self.repo.save(team_raid)
+        team_battle = raid_battle(team, team_raid['monster'], 2)
+        team_battle.result = '勝利'
+        team_result = self.repo.settle(team_raid['id'], dump_battle(team_battle), self.settings.mid_raid)
+        winners = [reward for reward in team_result['rewards'] if reward.get('fixed_item') == 'paint:red']
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(sum(self.characters.inventory_counts(1, uid).get('paint:red', 0)
+                             for uid in (11, 12, 13)), 1)
+        self.assertIn('全隊固定掉落 1 個 紅色噴漆罐', self.service.lobby_embed(team_raid).fields[-1].value)
+
     async def test_mid_tier_shuffle_bag_contains_each_monster_once(self):
         kinds = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
         first = [self.repo.next_mid_kind(99, kinds) for _ in range(3)]

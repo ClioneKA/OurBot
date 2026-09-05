@@ -92,8 +92,9 @@ class RaidStore:
         raid = dict(id=uuid.uuid4().hex, guild_id=guild, channel_id=channel, status='posting',
                     monster=monster, members=[], deadline=now + 300, message_id=None,
                     seed=random.randrange(2**31), participants=[], delivered=False, reward_policy=reward_policy,
-                    drop_version=5, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
-                    fixed_drop=FIXED_DROPS.get(monster['kind']), pool=pool)
+                    drop_version=6, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
+                    fixed_drop=FIXED_DROPS.get(monster['kind']),
+                    fixed_drop_mode='single_random', pool=pool)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             dynamic = self.difficulty(guild, channel)
@@ -209,17 +210,23 @@ class RaidStore:
                 xp = xp * depleted // maximum if maximum else 0
                 gold = gold * depleted // maximum if maximum else 0
                 raid['failure_progress'] = dict(max_hp=maximum, remaining_hp=remaining)
+            fixed_drop = raid.get('fixed_drop')
+            fixed_drop_mode = raid.get('fixed_drop_mode', 'per_participant')
+            fixed_drop_winner = None
+            if victory and fixed_drop and fixed_drop_mode == 'single_random' and raid['participants']:
+                fixed_drop_winner = rng.choice(raid['participants'])['id']
             rewards = []
             for p in raid['participants']:
                 drop = None
-                fixed_drop = raid.get('fixed_drop')
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < settings.drop_chance:
                     drop = rng.choice(pool)
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], drop))
-                if victory and fixed_drop:
+                receives_fixed_drop = (victory and fixed_drop and
+                                       (fixed_drop_mode != 'single_random' or p['id'] == fixed_drop_winner))
+                if receives_fixed_drop:
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], fixed_drop))
@@ -231,7 +238,7 @@ class RaidStore:
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
                                     (raid['guild_id'], p['id'], gold))
                 reward = dict(id=p['id'], xp=xp, gold=gold, item=drop)
-                if victory and fixed_drop:
+                if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
                 rewards.append(reward)
             raid.update(status='completed', battle=battle_data, rewards=rewards)
