@@ -24,7 +24,7 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         cog = SimpleNamespace(characters=self.characters, tactics=self.tactics,
                               skills_embed=lambda *args: discord.Embed(title='技能'))
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
-            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(), send_modal=AsyncMock()),
             edit_original_response=AsyncMock())
         self.view = SkillView(cog, self.interaction)
         self.addCleanup(self.view.stop)
@@ -32,16 +32,29 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_controls_save_immediately_and_preserve_other_panel_changes(self):
         await self.view.handle(self.interaction, 'slot', '2')
         await self.view.handle(self.interaction, 'priority', '1')
-        await self.view.handle(self.interaction, 'condition', 'self40')
+        await self.view.handle(self.interaction, 'condition_value', ('self40', 35))
         await self.view.handle(self.interaction, 'target', 'self')
         await self.view.handle(self.interaction, 'toggle')
         rule = self.view.current()
         self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (1, 'self40', 'self', False))
+        self.assertEqual(rule.condition_value, 35)
         self.tactics.configure(1, 1, '民兵', 2, 2, False, 'ally50', 'lowest')
         await self.view.handle(self.interaction, 'toggle')
         rule = self.view.current()
         self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (2, 'ally50', 'lowest', True))
+        self.assertEqual(rule.condition_value, 50)
         self.assertEqual(len(self.view.to_components()), 5)
+
+    async def test_numeric_condition_opens_modal_and_validates_range(self):
+        await self.view.handle(self.interaction, 'condition', 'enemy_hp_lte')
+        self.interaction.response.send_modal.assert_awaited_once()
+        self.assertEqual(self.view.current().condition, 'always')
+        await self.view.handle(self.interaction, 'condition_value', ('enemy_hp_lte', 25))
+        self.assertEqual((self.view.current().condition, self.view.current().condition_value),
+                         ('enemy_hp_lte', 25))
+        await self.view.handle(self.interaction, 'condition_value', ('enemies3', 4))
+        self.assertEqual((self.view.current().condition, self.view.current().condition_value),
+                         ('enemy_hp_lte', 25))
 
     async def test_job_change_fixed_target_and_attack_restrictions(self):
         self.store.award_voice([(1, 1, 1154)])

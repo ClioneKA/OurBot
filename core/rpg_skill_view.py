@@ -5,9 +5,31 @@ from core.rpg_menu import add_back, navigate
 
 import discord
 
-from core.rpg_battle import CONDITIONS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS, rule_skill
+from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
+                             condition_text, rule_skill)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
+
+
+class ConditionValueModal(discord.ui.Modal):
+    def __init__(self, panel, condition):
+        super().__init__(title='設定施放條件')
+        self.panel, self.condition = panel, condition
+        low, high, default, suffix = CONDITION_LIMITS[condition]
+        rule = panel.current()
+        current = rule.condition_value if rule.condition == condition else default
+        self.threshold = discord.ui.TextInput(
+            label=f'{CONDITIONS[condition]}（{low}–{high}{suffix}）'[:45],
+            default=str(current), min_length=1, max_length=3)
+        self.add_item(self.threshold)
+
+    async def on_submit(self, interaction):
+        try:
+            value = int(self.threshold.value)
+        except ValueError:
+            await interaction.response.send_message('請輸入範圍內的正整數。', ephemeral=True)
+            return
+        await self.panel.handle(interaction, 'condition_value', (self.condition, value))
 
 
 class SkillView(discord.ui.View):
@@ -49,7 +71,9 @@ class SkillView(discord.ui.View):
             discord.SelectOption(label=f'優先 {i}' + ('（最先）' if i == 1 else ''), value=str(i), default=i == rule.priority)
             for i in (1, 2, 3)]))
         self.add_item(PanelSelect('condition', row=2, placeholder='選擇施放條件', options=[
-            discord.SelectOption(label=label, value=key, default=key == rule.condition) for key, label in CONDITIONS.items()]))
+            discord.SelectOption(label=condition_text(key, rule.condition_value) if key == rule.condition else label,
+                                 value=key, default=key == rule.condition)
+            for key, label in CONDITIONS.items()]))
         fixed = f'固定目標：{FIXED_TARGETS[skill.effect]}' if skill.effect in FIXED_TARGETS else None
         targets = {key: label for key, label in TARGETS.items() if key != 'self' or skill.effect in ALLY_EFFECTS}
         if skill.effect != 'cleanse':
@@ -75,7 +99,7 @@ class SkillView(discord.ui.View):
                             '若希望先解除狀態，可把淨化設為優先 1；每回合只施放一個技能。', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='選擇後立即保存，開戰時套用。優先順序交換不重複；閒置 3 分鐘後關閉，可重開 /冒險 → 技能。')
+        embed.set_footer(text='數值條件會開啟輸入視窗，其餘選擇後立即保存；開戰時套用。閒置 3 分鐘後關閉。')
         return embed
 
     async def interaction_check(self, interaction):
@@ -119,17 +143,26 @@ class SkillView(discord.ui.View):
                         if value not in ('1', '2', '3'):
                             raise CharacterError('無效的技能槽。')
                         self.slot = int(value)
-                    elif action in ('priority', 'condition', 'target', 'toggle'):
+                    elif action == 'condition' and value in CONDITION_LIMITS:
+                        await interaction.response.send_modal(ConditionValueModal(self, value))
+                        return
+                    elif action in ('priority', 'condition', 'condition_value', 'target', 'toggle'):
                         old = self.current()  # Preserve other changes made in another panel.
                         if action == 'priority' and value not in ('1', '2', '3'):
                             raise CharacterError('無效的優先順序。')
+                        if action == 'condition_value':
+                            if not isinstance(value, tuple) or len(value) != 2:
+                                raise CharacterError('無效的施放條件數值。')
+                            selected_condition, threshold = value
+                        else:
+                            selected_condition = value if action == 'condition' else old.condition
+                            threshold = old.condition_value if selected_condition == old.condition else None
                         if action == 'target' and rule_skill(self.job, old).effect in FIXED_TARGETS:
                             raise CharacterError('這個技能的目標固定，不需設定。')
                         self.cog.tactics.configure(self.guild_id, self.owner.id, self.job, self.slot,
                             int(value) if action == 'priority' else old.priority,
                             not old.enabled if action == 'toggle' else old.enabled,
-                            value if action == 'condition' else old.condition,
-                            value if action == 'target' else old.target)
+                            selected_condition, value if action == 'target' else old.target, threshold)
                         notice = '已保存，開戰時套用。'
                 except CharacterError as exc:
                     notice = str(exc)

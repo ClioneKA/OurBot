@@ -12,7 +12,7 @@ from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, 
 from core.settings import get_settings
 from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, stage_level
-from core.rpg_battle import Tactics, CONDITIONS, TARGETS, FIXED_TARGETS, rule_skill
+from core.rpg_battle import Tactics, TARGETS, FIXED_TARGETS, condition_text, rule_skill
 from core.rpg_raids import RaidService
 from core.rpg_fishing import Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
@@ -313,7 +313,8 @@ class RPG(commands.Cog):
         for rule in self.tactics.rules(guild, user, state['job']):
             skill = rule_skill(state['job'], rule)
             embed.add_field(name=f'優先 {rule.priority}｜槽 {rule.slot}：{skill.name}｜{"開" if rule.enabled else "關"}',
-                            value=f'{skill.description}\n冷卻 {skill.cooldown} 回合｜{CONDITIONS[rule.condition]}｜目標：{FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])}', inline=False)
+                            value=f'{skill.description}\n冷卻 {skill.cooldown} 回合｜{condition_text(rule.condition, rule.condition_value)}'
+                                  f'｜目標：{FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])}', inline=False)
         embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。')
         return embed
 

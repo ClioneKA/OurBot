@@ -46,7 +46,7 @@ class ProgressionTests(unittest.TestCase):
         self.tactics.configure(1, 1, '僧侶', 3, 1, False, 'ally_debuff', 'debuffed')
         self.tactics.equip(1, 1, '僧侶', 3, 5)
         rules = Tactics(self.store).rules(1, 1, '僧侶')
-        self.assertEqual(rules[0], Rule(3, 1, False, 'ally50', 'lowest', 5))
+        self.assertEqual(rules[0], Rule(3, 1, False, 'ally50', 'lowest', 5, 50))
         self.tactics.configure(1, 1, '僧侶', 3, 2, True, 'always', 'self')
         rules = self.tactics.rules(1, 1, '僧侶')
         self.assertEqual(rules[1], Rule(3, 2, True, 'always', 'self', 5))
@@ -85,7 +85,7 @@ class ProgressionTests(unittest.TestCase):
                                      'PRIMARY KEY (guild_id, user_id, job, slot))')
                     store.db.execute("INSERT INTO rpg_tactics VALUES (1, 1, '弓兵', 1, 1, 0, 'self40', 'strongest')")
                 tactics = Tactics(store)
-                self.assertEqual(tactics.rules(1, 1, '弓兵')[0], Rule(1, 1, False, 'self40', 'strongest'))
+                self.assertEqual(tactics.rules(1, 1, '弓兵')[0], Rule(1, 1, False, 'self40', 'strongest', None, 40))
                 self.assertEqual(len(Tactics(store).rules(1, 1, '弓兵')), 3)
             finally:
                 store.close()

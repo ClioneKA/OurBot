@@ -8,10 +8,23 @@ from core.rpg_monsters import monster_name
 from core.rpg import level_for
 
 
-CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 40%',
-              'ally50': '隊伍有人 HP ≤ 50%', 'enemies3': '存活敵人 ≥ 3',
+CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 指定比例',
+              'ally50': '隊伍有人 HP ≤ 指定比例', 'allies_injured': '受傷隊友數量 ≥ 指定人數',
+              'enemies3': '存活敵人數量 ≥ 指定數量',
+              'enemy_hp_lte': '任一敵人 HP ≤ 指定比例',
+              'enemy_hp_gte': '任一敵人 HP ≥ 指定比例',
+              'round_gte': '戰鬥回合 ≥ 指定回合',
               'ally_debuff': '隊友有可淨化負面狀態（含自己）',
               'enemy_charging': '敵人正在蓄力'}
+CONDITION_LIMITS = {
+    'self40': (1, 100, 40, '%'),
+    'ally50': (1, 100, 50, '%'),
+    'allies_injured': (1, 20, 2, ' 人'),
+    'enemies3': (1, 3, 3, ' 隻'),
+    'enemy_hp_lte': (1, 100, 30, '%'),
+    'enemy_hp_gte': (1, 100, 70, '%'),
+    'round_gte': (1, 30, 5, ' 回合'),
+}
 TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': '自己',
            'debuffed': '有可淨化負面狀態的隊友'}
 
@@ -79,6 +92,34 @@ def default_target(skill):
     return 'lowest'
 
 
+def condition_value(condition, value=None):
+    """Return a validated threshold, using the legacy condition's default when absent."""
+    if condition not in CONDITION_LIMITS:
+        return None
+    low, high, default, _ = CONDITION_LIMITS[condition]
+    value = default if value is None else value
+    if type(value) is not int or not low <= value <= high:
+        raise CharacterError(f'施放條件數值必須介於 {low}–{high}。')
+    return value
+
+
+def condition_text(condition, value=None):
+    if condition not in CONDITION_LIMITS:
+        return CONDITIONS[condition]
+    threshold = condition_value(condition, value)
+    suffix = CONDITION_LIMITS[condition][3]
+    labels = {
+        'self40': f'自身 HP ≤ {threshold}{suffix}',
+        'ally50': f'隊伍有人 HP ≤ {threshold}{suffix}',
+        'allies_injured': f'受傷隊友數量 ≥ {threshold}{suffix}',
+        'enemies3': f'存活敵人數量 ≥ {threshold}{suffix}',
+        'enemy_hp_lte': f'任一敵人 HP ≤ {threshold}{suffix}',
+        'enemy_hp_gte': f'任一敵人 HP ≥ {threshold}{suffix}',
+        'round_gte': f'戰鬥回合 ≥ {threshold}',
+    }
+    return labels[condition]
+
+
 @dataclass(frozen=True)
 class Rule:
     slot: int
@@ -87,10 +128,12 @@ class Rule:
     condition: str
     target: str
     skill_id: int | None = None
+    condition_value: int | None = None
 
 
 def default_rules(job):
-    return [Rule(i, i, True, skill.condition, default_target(skill))
+    return [Rule(i, i, True, skill.condition, default_target(skill),
+                 condition_value=condition_value(skill.condition))
             for i, skill in enumerate(SKILLS[job][:3], 1)]
 
 
@@ -105,23 +148,28 @@ class Tactics:
                 PRIMARY KEY (guild_id, user_id, job, slot))''')
             if 'skill_id' not in {row[1] for row in self.db.execute('PRAGMA table_info(rpg_tactics)')}:
                 self.db.execute('ALTER TABLE rpg_tactics ADD COLUMN skill_id INTEGER')
+            if 'condition_value' not in {row[1] for row in self.db.execute('PRAGMA table_info(rpg_tactics)')}:
+                self.db.execute('ALTER TABLE rpg_tactics ADD COLUMN condition_value INTEGER')
 
     def available(self, guild, user, job):
         return unlocked_skills(job, level_for(self.store.xp(guild, user)))
 
     def rules(self, guild, user, job):
-        saved = {row[0]: Rule(row[0], row[1], bool(row[2]), row[3], row[4], row[5]) for row in self.db.execute(
-            'SELECT slot, priority, enabled, condition, target, skill_id FROM rpg_tactics '
+        saved = {row[0]: Rule(row[0], row[1], bool(row[2]), row[3], row[4], row[5],
+                              condition_value(row[3], row[6])) for row in self.db.execute(
+            'SELECT slot, priority, enabled, condition, target, skill_id, condition_value FROM rpg_tactics '
             'WHERE guild_id=? AND user_id=? AND job=?', (guild, user, job))}
         return sorted([saved.get(rule.slot, rule) for rule in default_rules(job)], key=lambda rule: rule.priority)
 
-    def configure(self, guild, user, job, slot, priority, enabled, condition, target):
+    def configure(self, guild, user, job, slot, priority, enabled, condition, target, threshold=None):
         if job not in SKILLS or slot not in (1, 2, 3) or priority not in (1, 2, 3):
             raise CharacterError('技能槽與優先順序必須是 1–3。')
         if condition not in CONDITIONS or target not in TARGETS or type(enabled) is not bool:
             raise CharacterError('無效的自動施放設定。')
         rules = self.rules(guild, user, job)
         current = next(rule for rule in rules if rule.slot == slot)
+        threshold = condition_value(condition,
+                                    current.condition_value if threshold is None and condition == current.condition else threshold)
         skill = rule_skill(job, current)
         if target == 'self' and skill.effect not in ALLY_EFFECTS | {'stance', 'taunt', 'rally'}:
             raise CharacterError('攻擊技能不能以自己為目標。')
@@ -134,11 +182,13 @@ class Tactics:
             updated = []
             for rule in rules:
                 if rule.slot == slot:
-                    rule = Rule(slot, priority, enabled, condition, target, rule.skill_id)
+                    rule = Rule(slot, priority, enabled, condition, target, rule.skill_id, threshold)
                 elif rule.priority == priority:
-                    rule = Rule(rule.slot, old_priority, rule.enabled, rule.condition, rule.target, rule.skill_id)
-                updated.append((guild, user, job, rule.slot, rule.priority, int(rule.enabled), rule.condition, rule.target, rule.skill_id))
-            self.db.executemany('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', updated)
+                    rule = Rule(rule.slot, old_priority, rule.enabled, rule.condition, rule.target,
+                                rule.skill_id, rule.condition_value)
+                updated.append((guild, user, job, rule.slot, rule.priority, int(rule.enabled), rule.condition,
+                                rule.target, rule.skill_id, rule.condition_value))
+            self.db.executemany('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', updated)
 
     def equip(self, guild, user, job, slot, skill_id):
         if job not in SKILLS or slot not in (1, 2, 3):
@@ -154,9 +204,9 @@ class Tactics:
             if any((rule.skill_id or rule.slot) == skill_id for rule in rules if rule.slot != slot):
                 raise CharacterError('此技能已裝備於其他格，請先替換該格技能。')
             skill = SKILLS[job][skill_id - 1]
-            self.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            self.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                             (guild, user, job, slot, current.priority, int(current.enabled), skill.condition,
-                             default_target(skill), skill_id))
+                             default_target(skill), skill_id, condition_value(skill.condition)))
 
 
 @dataclass
@@ -275,11 +325,22 @@ class Battle:
             skill = rule_skill(actor.job, rule)
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
-            if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * 40:
+            threshold = condition_value(rule.condition, rule.condition_value)
+            if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * threshold:
                 continue
-            if rule.condition == 'ally50' and not any(f.hp * 2 <= f.stats['HP'] for f in allies):
+            if rule.condition == 'ally50' and not any(f.hp * 100 <= f.stats['HP'] * threshold for f in allies):
                 continue
-            if rule.condition == 'enemies3' and len(enemies) < 3:
+            if rule.condition == 'allies_injured' and sum(f.hp < f.stats['HP'] for f in allies) < threshold:
+                continue
+            if rule.condition == 'enemies3' and len(enemies) < threshold:
+                continue
+            if rule.condition == 'enemy_hp_lte' and not any(
+                    f.hp * 100 <= f.stats['HP'] * threshold for f in enemies):
+                continue
+            if rule.condition == 'enemy_hp_gte' and not any(
+                    f.hp * 100 >= f.stats['HP'] * threshold for f in enemies):
+                continue
+            if rule.condition == 'round_gte' and self.round < threshold:
                 continue
             if rule.condition == 'ally_debuff' and not any(
                     any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun')) for f in allies):

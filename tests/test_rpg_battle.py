@@ -17,6 +17,40 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(archer_rules[2].condition, 'enemies3')
         self.assertEqual(cleric_rules[1].target, 'strongest')
 
+    def test_configurable_numeric_conditions_use_the_saved_threshold(self):
+        enemy = fighter('敵人', 1, hp=100, rules=[])
+        actor = fighter(hp=100, rules=[Rule(1, 1, True, 'self40', 'lowest', None, 35)])
+        battle = Battle([actor, enemy], seed=1)
+        actor.hp = 36
+        self.assertIsNone(battle.select(actor))
+        actor.hp = 35
+        self.assertIsNotNone(battle.select(actor))
+
+        actor.rules = [Rule(1, 1, True, 'enemy_hp_lte', 'lowest', None, 25)]
+        enemy.hp = 26
+        self.assertIsNone(battle.select(actor))
+        enemy.hp = 25
+        self.assertIsNotNone(battle.select(actor))
+
+        actor.rules = [Rule(1, 1, True, 'round_gte', 'lowest', None, 4)]
+        battle.round = 3
+        self.assertIsNone(battle.select(actor))
+        battle.round = 4
+        self.assertIsNotNone(battle.select(actor))
+
+        second_enemy = fighter('敵人 2', 1, hp=100, rules=[])
+        battle.fighters.append(second_enemy)
+        actor.rules = [Rule(1, 1, True, 'enemies3', 'lowest', None, 2)]
+        self.assertIsNotNone(battle.select(actor))
+
+        ally = fighter('隊友', 0, hp=100, rules=[])
+        battle.fighters.append(ally)
+        actor.rules = [Rule(1, 1, True, 'allies_injured', 'lowest', None, 2)]
+        actor.hp, ally.hp = 99, 100
+        self.assertIsNone(battle.select(actor))
+        ally.hp = 99
+        self.assertIsNotNone(battle.select(actor))
+
     def test_food_triggers_once_and_rare_regen_starts_next_round(self):
         from unittest.mock import patch
         player = fighter(hp=200, rules=[])
