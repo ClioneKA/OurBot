@@ -188,6 +188,7 @@ class TotalRaidBattle(Battle):
         intent = self.intent()
         choices = dict(self.choices)
         self.choices.clear()
+        round_log_start = len(self.log)
         self.round += 1
         self.log.append(f'── 第 {self.round} 回合 ──')
         order = [fighter for fighter in self.fighters if fighter.hp > 0]
@@ -216,6 +217,7 @@ class TotalRaidBattle(Battle):
                     self.log.append(f'{fighter.name} 的【{fighter.food_name}】緩補恢復 {amount} HP。')
         if not self.result and self.round >= self.max_rounds:
             self.result = '平手（達回合上限）'
+        self.mechanics['last_round_log'] = self.log[round_log_start:]
         return self.result
 
     def _begin_actor_turn(self, actor):

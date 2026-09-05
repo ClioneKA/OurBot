@@ -145,6 +145,22 @@ class TotalRaidBattleTests(unittest.TestCase):
         self.assertLess(dummy.hp, after_hit - 1)
         self.assertTrue(any('訓練用假人 中毒' in line for line in battle.log))
 
+    def test_resolve_saves_the_complete_latest_round_log(self):
+        battle = training_dummy_battle([player(1), player(2)], seed=1)
+        target = battle.key(battle.living(1)[0])
+        battle.submit(1, ACTION_ATTACK, target)
+        battle.submit(2, ACTION_ATTACK, target)
+        battle.resolve()
+        first_round = list(battle.mechanics['last_round_log'])
+        self.assertEqual(first_round[0], '── 第 1 回合 ──')
+        self.assertTrue(any('玩家1 使用普通攻擊' in line for line in first_round))
+        battle.submit(1, ACTION_ATTACK, target)
+        battle.submit(2, ACTION_ATTACK, target)
+        battle.resolve()
+        second_round = battle.mechanics['last_round_log']
+        self.assertEqual(second_round[0], '── 第 2 回合 ──')
+        self.assertNotIn('── 第 1 回合 ──', second_round)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -8,7 +8,9 @@ from core.rpg import RPGStore
 from core.rpg_battle import Tactics
 from core.rpg_character import CharacterError, Characters
 from core.rpg_total_battle import ACTION_ATTACK, ACTION_SKILL, load_total_battle
-from core.rpg_total_raids import TotalRaidError, TotalRaidService, TotalRaidStore, hp_bar
+from core.rpg_total_raids import (
+    TotalRaidError, TotalRaidService, TotalRaidStore, effect_status, hp_bar,
+)
 from core.settings import RPGSettings
 
 
@@ -120,7 +122,7 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
             battle = load_total_battle(started['battle'])
             embed = self.service.battle_embed(started, battle)
             self.assertEqual([field.name for field in embed.fields[:4]],
-                             ['Boss HP', 'Boss 行動', '隊伍狀態', '戰鬥紀錄'])
+                             ['Boss HP', 'Boss 行動', '隊伍狀態', '上一回合完整摘要'])
             self.assertIn('████████████████', embed.fields[0].value)
             action_text = self.service.player_action_text(battle, 1)
             self.assertIn('技能冷卻', action_text)
@@ -157,6 +159,37 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_total_raids.asyncio.sleep', new=AsyncMock()):
             await self.service._delete_private_response(interaction, 8)
         interaction.delete_original_response.assert_awaited_once()
+
+    async def test_team_status_lists_active_buffs_debuffs_and_full_round_log(self):
+        host = HashableMember(1, '房主')
+        guild = SimpleNamespace(id=1, get_member=lambda uid: host if uid == 1 else None)
+        channel = FakeChannel(70, guild)
+        self.bot.channels[70] = channel
+        room = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
+        room['message_id'] = 999
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            room = await self.service.begin(room['id'], host)
+        battle = load_total_battle(room['battle'])
+        fighter = battle.fighters[0]
+        fighter.effects.update(guard=1, poison=2)
+        fighter.guard_bonus = 15
+        fighter.status_stacks['corruption'] = 2
+        buffs, debuffs = effect_status(fighter, battle)
+        self.assertIn('護衛(防禦+15・1回合)', buffs)
+        self.assertIn('中毒(2回合)', debuffs)
+        self.assertIn('腐敗(2/3層)', debuffs)
+        complete = [f'完整紀錄 {index}：' + '測' * 80 for index in range(20)]
+        battle.mechanics['last_round_log'] = complete
+        embed = self.service.battle_embed(room, battle)
+        team = next(field.value for field in embed.fields if field.name == '隊伍狀態')
+        self.assertIn('Buff：護衛', team)
+        self.assertIn('Debuff：中毒', team)
+        log_fields = [field for field in embed.fields if field.name.startswith('上一回合完整摘要')]
+        self.assertGreater(len(log_fields), 1)
+        self.assertTrue(all(len(field.value) <= 1024 for field in log_fields))
+        rebuilt = '\n'.join(field.value for field in log_fields)
+        self.assertEqual(rebuilt, '\n'.join(complete))
 
 
 if __name__ == '__main__':

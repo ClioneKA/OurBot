@@ -43,6 +43,73 @@ def hp_bar(current, maximum, width=16):
     return f'`{"█" * filled}{"░" * (width - filled)}` {percent:.1f}%'
 
 
+def field_chunks(lines, limit=1024):
+    """Split complete log lines into Discord fields without dropping text."""
+    chunks = []
+    current = ''
+    for original in lines:
+        parts = [original[index:index + limit] for index in range(0, len(original), limit)] or ['']
+        for part in parts:
+            candidate = f'{current}\n{part}' if current else part
+            if len(candidate) <= limit:
+                current = candidate
+            else:
+                chunks.append(current)
+                current = part
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def effect_status(fighter, battle):
+    """Return concise buffs/debuffs that will affect the upcoming action."""
+    turn = battle.planning_round if not battle.result else battle.round
+
+    def remaining(effect):
+        return fighter.effects[effect] - turn + 1
+
+    buffs, debuffs = [], []
+    if fighter.has('guard', turn):
+        buffs.append(f'護衛(防禦+{fighter.guard_bonus}・{remaining("guard")}回合)')
+    if fighter.has('bless', turn):
+        buffs.append(f'祝福(攻擊+25%・{remaining("bless")}回合)')
+    if fighter.has('stance', turn):
+        reduction = {'民兵': 20, '騎士': 50}.get(fighter.job, 35)
+        buffs.append(f'防禦姿態(減傷{reduction}%・{remaining("stance")}回合)')
+    if fighter.has('taunt', turn):
+        buffs.append(f'嘲諷(減傷15%・{remaining("taunt")}回合)')
+    if fighter.has('moon_shadow', turn):
+        buffs.append(f'月影(閃避+15%・{remaining("moon_shadow")}回合)')
+    if fighter.food_regen_left and turn >= fighter.food_regen_start:
+        buffs.append(f'{fighter.food_name}緩補({fighter.food_regen_left}回合)')
+    if fighter.has('break', turn):
+        debuffs.append(f'破甲(防禦-40%・{remaining("break")}回合)')
+    if fighter.has('poison', turn):
+        debuffs.append(f'中毒({remaining("poison")}回合)')
+    if fighter.has('stun', turn):
+        debuffs.append(f'暈眩({remaining("stun")}回合)')
+    if fighter.has('vulnerable', turn):
+        debuffs.append(f'易傷(+10%・{remaining("vulnerable")}回合)')
+    corruption = fighter.status_stacks.get('corruption', 0)
+    if corruption:
+        debuffs.append(f'腐敗({corruption}/3層)')
+    return '、'.join(buffs) or '無', '、'.join(debuffs) or '無'
+
+
+def last_round_log(battle):
+    saved = battle.mechanics.get('last_round_log')
+    if saved is not None:
+        return list(saved)
+    if not battle.round:
+        return ['尚未結算任何回合。']
+    marker = f'── 第 {battle.round} 回合 ──'
+    try:
+        start = len(battle.log) - 1 - battle.log[::-1].index(marker)
+    except ValueError:
+        start = 0
+    return battle.log[start:] or ['該回合沒有產生紀錄。']
+
+
 class TotalRaidStore:
     def __init__(self, store):
         self.db = store.db
@@ -557,9 +624,15 @@ class TotalRaidService:
         roster = []
         for fighter in (item for item in battle.fighters if item.team == 0):
             marker = '💀' if fighter.hp <= 0 else ('⌛' if fighter.user_id in waiting else '✅')
-            roster.append(f'{marker} <@{fighter.user_id}>：{fighter.hp:,}/{fighter.stats["HP"]:,}')
-        embed.add_field(name='隊伍狀態', value='\n'.join(roster), inline=False)
-        embed.add_field(name='戰鬥紀錄', value='\n'.join(battle.log[-12:])[-1024:] or '尚無紀錄', inline=False)
+            buffs, debuffs = effect_status(fighter, battle)
+            roster.append(f'{marker} <@{fighter.user_id}>：{fighter.hp:,}/{fighter.stats["HP"]:,}\n'
+                          f'　Buff：{buffs}\n　Debuff：{debuffs}')
+        for index, chunk in enumerate(field_chunks(roster), 1):
+            name = '隊伍狀態' if index == 1 else f'隊伍狀態（{index}）'
+            embed.add_field(name=name, value=chunk, inline=False)
+        for index, chunk in enumerate(field_chunks(last_round_log(battle)), 1):
+            name = '上一回合完整摘要' if index == 1 else f'上一回合完整摘要（{index}）'
+            embed.add_field(name=name, value=chunk, inline=False)
         if not battle.result:
             embed.add_field(name='行動期限', value=f'<t:{int(room["round_deadline"])}:R>', inline=False)
             embed.set_footer(text='點擊下方按鈕開啟私人面板；✅ 僅表示已完成選擇，不公開實際行動。')
