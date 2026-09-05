@@ -1,6 +1,7 @@
 """Durable encounter state and atomic, idempotent rewards."""
 import json
 import random
+import time
 import uuid
 from decimal import Decimal
 
@@ -32,6 +33,20 @@ class RaidStore:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raid_difficulty (
                 guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, multiplier REAL NOT NULL,
                 PRIMARY KEY (guild_id, channel_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_battle_results (
+                raid_id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL,
+                monster_kind TEXT NOT NULL, result TEXT NOT NULL, rounds INTEGER NOT NULL,
+                difficulty REAL NOT NULL, strength REAL NOT NULL, participant_count INTEGER NOT NULL,
+                completed_at REAL NOT NULL)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_battle_participants (
+                raid_id TEXT NOT NULL, user_id INTEGER NOT NULL, job TEXT NOT NULL, level INTEGER NOT NULL,
+                max_hp INTEGER NOT NULL, final_hp INTEGER NOT NULL, damage_dealt INTEGER NOT NULL,
+                damage_taken INTEGER NOT NULL, healing_done INTEGER NOT NULL, healing_received INTEGER NOT NULL,
+                overhealing INTEGER NOT NULL, attacks INTEGER NOT NULL, hits INTEGER NOT NULL,
+                misses INTEGER NOT NULL, critical_hits INTEGER NOT NULL, knockouts INTEGER NOT NULL,
+                deaths INTEGER NOT NULL, skills_used TEXT NOT NULL,
+                PRIMARY KEY (raid_id, user_id))''')
+            self.db.execute('CREATE INDEX IF NOT EXISTS rpg_battle_results_guild_time ON rpg_battle_results(guild_id, completed_at)')
 
     def difficulty(self, guild, channel):
         row = self.db.execute('SELECT multiplier FROM rpg_raid_difficulty WHERE guild_id=? AND channel_id=?',
@@ -168,6 +183,25 @@ class RaidStore:
                                     (raid['guild_id'], p['id'], gold))
                 rewards.append(dict(id=p['id'], xp=xp, gold=gold, item=drop))
             raid.update(status='completed', battle=battle_data, rewards=rewards)
+            difficulty = raid.get('difficulty', {}).get('current', 1.0)
+            self.db.execute('INSERT OR REPLACE INTO rpg_battle_results VALUES (?,?,?,?,?,?,?,?,?,?)',
+                            (raid['id'], raid['guild_id'], raid['channel_id'], raid['monster']['kind'],
+                             battle_data['result'], battle_data['round'], difficulty,
+                             raid['monster'].get('strength', 1.0), len(raid['participants']), time.time()))
+            player_fighters = [fighter for fighter in battle_data['fighters'] if fighter['team'] == 0]
+            for index, participant in enumerate(raid['participants']):
+                fighter = next((item for item in player_fighters if item.get('user_id') == participant['id']),
+                               player_fighters[index] if index < len(player_fighters) else None)
+                if fighter is None:
+                    continue
+                stats = fighter.get('combat_stats', {})
+                values = [stats.get(key, 0) for key in ('damage_dealt', 'damage_taken', 'healing_done',
+                          'healing_received', 'overhealing', 'attacks', 'hits', 'misses', 'critical_hits',
+                          'knockouts', 'deaths')]
+                self.db.execute('INSERT OR REPLACE INTO rpg_battle_participants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (raid['id'], participant['id'], fighter['job'], participant['state']['level'],
+                                 fighter['stats']['HP'], fighter['hp'], *values,
+                                 json.dumps(stats.get('skills_used', {}), ensure_ascii=False)))
             if raid['participants']:
                 before = self.difficulty(raid['guild_id'], raid['channel_id'])
                 after = round(max(0.5, min(3.0, before * (1.1 if victory else 0.9))), 6)
@@ -177,3 +211,17 @@ class RaidStore:
                 raid['difficulty_change'] = dict(before=before, after=after)
             self._save(raid)
             return raid
+
+    def balance_report(self, guild_id, since):
+        overall = self.db.execute('''SELECT COUNT(*), COALESCE(SUM(result='勝利'), 0),
+            COALESCE(AVG(rounds), 0), COALESCE(AVG(participant_count), 0)
+            FROM rpg_battle_results WHERE guild_id=? AND completed_at>=?''', (guild_id, since)).fetchone()
+        monsters = self.db.execute('''SELECT monster_kind, COUNT(*), SUM(result='勝利'), AVG(rounds), AVG(strength)
+            FROM rpg_battle_results WHERE guild_id=? AND completed_at>=?
+            GROUP BY monster_kind ORDER BY COUNT(*) DESC, monster_kind LIMIT 8''', (guild_id, since)).fetchall()
+        jobs = self.db.execute('''SELECT p.job, COUNT(*), SUM(r.result='勝利'), AVG(p.damage_dealt),
+            AVG(p.healing_done), AVG(p.damage_taken)
+            FROM rpg_battle_participants p JOIN rpg_battle_results r ON r.raid_id=p.raid_id
+            WHERE r.guild_id=? AND r.completed_at>=? GROUP BY p.job ORDER BY COUNT(*) DESC, p.job''',
+                               (guild_id, since)).fetchall()
+        return dict(overall=overall, monsters=monsters, jobs=jobs)

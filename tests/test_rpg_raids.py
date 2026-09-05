@@ -349,6 +349,30 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         return dict(id=uid, name='玩家', state=self.characters.snapshot(1, uid),
                     rules=[asdict(r) for r in self.tactics.rules(1, uid, '民兵')])
 
+    async def test_settlement_persists_queryable_balance_metrics(self):
+        participant = self.participant()
+        raid = self.repo.create(1, 2, self.monster, 100, asdict(self.settings.raid))
+        raid.update(status='running', participants=[participant], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([participant], self.monster, 1)
+        player = battle.fighters[0]
+        player.combat_stats.update(damage_dealt=321, damage_taken=45, healing_done=67,
+                                   attacks=5, hits=4, misses=1, critical_hits=2)
+        player.combat_stats['skills_used'] = {'奮力一擊': 2}
+        battle.result = '勝利'
+
+        self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+
+        stored = self.store.db.execute('''SELECT damage_dealt, damage_taken, healing_done,
+            attacks, hits, misses, critical_hits, skills_used
+            FROM rpg_battle_participants WHERE raid_id=? AND user_id=?''',
+                                       (raid['id'], 1)).fetchone()
+        self.assertEqual(stored, (321, 45, 67, 5, 4, 1, 2, '{"奮力一擊": 2}'))
+        report = self.repo.balance_report(1, 0)
+        self.assertEqual(report['overall'][:2], (1, 1))
+        self.assertEqual(report['monsters'][0][:3], ('巨獸', 1, 1))
+        self.assertEqual(report['jobs'][0][:3], ('民兵', 1, 1))
+
     async def test_deadline_repeat_capacity_exit_and_guild_checks(self):
         raid = self.lobby()
         self.assertEqual(raid['deadline'], 400)

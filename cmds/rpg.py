@@ -207,6 +207,32 @@ class RPG(commands.Cog):
             return
         await interaction.followup.send(f'討伐已發布，五分鐘後開戰：{message.jump_url}', ephemeral=True)
 
+    @app_commands.command(name='戰鬥統計', description='管理員查看近期討伐的平衡數據')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.rename(days='天數')
+    async def battle_statistics(self, interaction: discord.Interaction,
+                                days: app_commands.Range[int, 1, 365] = 30):
+        if interaction.guild_id is None or not interaction.permissions.administrator:
+            await interaction.response.send_message('只有伺服器管理員可以查看戰鬥統計。', ephemeral=True)
+            return
+        report = self.raids.repo.balance_report(interaction.guild_id, time.time() - days * 86400)
+        count, wins, average_rounds, average_players = report['overall']
+        if not count:
+            await interaction.response.send_message(f'最近 {days} 天尚無新版戰鬥統計。', ephemeral=True)
+            return
+        embed = discord.Embed(title=f'安安大冒險｜最近 {days} 天戰鬥統計', color=0x3B82F6,
+                              description=f'{count} 場｜勝率 {wins * 100 / count:.1f}%｜平均 {average_rounds:.1f} 回合｜平均 {average_players:.1f} 人')
+        monster_lines = [f'{kind}：{battles} 場｜勝率 {victories * 100 / battles:.1f}%｜平均 {rounds:.1f} 回合｜強度 {strength:.2f}'
+                         for kind, battles, victories, rounds, strength in report['monsters']]
+        job_lines = [f'{job}：{battles} 人次｜勝率 {victories * 100 / battles:.1f}%｜傷害 {damage:.0f}｜治療 {healing:.0f}｜承傷 {taken:.0f}'
+                     for job, battles, victories, damage, healing, taken in report['jobs']]
+        embed.add_field(name='怪物表現', value='\n'.join(monster_lines)[:1024], inline=False)
+        embed.add_field(name='職業每場平均', value='\n'.join(job_lines)[:1024] or '尚無玩家資料', inline=False)
+        embed.set_footer(text='僅統計本功能上線後完成的討伐；樣本少時請勿單獨依勝率調整。')
+        await interaction.response.send_message(embed=embed, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     def skills_embed(self, guild, user):
         state = self.characters.snapshot(guild, user)
         embed = discord.Embed(title=f'{state["title"]}・自動技能', color=0x8B5CF6,

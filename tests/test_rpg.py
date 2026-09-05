@@ -105,7 +105,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'冒險', '排行榜', '生成討伐', '討伐通知'})
+                                 {'冒險', '排行榜', '生成討伐', '討伐通知', '戰鬥統計'})
                 admin = SimpleNamespace(guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2),
                     permissions=SimpleNamespace(administrator=False),
                     response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),

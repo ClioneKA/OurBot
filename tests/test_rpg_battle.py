@@ -11,6 +11,54 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_structured_combat_stats_track_actual_values_and_survive_restart(self):
+        actor = fighter(attack=100, hp=200, rules=[])
+        target = fighter('敵人', 1, hp=50, rules=[])
+        target.stats['防禦'] = 0
+        battle = Battle([actor, target], seed=1)
+        target.hp = 40
+
+        self.assertTrue(battle.hit(actor, target, precise=True))
+        self.assertEqual(actor.combat_stats['damage_dealt'], 40)
+        self.assertEqual(actor.combat_stats['attacks'], 1)
+        self.assertEqual(actor.combat_stats['hits'], 1)
+        self.assertEqual(actor.combat_stats['knockouts'], 1)
+        self.assertEqual(target.combat_stats['damage_taken'], 40)
+        self.assertEqual(target.combat_stats['deaths'], 1)
+
+        actor.hp = 190
+        self.assertEqual(battle.heal(actor, actor, 60), 10)
+        self.assertEqual(actor.combat_stats['healing_done'], 10)
+        self.assertEqual(actor.combat_stats['healing_received'], 10)
+        self.assertEqual(actor.combat_stats['overhealing'], 50)
+
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        self.assertEqual(restored.fighters[0].combat_stats, actor.combat_stats)
+        legacy = dump_battle(battle)
+        legacy['fighters'][0].pop('combat_stats')
+        legacy['fighters'][0].pop('user_id')
+        restored_legacy = load_battle(legacy).fighters[0]
+        self.assertEqual(restored_legacy.combat_stats['damage_dealt'], 0)
+        self.assertIsNone(restored_legacy.user_id)
+
+    def test_player_poison_damage_is_credited_after_reload(self):
+        from unittest.mock import patch
+        player = fighter(rules=[])
+        player.user_id = 7
+        enemy = fighter('敵人', 1, hp=100, rules=[])
+        enemy.hp = 1
+        enemy.effects['poison'] = 2
+        enemy.effect_sources['poison'] = 7
+        battle = load_battle(json.loads(json.dumps(dump_battle(Battle([player, enemy], seed=1)))))
+
+        with patch.object(battle, 'act'):
+            battle.step()
+
+        self.assertEqual(battle.fighters[0].combat_stats['damage_dealt'], 1)
+        self.assertEqual(battle.fighters[0].combat_stats['knockouts'], 1)
+        self.assertEqual(battle.fighters[1].combat_stats['damage_taken'], 1)
+        self.assertEqual(battle.fighters[1].combat_stats['deaths'], 1)
+
     def test_lifesteal_uses_actual_damage_and_survives_restart(self):
         from unittest.mock import patch
         actor = fighter(attack=100, hp=1000, rules=[])

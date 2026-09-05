@@ -15,6 +15,13 @@ TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': 
            'debuffed': '有可淨化負面狀態的隊友'}
 
 
+def empty_combat_stats():
+    """Per-fighter counters kept in battle snapshots for settlement and analysis."""
+    return dict(damage_dealt=0, damage_taken=0, healing_done=0, healing_received=0,
+                overhealing=0, attacks=0, hits=0, misses=0, critical_hits=0,
+                knockouts=0, deaths=0, skills_used={})
+
+
 @dataclass(frozen=True)
 class Skill:
     name: str
@@ -154,10 +161,13 @@ class Fighter:
     hp: int = field(init=False)
     ready: dict = field(default_factory=dict)
     effects: dict = field(default_factory=dict)
+    effect_sources: dict = field(default_factory=dict)
     guard_bonus: int = 0
     stability: tuple = (100, 100)
     armed: bool = True
     lifesteal: int = 0
+    user_id: int | None = None
+    combat_stats: dict = field(default_factory=empty_combat_stats)
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -182,6 +192,21 @@ class Battle:
         self.max_rounds = max_rounds
         self.result = None
         self.log = []
+
+    @staticmethod
+    def record_skill(actor, name):
+        used = actor.combat_stats['skills_used']
+        used[name] = used.get(name, 0) + 1
+
+    @staticmethod
+    def heal(actor, target, requested):
+        requested = max(0, int(requested))
+        amount = min(target.stats['HP'] - target.hp, requested)
+        target.hp += amount
+        actor.combat_stats['healing_done'] += amount
+        actor.combat_stats['overhealing'] += requested - amount
+        target.combat_stats['healing_received'] += amount
+        return amount
 
     def living(self, team):
         return [f for f in self.fighters if f.team == team and f.hp > 0]
@@ -250,9 +275,11 @@ class Battle:
         if actor.team == 0 and not actor.armed:
             self.log.append(f'{actor.name} 未裝備武器，無法造成傷害。')
             return False
+        actor.combat_stats['attacks'] += 1
         evasion = target.stats['閃避率'] + (15 if target.has('moon_shadow', self.round) else 0)
         chance = max(10, min(99, actor.stats['命中率'] - evasion))
         if not precise and self.rng.random() * 100 >= chance:
+            actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
             return False
         attack = actor.stats['攻擊']
@@ -277,17 +304,24 @@ class Battle:
             damage = max(1, int(damage * 0.85))
         actual_damage = min(target.hp, damage)
         target.hp = max(0, target.hp - damage)
+        actor.combat_stats['hits'] += 1
+        actor.combat_stats['critical_hits'] += int(critical)
+        actor.combat_stats['damage_dealt'] += actual_damage
+        target.combat_stats['damage_taken'] += actual_damage
+        if actual_damage and target.hp == 0:
+            actor.combat_stats['knockouts'] += 1
+            target.combat_stats['deaths'] += 1
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
                         f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}{"，倒下" if target.hp == 0 else ""}')
         drain = actor.lifesteal if lifesteal is None else lifesteal
-        healing = min(actor.stats['HP'] - actor.hp, actual_damage * drain // 100)
+        healing = self.heal(actor, actor, actual_damage * drain // 100)
         if healing > 0 and actor.hp > 0:
-            actor.hp += healing
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
         return True
 
     def act(self, actor):
         if actor.team == 1 and actor.job == '月影妖狐' and self.round % 3 == 0:
+            self.record_skill(actor, '月影斬')
             actor.effects['moon_shadow'] = self.round + 1
             self.log.append(f'{actor.name} 使用【月影斬】：150% 單體攻擊，閃避率 +15% 至第 {self.round + 1} 回合結束。')
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
@@ -295,25 +329,28 @@ class Battle:
                 self.hit(actor, target, 1.5)
             return
         if actor.team == 1 and actor.job == '血翼蝠王' and self.round % 2 == 0:
+            self.record_skill(actor, '汲血撕咬')
             self.log.append(f'{actor.name} 使用【汲血撕咬】：150% 單體攻擊，吸血 30%。')
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
             if target is not None:
                 self.hit(actor, target, 1.5, lifesteal=30)
             return
         if actor.team == 1 and actor.job == '哥布林隊長' and self.round % 3 == 0:
+            self.record_skill(actor, '戰團鼓舞')
             for ally in self.living(1):
                 ally.effects['bless'] = self.round + 1
             self.log.append(f'{actor.name} 使用【戰團鼓舞】：存活戰團成員攻擊 +25%，持續至第 {self.round + 1} 回合結束。')
             return
         if actor.team == 1 and actor.job == '史萊姆':
+            self.record_skill(actor, '彈跳撞擊')
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
             if target is not None:
                 self.log.append(f'{actor.name} 使用【彈跳撞擊】')
                 self.hit(actor, target, 0.45)
             return
         if actor.team == 1 and actor.job == '荊棘妖樹' and self.round % 3 == 0:
-            healing = min(actor.stats['HP'] - actor.hp, actor.stats['HP'] // 20)
-            actor.hp += healing
+            self.record_skill(actor, '荊棘再生')
+            healing = self.heal(actor, actor, actor.stats['HP'] // 20)
             candidates = self.living(0)
             targets = self.rng.sample(candidates, len(candidates) * 33 // 100)
             self.log.append(f'{actor.name} 使用【荊棘再生】：恢復 {healing} HP，纏繞暈眩 {len(targets)} 人。')
@@ -323,6 +360,7 @@ class Battle:
             return
         if actor.team == 1 and actor.job == '鐵殼魔像':
             if actor.has('charged_punch', self.round):
+                self.record_skill(actor, '鐵核重拳')
                 actor.effects.pop('charged_punch', None)
                 target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
                 if target is not None:
@@ -330,10 +368,12 @@ class Battle:
                     self.hit(actor, target, 2.5)
                 return
             if self.round % 3 == 0:
+                self.record_skill(actor, '蓄力')
                 actor.effects['charged_punch'] = self.round + 1
                 self.log.append(f'{actor.name} 使用【蓄力】：下一回合將使出 250% 倍率重拳！')
                 return
         if actor.team == 1 and actor.job == '史萊姆群':
+            self.record_skill(actor, '群體彈跳')
             self.log.append(f'{actor.name} 使用【群體彈跳】')
             for _ in range(3):
                 target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
@@ -342,6 +382,7 @@ class Battle:
                 self.hit(actor, target, 0.45)
             return
         if actor.team == 1 and actor.job == '巨獸' and self.round % 3 == 0:
+            self.record_skill(actor, '震地橫掃')
             self.log.append(f'{actor.name} 使用【震地橫掃】')
             for enemy in self.living(0):
                 self.hit(actor, enemy, 0.75)
@@ -349,12 +390,15 @@ class Battle:
         selected = self.select(actor)
         if not selected:
             target = self.target(actor, self.living(1 - actor.team), Rule(0, 0, True, 'always', 'lowest'), True)
+            self.record_skill(actor, '普通攻擊')
             self.log.append(f'{actor.name} 使用普通攻擊')
             hit = self.hit(actor, target)
             if hit and actor.job == '毒蛛' and target.hp > 0:
                 target.effects['poison'] = self.round + 2
+                target.effect_sources['poison'] = actor.user_id
             return
         rule, skill, target = selected
+        self.record_skill(actor, skill.name)
         actor.ready[rule.slot] = self.round + skill.cooldown + 1
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
@@ -362,20 +406,19 @@ class Battle:
             targets = self.living(actor.team) if effect == 'group_heal' else [actor]
             healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 4
             for ally in targets:
-                amount = min(ally.stats['HP'] - ally.hp, healing)
-                ally.hp += amount
+                amount = self.heal(actor, ally, healing)
                 self.log.append(f'{ally.name} 恢復 {amount} HP')
         elif effect in ('heal', 'greater_heal'):
             healing = actor.stats['治療量'] // 2 if actor.job == '民兵' else actor.stats['治療量']
             if effect == 'greater_heal':
                 healing = healing * 180 // 100
-            amount = min(target.stats['HP'] - target.hp, healing)
-            target.hp += amount
+            amount = self.heal(actor, target, healing)
             self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
             target.effects.pop('stun', None)
             target.effects.pop('poison', None)
             target.effects.pop('break', None)
+            target.effect_sources.pop('poison', None)
             self.log.append(f'移除 {target.name} 的負面狀態')
         elif effect == 'guard':
             bonus = max(1, actor.stats['HP'] // 20)
@@ -403,6 +446,8 @@ class Battle:
             if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
                 status = 'stun' if effect == 'shield_bash' else 'poison'
                 target.effects[status] = max(target.effects.get(status, 0), self.round + (1 if status == 'stun' else 2))
+                if status == 'poison':
+                    target.effect_sources['poison'] = actor.user_id
                 self.log.append(f'{target.name} {"暈眩" if status == "stun" else "中毒"}')
 
     def step(self):
@@ -420,7 +465,18 @@ class Battle:
                 # PvE poison only targets the opposing team: monsters poison players
                 # for 5%, while player poison arrows damage monsters for 2%.
                 damage = max(1, actor.stats['HP'] // (20 if actor.team == 0 else 50))
+                actual_damage = min(actor.hp, damage)
                 actor.hp = max(0, actor.hp - damage)
+                actor.combat_stats['damage_taken'] += actual_damage
+                source_id = actor.effect_sources.get('poison')
+                source = (next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
+                          if source_id is not None else None)
+                if source is not None and source is not actor:
+                    source.combat_stats['damage_dealt'] += actual_damage
+                if actual_damage and actor.hp == 0:
+                    actor.combat_stats['deaths'] += 1
+                    if source is not None and source is not actor:
+                        source.combat_stats['knockouts'] += 1
                 self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
                 if self.check_end():
                     break
@@ -444,7 +500,8 @@ def raid_battle(participants, monster, seed):
                         p['state']['total'][3], [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         lifesteal=p['state'].get('lifesteal', 0),
-                        armed=bool(p['state'].get('equipped', {}).get('武器'))) for p in participants]
+                        armed=bool(p['state'].get('equipped', {}).get('武器')),
+                        user_id=p.get('id')) for p in participants]
     badge_logs = []
     for fighter, participant in zip(fighters, participants):
         if any(ITEMS[key].party_bonus for key in participant['state'].get('equipped', {}).values() if key in ITEMS):
@@ -505,10 +562,17 @@ def load_battle(data):
         f.hp = data_f['hp']
         f.ready = {int(k): v for k, v in data_f['ready'].items()}
         f.effects = data_f['effects']
+        f.effect_sources = data_f.get('effect_sources', {})
         f.guard_bonus = data_f.get('guard_bonus', 0)
         f.stability = tuple(data_f.get('stability', (100, 100)))
         f.armed = data_f.get('armed', True)
         f.lifesteal = data_f.get('lifesteal', 0)
+        f.user_id = data_f.get('user_id')
+        saved_stats = data_f.get('combat_stats', {})
+        f.combat_stats = empty_combat_stats()
+        for key in f.combat_stats:
+            if key in saved_stats:
+                f.combat_stats[key] = saved_stats[key]
         fighters.append(f)
     battle = Battle(fighters, max_rounds=data['max_rounds'])
     battle.round, battle.result, battle.log = data['round'], data['result'], list(data['log'])
