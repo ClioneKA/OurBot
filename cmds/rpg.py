@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 import time
@@ -13,6 +14,7 @@ from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, stage_level
 from core.rpg_battle import Tactics, CONDITIONS, TARGETS, FIXED_TARGETS, rule_skill
 from core.rpg_raids import RaidService
+from core.rpg_fishing import Fishing, SPOTS
 
 
 class RPG(commands.Cog):
@@ -21,6 +23,7 @@ class RPG(commands.Cog):
         self.settings = get_settings().rpg
         self.store = RPGStore(Path(__file__).resolve().parent.parent / 'data/rpg.db')
         self.characters = Characters(self.store, self.settings)
+        self.fishing = Fishing(self.store)
         self.tracker = VoiceTracker()
         self.menu_views = WeakSet()
         self.tactics = Tactics(self.store)
@@ -29,10 +32,12 @@ class RPG(commands.Cog):
 
     async def cog_load(self):
         self.voice_tick.start()
+        self.fishing_notification_tick.start()
         self.raids.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
+        self.fishing_notification_tick.cancel()
         await self.raids.close()
         for view in tuple(self.menu_views):
             view.closed = True
@@ -92,8 +97,30 @@ class RPG(commands.Cog):
     async def before_voice_tick(self):
         await self.bot.wait_until_ready()
 
+    @tasks.loop(seconds=30)
+    async def fishing_notification_tick(self):
+        for guild_id, user_id, spot_id in self.fishing.notifications_due():
+            if not self.fishing.reserve_notification(guild_id, user_id):
+                continue
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                guild = self.bot.get_guild(guild_id)
+                guild_name = discord.utils.escape_markdown(guild.name if guild else str(guild_id))
+                embed = discord.Embed(title='安安大冒險｜可以收竿了！', color=0x38BDF8,
+                    description=f'你在 **{guild_name}** 的 **{SPOTS[spot_id].name}** 派遣已完成。')
+                embed.set_footer(text='回到該伺服器使用 /冒險 → 生活 → 釣魚 收竿。')
+                await asyncio.wait_for(user.send(embed=embed,
+                                                 allowed_mentions=discord.AllowedMentions.none()), timeout=20)
+            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
+                logging.info('Fishing completion DM could not be delivered for guild %s user %s',
+                             guild_id, user_id)
 
-    @app_commands.command(name='冒險', description='開啟安安大冒險：角色、裝備、技能、背包、商店與轉職')
+    @fishing_notification_tick.before_loop
+    async def before_fishing_notification_tick(self):
+        await self.bot.wait_until_ready()
+
+
+    @app_commands.command(name='冒險', description='開啟安安大冒險：角色、戰鬥、背包、商店與生活技能')
     @app_commands.guild_only()
     async def adventure(self, interaction: discord.Interaction):
         view = AdventureView(self, interaction)

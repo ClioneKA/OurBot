@@ -3,7 +3,10 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, JOBS, item_text
+from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_text
+
+
+BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '煉金素材', '製作材料', '換金道具', '釣竿')
 
 
 def add_back(view, row):
@@ -27,6 +30,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'shop':
         from core.rpg_shop_view import ShopView
         next_view = ShopView(view.cog, view.origin)
+    elif page == 'fishing':
+        from core.rpg_fishing_view import FishingView
+        next_view = FishingView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -46,6 +52,7 @@ class AdventureView(discord.ui.View):
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.page, self.index, self.selected_job = page, 0, None
+        self.category = '全部'
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -61,8 +68,11 @@ class AdventureView(discord.ui.View):
         self.clear_items()
         if self.page == 'home':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
-                ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('說明', 'help'))):
+                ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('生活', 'life'),
+                ('說明', 'help'))):
                 self.button(label, action, i // 3)
+        elif self.page == 'life':
+            self.button('釣魚', 'fishing', 0)
         elif self.page == 'jobs':
             from core.rpg_equipment_view import PanelSelect
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
@@ -70,12 +80,17 @@ class AdventureView(discord.ui.View):
                 discord.SelectOption(label=job, value=job, default=job == self.selected_job) for job in JOBS]))
             self.button('確認轉職', 'change_job', 1, state['level'] < 10 or not self.selected_job)
         elif self.page == 'backpack':
-            owned = self.cog.characters.inventory(self.guild_id, self.owner.id)
+            from core.rpg_equipment_view import PanelSelect
+            all_owned = self.cog.characters.inventory(self.guild_id, self.owner.id)
+            owned = [key for key in all_owned if self.category == '全部' or ITEMS[key].category == self.category]
             self.pages = max(1, (len(owned) + 9) // 10)
             self.index = min(self.index, self.pages - 1)
-            self.button('上一頁', 'previous', 0, self.index == 0)
-            self.button('下一頁', 'next', 0, self.index == self.pages - 1)
-            self.button('給予物品', 'give', 0)
+            self.add_item(PanelSelect('category', row=0, placeholder='選擇背包分類', options=[
+                discord.SelectOption(label=category, value=category, default=category == self.category)
+                for category in BACKPACK_CATEGORIES]))
+            self.button('上一頁', 'previous', 1, self.index == 0)
+            self.button('下一頁', 'next', 1, self.index == self.pages - 1)
+            self.button('給予物品', 'give', 1)
         if self.page != 'home':
             add_back(self, 2)
         self.button('重新整理', 'refresh', 2)
@@ -87,17 +102,25 @@ class AdventureView(discord.ui.View):
             embed.title = '安安大冒險｜' + embed.title
         elif self.page == 'backpack':
             chars = self.cog.characters
-            owned = chars.inventory(self.guild_id, self.owner.id)
+            all_owned = chars.inventory(self.guild_id, self.owner.id)
+            owned = [key for key in all_owned if self.category == '全部' or ITEMS[key].category == self.category]
             counts = chars.inventory_counts(self.guild_id, self.owner.id)
             equipped = set(chars.snapshot(self.guild_id, self.owner.id)['equipped'].values())
-            from core.rpg_character import stage_level
             lines = []
             for key in owned[self.index * 10:(self.index + 1) * 10]:
                 item = ITEMS[key]
-                requirement = f'{item.job} Lv.{stage_level(item.stage, self.cog.settings)}' if item.job else '全職業通用'
-                lines.append(f'**{item.name}** ×{counts[key]} {"【已裝備】" if key in equipped else ""}\n{requirement}｜{item_text(item)}')
-            embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}',
-                                  description='\n\n'.join(lines) or '背包是空的。', color=0x8B5CF6)
+                requirement = (f'{item.job} Lv.{item_level(item, self.cog.settings)}' if item.job
+                               else '全職業通用' if item.category == '裝備' else item.category)
+                sale = item_sell_price(item)
+                lines.append(f'**{item.name}** ×{counts[key]} {"【已裝備】" if key in equipped else ""}\n'
+                             f'{requirement}｜{item_text(item)}'
+                             + (f'｜收購 {sale} 金幣／件' if sale else ''))
+            embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}',
+                                  description='\n\n'.join(lines) or '目前沒有此類物品。', color=0x8B5CF6)
+        elif self.page == 'life':
+            embed = discord.Embed(title='安安大冒險｜生活', description=
+                '透過生活技能取得料理、煉金與製作素材。\n\n'
+                '**釣魚**：派遣至釣場，完成後收竿取得漁獲並提升獨立的釣魚等級。', color=0x38BDF8)
         elif self.page == 'jobs':
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
             embed = discord.Embed(title='安安大冒險｜轉職', description=
@@ -115,7 +138,8 @@ class AdventureView(discord.ui.View):
                 '在頻道點擊報名，五分鐘後自動討伐；開戰前可調整裝備和技能。勝利獲得經驗、金幣與機率專屬物品（可重複），稀有史萊姆群報酬較高但不掉飾品；實際獎勵依公告。\n\n'
                 '失敗或回合上限：以怪物結束時已削減 HP 比例發放勝利經驗與金幣，無條件捨去，無掉落；多隻怪物合計血量。\n\n'
                 '討伐頻道動態難度：成功後 ×1.1，失敗或回合上限後 ×0.9，範圍 0.5–3 倍；取消不調整，下一場套用。勝利經驗與金幣隨動態難度增減，失敗依該場勝利獎勵折算，掉落率不變。\n\n'
-                '背包可給予同伺服器真人物品；商店以物品價值的 20% 收購。木棒與免費補給綁定，穿戴中的那一件需先卸下。\n\n'
+                '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。綁定物品不可給予或賣出，穿戴中的那一件需先卸下。\n\n'
+                '生活頁可派遣釣魚：30 分鐘／2 小時／8 小時分別基礎捕獲 2／6／20 次，釣場提供料理、煉金、換金與釣竿素材。\n\n'
                 '使用 /討伐通知 領取出怪通知身分組，可選取消退訂。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
             embed.add_field(name='基礎能力效果（含飾品加成）', value=
                 '生命力：每點最大 HP +10（另有基礎 50 HP）。\n'
@@ -150,7 +174,7 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'help', 'give'):
+            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'fishing', 'help', 'give'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':
@@ -169,6 +193,8 @@ class AdventureView(discord.ui.View):
                     self.index = max(0, self.index - 1)
                 elif action == 'next' and self.page == 'backpack':
                     self.index = min(self.pages - 1, self.index + 1)
+                elif action == 'category' and self.page == 'backpack' and value in BACKPACK_CATEGORIES:
+                    self.category, self.index = value, 0
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

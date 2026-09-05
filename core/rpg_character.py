@@ -44,6 +44,10 @@ class Item:
     party_bonus: bool = False
     evasion: int = 0
     lifesteal: int = 0
+    category: str = '裝備'
+    description: str = ''
+    sell_price: int | None = None
+    transferable: bool = True
 
 
 ITEMS = {}
@@ -112,6 +116,37 @@ for job, key, name, bonuses in (
                               bonuses, STABILITY[job], required_level=20, lifesteal=2)
 
 
+# Fishing items use the existing stackable inventory while remaining separate from
+# combat equipment.  sell_price is the exact shop payout; legacy equipment keeps
+# using 20% of its value.
+for key, name, category, description, sell_price in (
+    ('fishing:pond:common', '池塘鯽魚', '料理素材', '中庭許願池常見的魚，可作為料理素材。', 25),
+    ('fishing:pond:rare', '七彩錦魚', '料理素材', '閃著七彩光澤的稀有魚，可作為高級料理素材。', 50),
+    ('fishing:pond:weed', '青苔水草', '煉金素材', '生長在許願池底的水草，可作為煉金素材。', 30),
+    ('fishing:pond:coin', '許願銅幣', '換金道具', '從許願池撈起的銅幣，可賣給商店換取金幣。', 100),
+    ('fishing:pond:rod', '濕潤木枝', '製作材料', '適合削成釣竿竿身的木枝。', 20),
+    ('fishing:pond:line', '廢棄釣線', '製作材料', '纏在池底、仍可重新利用的釣線。', 20),
+    ('fishing:pond:hook', '生鏽魚鉤', '製作材料', '清理後還能使用的舊魚鉤。', 20),
+    ('fishing:lake:common', '魔女湖鱒', '料理素材', '棲息在魔女島湖泊的鱒魚，可作為料理素材。', 50),
+    ('fishing:lake:rare', '星紋魔女鰻', '料理素材', '身上帶有星形紋路的稀有鰻魚。', 100),
+    ('fishing:lake:weed', '月光水草', '煉金素材', '吸收月光魔力生長的水草。', 60),
+    ('fishing:lake:coin', '沉水銀幣', '換金道具', '沉在魔女島湖底的銀幣，可賣給商店換取金幣。', 200),
+    ('fishing:lake:rod', '魔力漂流木', '製作材料', '帶有微弱魔力、適合製作竿身的木材。', 40),
+    ('fishing:lake:line', '魔力釣線', '製作材料', '能承受魔力魚掙扎的堅韌釣線。', 40),
+    ('fishing:lake:hook', '魔力魚鉤', '製作材料', '刻有簡單魔法紋路的魚鉤。', 40),
+):
+    ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
+                      description=description, sell_price=sell_price)
+
+for key, name, description in (
+    ('fishing:rod:old', '老舊釣竿', '初次釣魚時由安安贈送，沒有額外效果。'),
+    ('fishing:rod:simple', '簡易釣竿', '收竿時有 20% 機率追加一次捕獲。'),
+    ('fishing:rod:magic', '魔力釣竿', '收竿時有 30% 機率追加一次捕獲，稀有魚權重提高 10%。'),
+):
+    ITEMS[key] = Item(name, '釣竿', '', 0, (0, 0, 0, 0, 0), category='釣竿',
+                      description=description, transferable=False)
+
+
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):
         ITEMS[key] = replace(item, value=300)
@@ -121,6 +156,10 @@ for key, item in list(ITEMS.items()):
 
 def item_value(item):
     return item.price or item.value
+
+
+def item_sell_price(item):
+    return item.sell_price if item.sell_price is not None else item_value(item) // 5
 
 
 def stage_for(level, settings):
@@ -163,6 +202,8 @@ def item_text(item):
         parts.append(f'閃避率 +{item.evasion}%')
     if item.lifesteal:
         parts.append(f'吸血 {item.lifesteal}%（直接傷害實際扣血量）')
+    if item.description:
+        parts.append(item.description)
     return '、'.join(parts) or '無加成'
 
 
@@ -257,8 +298,8 @@ class Characters:
 
     def _grant(self, guild_id, user_id, job):
         candidates = [key for key, item in ITEMS.items()
-                      if not key.startswith(('raid:', 'starter:', 'goblin:', 'fox:', 'bat:')) and
-                      (not item.job or (item.job == job and item.stage == 0))]
+                      if (key.startswith('accessory:') or
+                          item.job == job and item.stage == 0 and item.slot in ('武器', '套裝'))]
         granted = []
         for key in candidates:
             cursor = self.db.execute('INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?, ?, ?)',
@@ -358,8 +399,11 @@ class Characters:
     def dispose(self, guild, user, key, quantity, recipient=None):
         """Transfer or sell only unequipped copies in one transaction."""
         item = ITEMS.get(key)
-        if not item or item_value(item) <= 0:
-            raise CharacterError('木棒與免費補給為綁定物品，不能給予或賣出。')
+        if not item or recipient is not None and (
+                not item.transferable or item_value(item) <= 0 and item.sell_price is None):
+            raise CharacterError('這件物品為綁定物品，不能給予其他玩家。')
+        if recipient is None and item_sell_price(item) <= 0:
+            raise CharacterError('這件物品不能賣出。')
         if type(quantity) is not int or quantity < 1:
             raise CharacterError('數量必須是正整數。')
         if recipient == user:
@@ -377,7 +421,7 @@ class Characters:
                                 'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=quantity+excluded.quantity',
                                 (guild, recipient, key, quantity))
                 return 0
-            gold = item_value(item) // 5 * quantity
+            gold = item_sell_price(item) * quantity
             self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
                             'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold', (guild, user, gold))
             return gold

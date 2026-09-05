@@ -2,7 +2,7 @@
 import asyncio
 import discord
 
-from core.rpg_character import ITEMS, CharacterError, item_value, item_text
+from core.rpg_character import ITEMS, CharacterError, item_sell_price, item_text
 from core.rpg_menu import add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
@@ -13,7 +13,7 @@ class QuantityModal(discord.ui.Modal):
         self.panel, self.key, self.recipient = panel, panel.selected, panel.recipient
         self.revision = panel.revision
         item = ITEMS[self.key]
-        label = f'{item.name}｜每件 {item_value(item) // 5} 金幣' if panel.mode == 'sell' else item.name
+        label = f'{item.name}｜每件 {item_sell_price(item)} 金幣' if panel.mode == 'sell' else item.name
         self.amount = discord.ui.TextInput(label=label[:45], default='1', min_length=1, max_length=9)
         self.add_item(self.amount)
 
@@ -47,7 +47,10 @@ class TradeView(discord.ui.View):
     def rebuild(self):
         chars = self.cog.characters
         self.catalog = [key for key in chars.inventory(self.guild_id, self.owner.id)
-                        if item_value(ITEMS[key]) > 0 and chars.available_quantity(self.guild_id, self.owner.id, key) > 0]
+                        if (item_sell_price(ITEMS[key]) > 0 if self.mode == 'sell'
+                            else ITEMS[key].transferable and
+                                 (ITEMS[key].sell_price is not None or ITEMS[key].price > 0 or ITEMS[key].value > 0))
+                        and chars.available_quantity(self.guild_id, self.owner.id, key) > 0]
         self.pages = max(1, (len(self.catalog) + 9) // 10)
         self.page = min(self.page, self.pages - 1)
         if self.selected not in self.catalog:
@@ -56,7 +59,8 @@ class TradeView(discord.ui.View):
         keys = self.catalog[self.page * 10:(self.page + 1) * 10]
         self.add_item(PanelSelect('item', row=0, placeholder=f'選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
             options=[discord.SelectOption(label=ITEMS[key].name, value=key, default=key == self.selected,
-                description=f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件｜收購 {item_value(ITEMS[key])//5} 金幣／件')
+                description=(f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件'
+                             + (f'｜收購 {item_sell_price(ITEMS[key])} 金幣／件' if self.mode == 'sell' else '')))
                 for key in keys] or [discord.SelectOption(label='沒有可用物品', value='empty')]))
         if self.mode == 'give':
             self.add_item(RecipientSelect())
@@ -78,10 +82,13 @@ class TradeView(discord.ui.View):
 
     def embed(self, notice=None):
         embed = discord.Embed(title='安安大冒險｜' + ('給予物品' if self.mode == 'give' else '商店收購'),
-            description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n木棒與免費補給為綁定物品。', color=0xD8AF40)
+            description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n木棒、免費補給與釣竿為綁定物品。', color=0xD8AF40)
         if self.selected:
             item = ITEMS[self.selected]
-            embed.add_field(name=item.name, value=f'{item_text(item)}\n價值 {item_value(item)} 金幣｜20% 收購價 {item_value(item)//5} 金幣／件', inline=False)
+            value = item_text(item)
+            if self.mode == 'sell':
+                value += f'\n收購價 {item_sell_price(item)} 金幣／件'
+            embed.add_field(name=item.name, value=value, inline=False)
         if self.mode == 'give':
             embed.add_field(name='收件人', value=f'<@{self.recipient}>' if self.recipient else '尚未選擇')
         else:
