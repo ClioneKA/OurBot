@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from core.rpg import RPGStore, level_floor
-from core.rpg_character import Characters, CharacterError, JOBS, ITEMS
+from core.rpg_character import Characters, CharacterError, JOBS, ITEMS, item_sellable
 from core.settings import RPGSettings, SettingsError
 
 
@@ -92,7 +92,7 @@ class CharacterTests(unittest.TestCase):
             with self.assertRaises(CharacterError):
                 self.characters.buy(1, 1, key)
 
-    def test_starter_club_once_and_unequipped_state_survives_reload(self):
+    def test_starter_club_once_and_removal_requires_supply_claim(self):
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], 'starter:club')
         self.assertEqual(state['combat']['攻擊'], 35)
@@ -107,6 +107,8 @@ class CharacterTests(unittest.TestCase):
         with self.store.db:
             self.store.db.execute("DELETE FROM rpg_inventory WHERE item_id='starter:club'")
         self.assertEqual(reloaded.snapshot(1, 1)['equipped']['武器'], '騎士:0:武器')
+        self.assertNotIn('starter:club', reloaded.inventory_counts(1, 1))
+        self.assertEqual(reloaded.claim(1, 1), ['starter:club'])
         self.assertEqual(reloaded.inventory_counts(1, 1)['starter:club'], 1)
 
     def test_weapons_and_suits_only_grant_direct_stats_and_stability(self):
@@ -185,6 +187,38 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(state['capacity'], 2)
         self.assertEqual(len(state['equipped']), 2)
         self.assertEqual(self.store.xp(1, 1), 1154)
+
+    def test_free_equipment_sells_for_zero_cannot_transfer_and_can_be_reclaimed(self):
+        self.characters.snapshot(1, 1)
+        self.assertTrue(item_sellable(ITEMS['starter:club']))
+        self.assertFalse(ITEMS['starter:club'].transferable)
+        with self.assertRaises(CharacterError):
+            self.characters.dispose(1, 1, 'starter:club', 1, 2)
+        self.characters.unequip(1, 1, '武器')
+        self.assertEqual(self.characters.dispose(1, 1, 'starter:club', 1), 0)
+        self.assertNotIn('武器', self.characters.snapshot(1, 1)['equipped'])
+        self.assertEqual(self.characters.claim(1, 1), ['starter:club'])
+
+        self.level(10)
+        self.characters.change_job(1, 1, '騎士')
+        for key in ('騎士:0:武器', '騎士:0:套裝', 'accessory:0'):
+            self.assertTrue(item_sellable(ITEMS[key]))
+            self.assertEqual(ITEMS[key].sell_price, 0)
+            self.assertFalse(ITEMS[key].transferable)
+        with self.assertRaises(CharacterError):
+            self.characters.dispose(1, 1, 'accessory:0', 1, 2)
+        self.characters.unequip(1, 1, '武器')
+        self.assertEqual(self.characters.dispose(1, 1, '騎士:0:武器', 1), 0)
+        self.assertEqual(self.characters.dispose(1, 1, 'accessory:0', 1), 0)
+        claimed = self.characters.claim(1, 1)
+        self.assertIn('騎士:0:武器', claimed)
+        self.assertIn('accessory:0', claimed)
+        self.characters.dispose(1, 1, '騎士:0:武器', 1)
+        self.characters.dispose(1, 1, 'accessory:0', 1)
+        self.characters.change_job(1, 1, '弓兵')
+        self.assertIn('accessory:0', self.characters.inventory(1, 1))
+        self.characters.change_job(1, 1, '騎士')
+        self.assertIn('騎士:0:武器', self.characters.inventory(1, 1))
 
     def test_stage_boundaries_slots_and_claims_are_idempotent(self):
         self.level(10)

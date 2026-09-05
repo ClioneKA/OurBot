@@ -2,7 +2,7 @@
 import asyncio
 import discord
 
-from core.rpg_character import ITEMS, CharacterError, item_sell_price, item_text
+from core.rpg_character import ITEMS, CharacterError, item_sell_price, item_sellable, item_text
 from core.rpg_menu import add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
@@ -47,9 +47,8 @@ class TradeView(discord.ui.View):
     def rebuild(self):
         chars = self.cog.characters
         self.catalog = [key for key in chars.inventory(self.guild_id, self.owner.id)
-                        if (item_sell_price(ITEMS[key]) > 0 if self.mode == 'sell'
-                            else ITEMS[key].transferable and
-                                 (ITEMS[key].sell_price is not None or ITEMS[key].price > 0 or ITEMS[key].value > 0))
+                        if (item_sellable(ITEMS[key]) if self.mode == 'sell'
+                            else ITEMS[key].transferable)
                         and chars.available_quantity(self.guild_id, self.owner.id, key) > 0]
         self.pages = max(1, (len(self.catalog) + 9) // 10)
         self.page = min(self.page, self.pages - 1)
@@ -82,7 +81,8 @@ class TradeView(discord.ui.View):
 
     def embed(self, notice=None):
         embed = discord.Embed(title='安安大冒險｜' + ('給予物品' if self.mode == 'give' else '商店收購'),
-            description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n木棒、免費補給與釣竿為綁定物品。', color=0xD8AF40)
+            description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n'
+                        '木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。', color=0xD8AF40)
         if self.selected:
             item = ITEMS[self.selected]
             value = item_text(item)

@@ -52,7 +52,7 @@ class Item:
 
 ITEMS = {}
 ITEMS['starter:club'] = Item('木棒', '武器', '', 0, (0, 0, 0, 0, 0),
-                              (0, 5, 5, 0), (60, 110))
+                              (0, 5, 5, 0), (60, 110), sell_price=0, transferable=False)
 for job in JOBS:
     for stage, prefix in enumerate(PREFIXES):
         for slot, names in (('武器', WEAPONS), ('套裝', SUITS)):
@@ -61,10 +61,13 @@ for job in JOBS:
             ITEMS[key] = Item(prefix + names[job], slot, job, stage, (0, 0, 0, 0, 0),
                               tuple(weight * (stage + 1) for weight in weights),
                               STABILITY[job] if slot == '武器' else (100, 100),
-                              (0, 500, 1500, 4000)[stage])
+                              (0, 500, 1500, 4000)[stage],
+                              sell_price=0 if stage == 0 else None,
+                              transferable=stage != 0)
 for index, name in enumerate(('生命護符', '力量指環', '堅韌徽章', '靈巧吊墜', '信仰念珠')):
     ITEMS[f'accessory:{index}'] = Item(name, '飾品', '', 0,
-                                      tuple(3 if i == index else 0 for i in range(5)))
+                                      tuple(3 if i == index else 0 for i in range(5)),
+                                      sell_price=0, transferable=False)
 
 # Raid-only accessories are never included in profession supplies.
 for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '風羽吊墜', '星痕念珠')):
@@ -198,6 +201,10 @@ def item_sell_price(item):
     return item.sell_price if item.sell_price is not None else item_value(item) // 5
 
 
+def item_sellable(item):
+    return item.sell_price is not None or item_value(item) > 0
+
+
 def stage_for(level, settings):
     return sum(level >= threshold for threshold in
                (settings.regular_level, settings.veteran_level, settings.elite_level))
@@ -263,6 +270,11 @@ class Characters:
                 item_id TEXT NOT NULL,
                 PRIMARY KEY (guild_id, user_id, slot),
                 UNIQUE (guild_id, user_id, item_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_starter_claims (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, user_id))''')
+            self.db.execute('''INSERT OR IGNORE INTO rpg_starter_claims
+                SELECT guild_id,user_id FROM rpg_inventory WHERE item_id='starter:club' ''')
 
     def job(self, guild_id, user_id):
         row = self.db.execute('SELECT job FROM rpg_characters WHERE guild_id=? AND user_id=?',
@@ -276,17 +288,19 @@ class Characters:
             (guild_id, user_id)) if row[0] in ITEMS]
 
     def ensure_starter(self, guild_id, user_id):
-        if self.db.execute('SELECT 1 FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=?',
-                           (guild_id, user_id, 'starter:club')).fetchone():
+        if self.db.execute('SELECT 1 FROM rpg_starter_claims WHERE guild_id=? AND user_id=?',
+                           (guild_id, user_id)).fetchone():
             return
         if not self.db.in_transaction:
             with self.db:
                 self.db.execute('BEGIN IMMEDIATE')
                 self.ensure_starter(guild_id, user_id)
             return
-        granted = self.db.execute('INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?)',
-                                  (guild_id, user_id, 'starter:club'))
+        granted = self.db.execute('INSERT OR IGNORE INTO rpg_starter_claims VALUES (?,?)',
+                                  (guild_id, user_id))
         if granted.rowcount:
+            self.db.execute('INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?)',
+                            (guild_id, user_id, 'starter:club'))
             self.db.execute('INSERT OR IGNORE INTO rpg_equipment VALUES (?,?,?,?)',
                             (guild_id, user_id, '武器', 'starter:club'))
 
@@ -369,9 +383,14 @@ class Characters:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.snapshot(guild_id, user_id)
-            if state['job'] == '民兵':
-                raise CharacterError('達到 Lv.10 並使用 /冒險 → 轉職 後才能領取職業補給。')
-            return self._grant(guild_id, user_id, state['job'])
+            granted = []
+            starter = self.db.execute('''INSERT OR IGNORE INTO rpg_inventory
+                (guild_id,user_id,item_id) VALUES (?,?,?)''', (guild_id, user_id, 'starter:club'))
+            if starter.rowcount:
+                granted.append('starter:club')
+            if state['job'] != '民兵':
+                granted.extend(self._grant(guild_id, user_id, state['job']))
+            return granted
 
     def equip(self, guild_id, user_id, item_id, accessory_slot=1):
         with self.db:
@@ -435,10 +454,9 @@ class Characters:
     def dispose(self, guild, user, key, quantity, recipient=None):
         """Transfer or sell only unequipped copies in one transaction."""
         item = ITEMS.get(key)
-        if not item or recipient is not None and (
-                not item.transferable or item_value(item) <= 0 and item.sell_price is None):
+        if not item or recipient is not None and not item.transferable:
             raise CharacterError('這件物品為綁定物品，不能給予其他玩家。')
-        if recipient is None and item_sell_price(item) <= 0:
+        if recipient is None and not item_sellable(item):
             raise CharacterError('這件物品不能賣出。')
         if type(quantity) is not int or quantity < 1:
             raise CharacterError('數量必須是正整數。')

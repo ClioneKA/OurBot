@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_text
+from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_sellable, item_text
 
 
 BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '煉金素材', '製作材料', '換金道具', '釣竿', '料理', '藥水')
@@ -87,6 +87,7 @@ class AdventureView(discord.ui.View):
             self.add_item(PanelSelect('job', row=0, placeholder='選擇職業', options=[
                 discord.SelectOption(label=job, value=job, default=job == self.selected_job) for job in JOBS]))
             self.button('確認轉職', 'change_job', 1, state['level'] < 10 or not self.selected_job)
+            self.button('重新領取補給', 'claim_supplies', 1)
         elif self.page == 'backpack':
             from core.rpg_equipment_view import PanelSelect
             all_owned = self.cog.characters.inventory(self.guild_id, self.owner.id)
@@ -122,7 +123,7 @@ class AdventureView(discord.ui.View):
                 sale = item_sell_price(item)
                 lines.append(f'**{item.name}** ×{counts[key]} {"【已裝備】" if key in equipped else ""}\n'
                              f'{requirement}｜{item_text(item)}'
-                             + (f'｜收購 {sale} 金幣／件' if sale else ''))
+                             + (f'｜收購 {sale} 金幣／件' if item_sellable(item) else ''))
             embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}',
                                   description='\n\n'.join(lines) or '目前沒有此類物品。', color=0x8B5CF6)
         elif self.page == 'life':
@@ -148,7 +149,7 @@ class AdventureView(discord.ui.View):
                 '在頻道點擊報名，五分鐘後自動討伐；開戰前可調整裝備和技能。勝利獲得經驗、金幣與機率專屬物品（可重複），稀有史萊姆群報酬較高但不掉飾品；實際獎勵依公告。\n\n'
                 '失敗或回合上限：以怪物結束時已削減 HP 比例發放勝利經驗與金幣，無條件捨去，無掉落；多隻怪物合計血量。\n\n'
                 '討伐頻道動態難度：成功後 ×1.1，失敗或回合上限後 ×0.9，範圍 0.5–3 倍；取消不調整，下一場套用。勝利經驗與金幣隨動態難度增減，失敗依該場勝利獎勵折算，掉落率不變。\n\n'
-                '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。綁定物品不可給予或賣出，穿戴中的那一件需先卸下。\n\n'
+                '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。穿戴中的那一件需先卸下。\n\n'
                 '生活頁可派遣釣魚，也能在中庭花圃種植，農耕 Lv.20 再解鎖可同步耕作的監獄菜園；農耕等級也會解鎖植物並提高收成量。魚與作物可製成自動回血料理，水草與藥草可製成整場增益藥水。\n\n'
                 '使用 /討伐通知 領取出怪通知身分組，可選取消退訂。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
             embed.add_field(name='基礎能力效果（含飾品加成）', value=
@@ -200,6 +201,10 @@ class AdventureView(discord.ui.View):
                 elif action == 'change_job' and self.page == 'jobs':
                     state = self.cog.characters.change_job(self.guild_id, self.owner.id, self.selected_job)
                     notice = f'你現在是 {state["title"]}！已穿上早期武器與套裝。'
+                elif action == 'claim_supplies' and self.page == 'jobs':
+                    granted = self.cog.characters.claim(self.guild_id, self.owner.id)
+                    notice = ('已補發：' + '、'.join(ITEMS[key].name for key in granted)
+                              if granted else '目前職業的免費補給都已在背包中。')
                 elif action == 'previous' and self.page == 'backpack':
                     self.index = max(0, self.index - 1)
                 elif action == 'next' and self.page == 'backpack':

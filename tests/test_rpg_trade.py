@@ -57,6 +57,20 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
             self.characters.dispose(1, 1, 'raid:0', 1, 2)
         self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
 
+    async def test_zero_gold_free_item_is_listed_in_shop_after_unequip(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        self.assertNotIn('starter:club', view.catalog)
+        self.characters.unequip(1, 1, '武器')
+        view.rebuild()
+        self.assertIn('starter:club', view.catalog)
+        await view.execute(self.interaction, 'starter:club', None, 1, view.revision)
+        self.assertNotIn('starter:club', self.characters.inventory(1, 1))
+        self.assertEqual(self.characters.claim(1, 1), ['starter:club'])
+        self.assertEqual(self.store.gold(1, 1), 0)
+        self.assertIn('獲得 0 金幣',
+                      self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value)
+
     async def test_gift_confirmation_replay_and_member_validation(self):
         view = TradeView(self.cog, self.interaction, 'give')
         self.addCleanup(view.stop)
