@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 from core.rpg import RPGStore
 from core.rpg_battle import Tactics
 from core.rpg_character import CharacterError, Characters
-from core.rpg_total_battle import ACTION_ATTACK, load_total_battle
-from core.rpg_total_raids import TotalRaidError, TotalRaidService, TotalRaidStore
+from core.rpg_total_battle import ACTION_ATTACK, ACTION_SKILL, load_total_battle
+from core.rpg_total_raids import TotalRaidError, TotalRaidService, TotalRaidStore, hp_bar
 from core.settings import RPGSettings
 
 
@@ -118,7 +118,18 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
                 await self.service.begin(room['id'], HashableMember(2))
             started = await self.service.begin(room['id'], host)
             battle = load_total_battle(started['battle'])
+            embed = self.service.battle_embed(started, battle)
+            self.assertEqual([field.name for field in embed.fields[:4]],
+                             ['Boss HP', 'Boss 行動', '隊伍狀態', '戰鬥紀錄'])
+            self.assertIn('████████████████', embed.fields[0].value)
+            action_text = self.service.player_action_text(battle, 1)
+            self.assertIn('技能冷卻', action_text)
+            self.assertEqual(action_text.count('可使用'), 3)
             target = battle.key(battle.living(1)[0])
+            battle.submit(1, ACTION_SKILL, target, 1)
+            battle.resolve()
+            self.assertIn('槽 1【奮力一擊】：CD 2 回合',
+                          self.service.player_action_text(battle, 1))
             await self.service.submit_action(room['id'], 1, ACTION_ATTACK, target, None)
         saved = self.service.repo.get(room['id'])
         self.assertEqual(load_total_battle(saved['battle']).round, 1)
@@ -138,6 +149,14 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         await self.service.cancel_lobby(room['id'], HashableMember(1))
         self.assertEqual(self.service.repo.get(room['id'])['status'], 'cancelled')
         self.assertEqual(self.service.repo.active(), [])
+
+    async def test_hp_bar_and_private_confirmation_cleanup(self):
+        self.assertEqual(hp_bar(50, 100, 4), '`██░░` 50.0%')
+        self.assertEqual(hp_bar(1, 100, 4), '`█░░░` 1.0%')
+        interaction = SimpleNamespace(delete_original_response=AsyncMock())
+        with patch('core.rpg_total_raids.asyncio.sleep', new=AsyncMock()):
+            await self.service._delete_private_response(interaction, 8)
+        interaction.delete_original_response.assert_awaited_once()
 
 
 if __name__ == '__main__':

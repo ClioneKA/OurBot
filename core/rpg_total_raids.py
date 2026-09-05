@@ -26,6 +26,21 @@ from core.rpg_total_battle import (
 
 logger = logging.getLogger(__name__)
 TOTAL_RAID_BOSSES = ('訓練用假人',)
+PRIVATE_CONFIRMATION_SECONDS = 8
+
+
+def hp_bar(current, maximum, width=16):
+    """Compact text progress bar that still shows a sliver above zero HP."""
+    if maximum <= 0:
+        filled = 0
+        percent = 0
+    else:
+        ratio = max(0.0, min(1.0, current / maximum))
+        filled = round(ratio * width)
+        if current > 0:
+            filled = max(1, filled)
+        percent = current * 100 / maximum
+    return f'`{"█" * filled}{"░" * (width - filled)}` {percent:.1f}%'
 
 
 class TotalRaidStore:
@@ -157,7 +172,7 @@ class TotalRaidRunningView(discord.ui.View):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         await interaction.response.send_message(
-            f'第 {battle.planning_round} 回合：請選擇行動。你可以在結算前重新選擇。',
+            self.service.player_action_text(battle, interaction.user.id),
             view=view, ephemeral=True,
         )
 
@@ -192,6 +207,7 @@ class TotalRaidActionSelect(discord.ui.Select):
                     self.parent_view.room_id, interaction.user.id, action, None, slot)
                 await interaction.edit_original_response(
                     content='本回合行動已登記；結算前仍可重新選擇。', view=None)
+                self.parent_view.service.schedule_private_cleanup(interaction)
                 return
             view = TotalRaidTargetView(
                 self.parent_view.service, self.parent_view.room_id,
@@ -241,6 +257,7 @@ class TotalRaidTargetSelect(discord.ui.Select):
             return
         await interaction.edit_original_response(
             content='本回合行動已登記；結算前仍可重新選擇。', view=None)
+        self.parent_view.service.schedule_private_cleanup(interaction)
 
 
 class TotalRaidTargetView(discord.ui.View):
@@ -266,6 +283,7 @@ class TotalRaidService:
         self.repo = TotalRaidStore(cog.store)
         self.locks = {}
         self.views = {}
+        self.private_cleanup_tasks = set()
 
     def start(self):
         for room in self.repo.active():
@@ -285,6 +303,11 @@ class TotalRaidService:
                 pass
         for view in self.views.values():
             view.stop()
+        pending = list(self.private_cleanup_tasks)
+        for pending_task in pending:
+            pending_task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def view(self, room):
         key = (room['id'], room['status'])
@@ -295,6 +318,19 @@ class TotalRaidService:
 
     def lock(self, room_id):
         return self.locks.setdefault(room_id, asyncio.Lock())
+
+    def schedule_private_cleanup(self, interaction, delay=PRIVATE_CONFIRMATION_SECONDS):
+        task = asyncio.create_task(self._delete_private_response(interaction, delay))
+        self.private_cleanup_tasks.add(task)
+        task.add_done_callback(self.private_cleanup_tasks.discard)
+
+    @staticmethod
+    async def _delete_private_response(interaction, delay):
+        try:
+            await asyncio.sleep(delay)
+            await interaction.delete_original_response()
+        except (discord.NotFound, discord.HTTPException):
+            pass
 
     def category_for(self, guild):
         for category_id in sorted(self.category_ids):
@@ -435,6 +471,26 @@ class TotalRaidService:
             raise TotalRaidError('你目前已經倒下。')
         return room, battle
 
+    def player_action_text(self, battle, user_id):
+        actor = next(fighter for fighter in battle.fighters
+                     if fighter.team == 0 and fighter.user_id == user_id)
+        lines = [f'第 {battle.planning_round} 回合｜{actor.name}｜HP {actor.hp:,}/{actor.stats["HP"]:,}',
+                 '', '技能冷卻：']
+        for action in battle.available_actions(user_id)[1:]:
+            cooldown = action['cooldown_remaining']
+            state = '可使用' if cooldown == 0 else f'CD {cooldown} 回合'
+            lines.append(f'• 槽 {action["skill_slot"]}【{action["name"]}】：{state}')
+        choice = battle.choices.get(user_id)
+        if choice is not None:
+            if choice.action == ACTION_ATTACK:
+                selected = '普通攻擊'
+            else:
+                rule = next(rule for rule in actor.rules if rule.slot == choice.skill_slot)
+                selected = f'【{rule_skill(actor.job, rule).name}】'
+            lines.extend(('', f'目前已登記：{selected}（可在結算前修改）'))
+        lines.extend(('', '請選擇本回合行動。'))
+        return '\n'.join(lines)
+
     async def submit_action(self, room_id, user_id, action, target, skill_slot):
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
@@ -485,21 +541,26 @@ class TotalRaidService:
         status = battle.result or f'第 {battle.planning_round} 回合・選擇行動'
         embed = discord.Embed(
             title=f'{room["boss"]} #{room["number"]}｜{status}', color=0xDC2626,
-            description='\n'.join(battle.log[-10:])[-2500:] or '戰鬥開始！',
         )
         enemies = '\n'.join(
-            f'{fighter.name}：{fighter.hp:,}/{fighter.stats["HP"]:,}'
+            f'**{fighter.name}**\n{hp_bar(fighter.hp, fighter.stats["HP"])}  '
+            f'{fighter.hp:,}/{fighter.stats["HP"]:,}'
             for fighter in battle.fighters if fighter.team == 1)
         embed.add_field(name='Boss HP', value=enemies, inline=False)
+        if not battle.result:
+            intent = battle.intent()
+            action = f'**{intent.name}**\n{intent.description}'
+        else:
+            action = '戰鬥已結束。'
+        embed.add_field(name='Boss 行動', value=action, inline=False)
         waiting = battle.waiting_player_ids() if not battle.result else set()
         roster = []
         for fighter in (item for item in battle.fighters if item.team == 0):
             marker = '💀' if fighter.hp <= 0 else ('⌛' if fighter.user_id in waiting else '✅')
             roster.append(f'{marker} <@{fighter.user_id}>：{fighter.hp:,}/{fighter.stats["HP"]:,}')
         embed.add_field(name='隊伍狀態', value='\n'.join(roster), inline=False)
+        embed.add_field(name='戰鬥紀錄', value='\n'.join(battle.log[-12:])[-1024:] or '尚無紀錄', inline=False)
         if not battle.result:
-            intent = battle.intent()
-            embed.add_field(name=f'敵方預告｜{intent.name}', value=intent.description, inline=False)
             embed.add_field(name='行動期限', value=f'<t:{int(room["round_deadline"])}:R>', inline=False)
             embed.set_footer(text='點擊下方按鈕開啟私人面板；✅ 僅表示已完成選擇，不公開實際行動。')
         else:
