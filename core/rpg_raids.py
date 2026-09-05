@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import random
 import time
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import tasks
@@ -18,6 +19,7 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_raid_store import RaidStore, DROP_TABLES
 from core.rpg_notifications import RaidNotifications
 from core.rpg_monsters import prepare_monster, monster_name
+from core.settings import daily_periods
 
 
 logger = logging.getLogger(__name__)
@@ -119,7 +121,18 @@ class RaidService:
         return self.views[raid['id']]
 
     def next_spawn(self, channel, now):
-        delay = random.randint(self.settings.min_interval_minutes * 60, self.settings.max_interval_minutes * 60)
+        minimum = self.settings.min_interval_minutes * 60
+        maximum = self.settings.max_interval_minutes * 60
+        local_now = datetime.fromtimestamp(
+            now, timezone(timedelta(hours=self.settings.schedule_timezone_offset_hours)))
+        minute = local_now.hour * 60 + local_now.minute
+        for start, end in daily_periods(self.settings.half_interval_periods):
+            in_period = start <= minute < end if start < end else minute >= start or minute < end
+            if in_period:
+                minimum //= 2
+                maximum //= 2
+                break
+        delay = random.randint(minimum, maximum)
         self.repo.schedule(channel, now + delay)
 
     async def imagine(self, kind=None):

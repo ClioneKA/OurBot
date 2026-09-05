@@ -1,5 +1,6 @@
 from dataclasses import asdict, replace
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -476,6 +477,26 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                 channel_ids(raw)
         with self.assertRaises(SettingsError):
             RaidSettings(min_interval_minutes=100, max_interval_minutes=10)
+        for periods in ('12:00', '24:00-01:00', '12:00-12:00'):
+            with self.assertRaises(SettingsError):
+                RaidSettings(half_interval_periods=periods)
+
+    async def test_next_spawn_halves_interval_only_when_drawn_in_configured_period(self):
+        self.service.settings = replace(
+            self.settings.raid, min_interval_minutes=30, max_interval_minutes=90,
+            half_interval_periods='12:00-14:00,22:00-02:00', schedule_timezone_offset_hours=8)
+        cases = [
+            ('2026-09-05T12:30:00+08:00', 900, 2700),
+            ('2026-09-05T14:00:00+08:00', 1800, 5400),
+            ('2026-09-05T23:30:00+08:00', 900, 2700),
+            ('2026-09-05T01:30:00+08:00', 900, 2700),
+        ]
+        for timestamp, minimum, maximum in cases:
+            now = datetime.fromisoformat(timestamp).timestamp()
+            with self.subTest(timestamp=timestamp), patch('core.rpg_raids.random.randint', return_value=minimum) as draw:
+                self.service.next_spawn(2, now)
+                draw.assert_called_once_with(minimum, maximum)
+                self.assertEqual(self.repo.next_at(2), now + minimum)
 
     async def test_scheduler_only_configured_channel_and_single_announcement(self):
         class FakeChannel:

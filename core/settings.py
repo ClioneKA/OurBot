@@ -3,6 +3,7 @@ from dataclasses import dataclass, field, fields
 from functools import lru_cache
 import math
 from pathlib import Path
+import re
 
 try:
     import tomllib
@@ -15,6 +16,25 @@ DEFAULT_PATH = Path(__file__).resolve().parent.parent / "config/settings.toml"
 
 class SettingsError(ValueError):
     """Configuration error safe to display without printing setting values."""
+
+
+def daily_periods(value, path='rpg.raid.half_interval_periods'):
+    """Parse comma-separated HH:MM-HH:MM periods into minute ranges."""
+    if not value.strip():
+        return ()
+    periods = []
+    for raw_period in value.split(','):
+        match = re.fullmatch(r'\s*(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})\s*', raw_period)
+        if not match:
+            raise SettingsError(f'{path} 必須是逗號分隔的 HH:MM-HH:MM 時段')
+        start_hour, start_minute, end_hour, end_minute = map(int, match.groups())
+        if start_hour > 23 or end_hour > 23 or start_minute > 59 or end_minute > 59:
+            raise SettingsError(f'{path} 包含無效時間')
+        start, end = start_hour * 60 + start_minute, end_hour * 60 + end_minute
+        if start == end:
+            raise SettingsError(f'{path} 的開始與結束時間不得相同')
+        periods.append((start, end))
+    return tuple(periods)
 
 
 @dataclass(frozen=True)
@@ -87,6 +107,8 @@ class RaidSettings:
     ai_monsters: bool = field(default=True, metadata={})
     min_interval_minutes: int = field(default=60, metadata={'minimum': 10, 'maximum': 10080})
     max_interval_minutes: int = field(default=180, metadata={'minimum': 10, 'maximum': 10080})
+    half_interval_periods: str = field(default='', metadata={})
+    schedule_timezone_offset_hours: int = field(default=8, metadata={'minimum': -12, 'maximum': 14})
     max_participants: int = field(default=20, metadata={'minimum': 1, 'maximum': 20})
     victory_xp: int = field(default=300, metadata={'minimum': 1, 'maximum': 100000})
     victory_gold: int = field(default=100, metadata={'minimum': 0, 'maximum': 1000000})
@@ -96,6 +118,7 @@ class RaidSettings:
     def __post_init__(self):
         if self.min_interval_minutes > self.max_interval_minutes:
             raise SettingsError('rpg.raid 出現間隔下限不得超過上限')
+        daily_periods(self.half_interval_periods)
 
 
 @dataclass(frozen=True)
