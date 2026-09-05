@@ -4,7 +4,7 @@ import unittest
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import CharacterError, Characters, ITEMS, item_sell_price
-from core.rpg_fishing import DURATIONS, Fishing, SPOTS, _weighted_pick
+from core.rpg_fishing import DURATIONS, Fishing, SPOTS, _weighted_pick, fishing_mastery
 from core.settings import RPGSettings
 
 
@@ -37,6 +37,8 @@ class FishingTests(unittest.TestCase):
         self.assertEqual([(seconds, catches) for _, seconds, catches in DURATIONS.values()],
                          [(1800, 2), (7200, 6), (28800, 20)])
         self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20])
+        self.assertEqual([fishing_mastery(level, SPOTS['pond']) for level in (1, 11, 20, 31, 120)],
+                         [0, 10, 10, 30, 30])
         self.assertTrue(all(sum(weight for _, weight in spot.loot) == 100 for spot in SPOTS.values()))
         state = self.fishing.state(1, 1)
         self.assertEqual((state['level'], state['rod_id']), (1, 'fishing:rod:old'))
@@ -97,6 +99,23 @@ class FishingTests(unittest.TestCase):
             self.assertEqual((result['catches'], result['xp']), (6, 1800))
         finally:
             other.close()
+
+    def test_level_mastery_adds_items_without_xp_and_uses_dispatch_snapshot(self):
+        self.fishing.state(1, 1)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(31),))
+        started = self.fishing.start(1, 1, 'pond', 'short', now=0)
+        self.assertEqual((started['level_snapshot'], started['mastery_percent']), (31, 30))
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(1),))
+        # Rod roll; first common catch + successful mastery; second common catch + failed mastery.
+        self.fishing.rng = SequenceRandom([0.9, 0.0, 0.1, 0.0, 0.4])
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertEqual((result['catches'], result['mastery_percent'], result['mastery_bonus']), (2, 30, 1))
+        self.assertEqual(result['items'], {'fishing:pond:common': 3})
+        self.assertEqual(result['xp'], 200)
 
     def test_crafting_is_atomic_and_uses_one_of_each_part(self):
         self.fishing.state(1, 1)

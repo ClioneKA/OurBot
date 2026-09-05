@@ -7,7 +7,7 @@ import discord
 from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_fishing import DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_progress
+from core.rpg_fishing import DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery, fishing_progress
 from core.rpg_menu import navigate
 
 
@@ -84,11 +84,14 @@ class FishingView(discord.ui.View):
             embed.add_field(name='目前派遣', value=
                 f'{SPOTS[session["spot_id"]].name}｜{DURATIONS[session["duration_id"]][0]}\n'
                 f'使用 {ITEMS[session["rod_id"]].name}｜基礎捕獲 {session["base_catches"]} 次\n'
+                f'出發時 Lv.{session["level_snapshot"]}｜熟練產量 '
+                f'{fishing_mastery(session["level_snapshot"], SPOTS[session["spot_id"]])}%\n'
                 + ('**可以收竿了！**' if ready else f'<t:{int(session["ready_at"])}:R>完成'), inline=False)
         else:
             embed.add_field(name='準備派遣', value=
                 f'{SPOTS[self.spot_id].name}｜{DURATIONS[self.duration_id][0]}｜'
-                f'基礎捕獲 {DURATIONS[self.duration_id][2]} 次', inline=False)
+                f'基礎捕獲 {DURATIONS[self.duration_id][2]} 次\n'
+                f'目前熟練產量：{fishing_mastery(level, SPOTS[self.spot_id])}%', inline=False)
         current = state['rod_id']
         target = ('fishing:rod:simple' if current == 'fishing:rod:old' else
                   'fishing:rod:magic' if current == 'fishing:rod:simple' else None)
@@ -107,6 +110,8 @@ class FishingView(discord.ui.View):
         header = f'已從{SPOTS[result["spot_id"]].name}收竿，共捕獲 {result["catches"]} 次。'
         if result['bonus']:
             header += '\n釣竿效果發動：追加一次捕獲！'
+        if result.get('mastery_bonus', 0):
+            header += f'\n熟練產量發動：額外獲得 {result["mastery_bonus"]} 份物品！'
         text = header + '\n' + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。'
         if result['old_level'] < 20 <= result['new_level']:
             text += '\n解鎖新釣場：魔女島湖泊！'
@@ -143,7 +148,8 @@ class FishingView(discord.ui.View):
                 elif action == 'start':
                     result = self.cog.fishing.start(self.guild_id, self.owner.id,
                                                     self.spot_id, self.duration_id)
-                    notice = f'已前往{result["spot"].name}，預計捕獲 {result["base_catches"]} 次。'
+                    notice = (f'已前往{result["spot"].name}，預計捕獲 {result["base_catches"]} 次；'
+                              f'本次熟練產量為 {result["mastery_percent"]}%。')
                 elif action == 'claim':
                     notice = self._claim_notice(self.cog.fishing.claim(self.guild_id, self.owner.id))
                 elif action == 'craft':

@@ -51,6 +51,10 @@ RECIPES = {
 }
 
 
+def fishing_mastery(level, spot):
+    return min(30, max(0, level - spot.level) // 10 * 10)
+
+
 def _weighted_pick(loot, rare_item, rare_multiplier, rng):
     weighted = [(key, weight * rare_multiplier if key == rare_item else weight)
                 for key, weight in loot]
@@ -78,10 +82,15 @@ class Fishing:
                 spot_id TEXT NOT NULL, duration_id TEXT NOT NULL,
                 started_at REAL NOT NULL, ready_at REAL NOT NULL,
                 rod_id TEXT NOT NULL, base_catches INTEGER NOT NULL,
+                level_snapshot INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'active',
                 notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0,1)),
                 result TEXT,
                 PRIMARY KEY (guild_id, user_id))''')
+            columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_fishing_sessions)')}
+            if 'level_snapshot' not in columns:
+                self.db.execute('ALTER TABLE rpg_fishing_sessions ADD COLUMN level_snapshot INTEGER NOT NULL DEFAULT 1')
+                self.db.execute("UPDATE rpg_fishing_sessions SET level_snapshot=20 WHERE spot_id='lake'")
 
     def _ensure_player(self, guild, user):
         created = self.db.execute('INSERT OR IGNORE INTO rpg_fishing_players(guild_id,user_id) VALUES (?,?)',
@@ -98,12 +107,12 @@ class Fishing:
             'SELECT xp,rod_id,notify FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
             (guild, user)).fetchone()
         row = self.db.execute('''SELECT spot_id,duration_id,started_at,ready_at,rod_id,
-            base_catches,status,result FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?''',
+            base_catches,level_snapshot,status,result FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?''',
             (guild, user)).fetchone()
         session = None
         if row:
             session = dict(zip(('spot_id', 'duration_id', 'started_at', 'ready_at', 'rod_id',
-                                'base_catches', 'status', 'result'), row))
+                                'base_catches', 'level_snapshot', 'status', 'result'), row))
             if session['result']:
                 session['result'] = json.loads(session['result'])
         return dict(xp=xp, level=level_for(xp), rod_id=rod, notify=bool(notify), session=session)
@@ -118,7 +127,8 @@ class Fishing:
             xp, rod = self.db.execute(
                 'SELECT xp,rod_id FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
                 (guild, user)).fetchone()
-            if level_for(xp) < SPOTS[spot_id].level:
+            level = level_for(xp)
+            if level < SPOTS[spot_id].level:
                 raise CharacterError(f'釣魚 Lv.{SPOTS[spot_id].level} 才能前往{SPOTS[spot_id].name}。')
             previous = self.db.execute(
                 'SELECT status FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?',
@@ -128,21 +138,22 @@ class Fishing:
             label, seconds, catches = DURATIONS[duration_id]
             self.db.execute('DELETE FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?', (guild, user))
             self.db.execute('''INSERT INTO rpg_fishing_sessions
-                (guild_id,user_id,spot_id,duration_id,started_at,ready_at,rod_id,base_catches)
-                VALUES (?,?,?,?,?,?,?,?)''',
-                (guild, user, spot_id, duration_id, now, now + seconds, rod, catches))
+                (guild_id,user_id,spot_id,duration_id,started_at,ready_at,rod_id,base_catches,level_snapshot)
+                VALUES (?,?,?,?,?,?,?,?,?)''',
+                (guild, user, spot_id, duration_id, now, now + seconds, rod, catches, level))
         return dict(spot=SPOTS[spot_id], duration=label, ready_at=now + seconds,
-                    rod_id=rod, base_catches=catches)
+                    rod_id=rod, base_catches=catches, level_snapshot=level,
+                    mastery_percent=fishing_mastery(level, SPOTS[spot_id]))
 
     def claim(self, guild, user, now=None):
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT spot_id,rod_id,base_catches,ready_at,status,result
+            row = self.db.execute('''SELECT spot_id,rod_id,base_catches,level_snapshot,ready_at,status,result
                 FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
             if not row:
                 raise CharacterError('目前沒有可以收竿的釣魚派遣。')
-            spot_id, rod, base_catches, ready_at, status, saved = row
+            spot_id, rod, base_catches, level_snapshot, ready_at, status, saved = row
             if status == 'claimed':
                 result = json.loads(saved)
                 result['replayed'] = True
@@ -153,10 +164,19 @@ class Fishing:
             bonus_chance, rare_multiplier = ROD_BONUS.get(rod, (0, 1))
             bonus = self.rng.random() < bonus_chance
             catches = base_catches + int(bonus)
-            items = Counter(_weighted_pick(spot.loot, spot.rare_item, rare_multiplier, self.rng)
-                            for _ in range(catches))
+            caught = Counter()
+            items = Counter()
+            mastery_percent = fishing_mastery(level_snapshot, spot)
+            mastery_bonus = 0
+            for _ in range(catches):
+                key = _weighted_pick(spot.loot, spot.rare_item, rare_multiplier, self.rng)
+                caught[key] += 1
+                items[key] += 1
+                if mastery_percent and self.rng.random() * 100 < mastery_percent:
+                    items[key] += 1
+                    mastery_bonus += 1
             gained_xp = sum(count * (spot.base_xp * 3 // 2 if key == spot.rare_item else spot.base_xp)
-                            for key, count in items.items())
+                            for key, count in caught.items())
             old_xp = self.db.execute('SELECT xp FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
                                      (guild, user)).fetchone()[0]
             for key, count in items.items():
@@ -166,6 +186,7 @@ class Fishing:
             self.db.execute('UPDATE rpg_fishing_players SET xp=xp+? WHERE guild_id=? AND user_id=?',
                             (gained_xp, guild, user))
             result = dict(spot_id=spot_id, items=dict(items), catches=catches, bonus=bonus,
+                          mastery_percent=mastery_percent, mastery_bonus=mastery_bonus,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
             self.db.execute('''UPDATE rpg_fishing_sessions SET status='claimed',result=?
