@@ -37,6 +37,8 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'location', 'prison')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('農耕 Lv.20', embed.fields[-1].value)
+        await self.view.handle(self.interaction, 'notify')
+        self.assertTrue(self.farming.state(1, 1)['notify'])
         with patch('core.rpg_farming.time.time', return_value=100), \
              patch('core.rpg_farming_view.time.time', return_value=100):
             await self.view.handle(self.interaction, 'plant')

@@ -51,12 +51,20 @@ class Farming:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 xp INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0),
+                notify INTEGER NOT NULL DEFAULT 0 CHECK (notify IN (0,1)),
                 PRIMARY KEY (guild_id,user_id))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_sessions (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, location_id TEXT NOT NULL,
                 plant_id TEXT NOT NULL, planted_at REAL NOT NULL, ready_at REAL NOT NULL,
                 level_snapshot INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', result TEXT,
+                notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0,1)),
                 PRIMARY KEY (guild_id,user_id,location_id))''')
+            player_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_farming_players)')}
+            if 'notify' not in player_columns:
+                self.db.execute('ALTER TABLE rpg_farming_players ADD COLUMN notify INTEGER NOT NULL DEFAULT 0')
+            session_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_farming_sessions)')}
+            if 'notified' not in session_columns:
+                self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN notified INTEGER NOT NULL DEFAULT 0')
 
     def _ensure_player(self, guild, user):
         self.db.execute('INSERT OR IGNORE INTO rpg_farming_players(guild_id,user_id) VALUES (?,?)',
@@ -65,17 +73,18 @@ class Farming:
     def state(self, guild, user):
         with self.db:
             self._ensure_player(guild, user)
-        xp = self.db.execute('SELECT xp FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
-                             (guild, user)).fetchone()[0]
+        xp, notify = self.db.execute('SELECT xp,notify FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
+                                     (guild, user)).fetchone()
         sessions = {}
         for row in self.db.execute('''SELECT location_id,plant_id,planted_at,ready_at,
-                level_snapshot,status,result FROM rpg_farming_sessions
+                level_snapshot,status,result,notified FROM rpg_farming_sessions
                 WHERE guild_id=? AND user_id=?''', (guild, user)):
-            location, plant, planted, ready, level, status, result = row
+            location, plant, planted, ready, level, status, result, notified = row
             sessions[location] = dict(plant_id=plant, planted_at=planted, ready_at=ready,
                                       level_snapshot=level, status=status,
-                                      result=json.loads(result) if result else None)
-        return dict(xp=xp, level=level_for(xp), sessions=sessions)
+                                      result=json.loads(result) if result else None,
+                                      notified=bool(notified))
+        return dict(xp=xp, level=level_for(xp), notify=bool(notify), sessions=sessions)
 
     def plant(self, guild, user, location_id, plant_id, now=None):
         now = time.time() if now is None else now
@@ -107,18 +116,22 @@ class Farming:
         return dict(location=LOCATIONS[location_id], plant=crop, ready_at=now + crop.seconds,
                     level_snapshot=level)
 
-    def harvest(self, guild, user, location_id, now=None):
+    def harvest(self, guild, user, location_id, now=None, expected_planted_at=None):
         now = time.time() if now is None else now
         if location_id not in LOCATIONS:
             raise CharacterError('請重新選擇農耕地點。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT plant_id,ready_at,level_snapshot,status,result
+            row = self.db.execute('''SELECT plant_id,planted_at,ready_at,level_snapshot,status,result
                 FROM rpg_farming_sessions WHERE guild_id=? AND user_id=? AND location_id=?''',
                 (guild, user, location_id)).fetchone()
             if not row:
                 raise CharacterError(f'{LOCATIONS[location_id]}目前沒有可以收成的植物。')
-            plant_id, ready_at, planted_level, status, saved = row
+            plant_id, planted_at, ready_at, planted_level, status, saved = row
+            if expected_planted_at is not None and planted_at != expected_planted_at:
+                raise CharacterError('這則通知的植物已經收成，請查看目前的農耕狀態。')
+            if expected_planted_at is not None and status == 'harvested':
+                raise CharacterError('這批植物已經收成，不能重複領取。')
             if status == 'harvested':
                 result = json.loads(saved)
                 result['replayed'] = True
@@ -149,6 +162,35 @@ class Farming:
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')),
                  guild, user, location_id))
             return result
+
+    def set_notify(self, guild, user, enabled):
+        with self.db:
+            self._ensure_player(guild, user)
+            self.db.execute('UPDATE rpg_farming_players SET notify=? WHERE guild_id=? AND user_id=?',
+                            (int(enabled), guild, user))
+        return enabled
+
+    def notifications_due(self, now=None):
+        now = time.time() if now is None else now
+        return self.db.execute('''SELECT s.guild_id,s.user_id,s.location_id,s.plant_id,s.planted_at
+            FROM rpg_farming_sessions s JOIN rpg_farming_players p
+            ON p.guild_id=s.guild_id AND p.user_id=s.user_id
+            WHERE s.status='active' AND s.ready_at<=? AND s.notified=0 AND p.notify=1''', (now,)).fetchall()
+
+    def reserve_notification(self, guild, user, location_id, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            cursor = self.db.execute('''UPDATE rpg_farming_sessions SET notified=1
+                WHERE guild_id=? AND user_id=? AND location_id=? AND status='active'
+                AND ready_at<=? AND notified=0 AND EXISTS (
+                    SELECT 1 FROM rpg_farming_players p
+                    WHERE p.guild_id=? AND p.user_id=? AND p.notify=1)''',
+                (guild, user, location_id, now, guild, user))
+        return bool(cursor.rowcount)
+
+    def notified_active(self):
+        return self.db.execute('''SELECT guild_id,user_id,location_id,plant_id,planted_at
+            FROM rpg_farming_sessions WHERE status='active' AND notified=1''').fetchall()
 
 
 def farming_progress(xp):

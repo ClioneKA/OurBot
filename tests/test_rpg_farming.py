@@ -75,6 +75,31 @@ class FarmingTests(unittest.TestCase):
         result = self.farming.harvest(1, 1, 'courtyard', now=7600)
         self.assertEqual((result['level_bonus'], result['quantity']), (3, 5))
 
+    def test_maturity_notifications_are_per_plot_and_exactly_once(self):
+        self.set_level(20)
+        self.assertFalse(self.farming.state(1, 1)['notify'])
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=0)
+        self.farming.plant(1, 1, 'prison', 'potato', now=10)
+        self.assertEqual(self.farming.notifications_due(now=999999), [])
+        self.assertTrue(self.farming.set_notify(1, 1, True))
+        self.assertEqual(self.farming.notifications_due(now=3600),
+                         [(1, 1, 'courtyard', 'potato', 0.0)])
+        self.assertTrue(self.farming.reserve_notification(1, 1, 'courtyard', now=3600))
+        self.assertFalse(self.farming.reserve_notification(1, 1, 'courtyard', now=3600))
+        self.assertEqual(self.farming.notified_active(),
+                         [(1, 1, 'courtyard', 'potato', 0.0)])
+        self.assertEqual(self.farming.notifications_due(now=3610),
+                         [(1, 1, 'prison', 'potato', 10.0)])
+
+    def test_notification_harvest_rejects_harvested_or_replaced_crop(self):
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=0)
+        self.farming.harvest(1, 1, 'courtyard', now=3600)
+        with self.assertRaisesRegex(CharacterError, '不能重複領取'):
+            self.farming.harvest(1, 1, 'courtyard', now=3601, expected_planted_at=0)
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=3602)
+        with self.assertRaisesRegex(CharacterError, '已經收成'):
+            self.farming.harvest(1, 1, 'courtyard', now=999999, expected_planted_at=0)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -44,7 +44,7 @@ class FishingView(discord.ui.View):
                 description=f'釣魚 Lv.{spot.level}｜每次捕獲 {spot.base_xp} XP',
                 default=key == self.spot_id)
             for key, spot in SPOTS.items() if state['level'] >= spot.level]))
-        self.add_item(PanelSelect('duration', row=1, placeholder='選擇派遣時間', options=[
+        self.add_item(PanelSelect('duration', row=1, placeholder='選擇釣魚時間', options=[
             discord.SelectOption(label=label, value=key, description=f'基礎捕獲 {catches} 次',
                                  default=key == self.duration_id)
             for key, (label, _, catches) in DURATIONS.items()]))
@@ -81,14 +81,14 @@ class FishingView(discord.ui.View):
         session = state['session']
         if session and session['status'] == 'active':
             ready = time.time() >= session['ready_at']
-            embed.add_field(name='目前派遣', value=
+            embed.add_field(name='正在釣魚', value=
                 f'{SPOTS[session["spot_id"]].name}｜{DURATIONS[session["duration_id"]][0]}\n'
                 f'使用 {ITEMS[session["rod_id"]].name}｜基礎捕獲 {session["base_catches"]} 次\n'
                 f'出發時 Lv.{session["level_snapshot"]}｜熟練產量 '
                 f'{fishing_mastery(session["level_snapshot"], SPOTS[session["spot_id"]])}%\n'
                 + ('**可以收竿了！**' if ready else f'<t:{int(session["ready_at"])}:R>完成'), inline=False)
         else:
-            embed.add_field(name='準備派遣', value=
+            embed.add_field(name='準備釣魚', value=
                 f'{SPOTS[self.spot_id].name}｜{DURATIONS[self.duration_id][0]}｜'
                 f'基礎捕獲 {DURATIONS[self.duration_id][2]} 次\n'
                 f'目前熟練產量：{fishing_mastery(level, SPOTS[self.spot_id])}%', inline=False)
@@ -102,7 +102,7 @@ class FishingView(discord.ui.View):
         embed.add_field(name='完成通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
-        embed.set_footer(text='派遣完成後不會自動重新開始；必須收竿後再次派遣。')
+        embed.set_footer(text='釣完後不會自動重新開始；必須收竿後再次開始釣魚。')
         return embed
 
     def _claim_notice(self, result):
@@ -144,7 +144,7 @@ class FishingView(discord.ui.View):
                     self.duration_id = value
                 elif action == 'rod':
                     item = self.cog.fishing.equip(self.guild_id, self.owner.id, value)
-                    notice = f'已換用 {item.name}；進行中的派遣仍使用出發時的釣竿。'
+                    notice = f'已換用 {item.name}；這次釣魚仍使用出發時的釣竿。'
                 elif action == 'start':
                     result = self.cog.fishing.start(self.guild_id, self.owner.id,
                                                     self.spot_id, self.duration_id)

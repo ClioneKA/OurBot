@@ -144,9 +144,20 @@ class FishingTests(unittest.TestCase):
         self.assertEqual(self.fishing.notifications_due(now=999999), [])
         self.fishing.set_notify(1, 1, True)
         self.fishing.start(1, 1, 'pond', 'short', now=0)
-        self.assertEqual(self.fishing.notifications_due(now=1800), [(1, 1, 'pond')])
+        self.assertEqual(self.fishing.notifications_due(now=1800), [(1, 1, 'pond', 'short', 0.0)])
         self.assertTrue(self.fishing.reserve_notification(1, 1, now=1800))
         self.assertFalse(self.fishing.reserve_notification(1, 1, now=1800))
+        self.assertEqual(self.fishing.notified_active(), [(1, 1, 'pond', 'short', 0.0)])
+
+    def test_notification_claim_rejects_claimed_or_replaced_session(self):
+        self.fishing.start(1, 1, 'pond', 'short', now=0)
+        self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
+        self.fishing.claim(1, 1, now=1800)
+        with self.assertRaisesRegex(CharacterError, '不能重複領取'):
+            self.fishing.claim(1, 1, now=1801, expected_started_at=0)
+        self.fishing.start(1, 1, 'pond', 'short', now=1802)
+        with self.assertRaisesRegex(CharacterError, '已經結束'):
+            self.fishing.claim(1, 1, now=999999, expected_started_at=0)
 
 
 if __name__ == '__main__':

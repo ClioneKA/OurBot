@@ -15,8 +15,9 @@ from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, st
 from core.rpg_battle import Tactics, CONDITIONS, TARGETS, FIXED_TARGETS, rule_skill
 from core.rpg_raids import RaidService
 from core.rpg_fishing import Fishing, SPOTS
-from core.rpg_farming import Farming
+from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_provisions import Provisions
+from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 
 
 class RPG(commands.Cog):
@@ -30,21 +31,34 @@ class RPG(commands.Cog):
         self.provisions = Provisions(self.store)
         self.tracker = VoiceTracker()
         self.menu_views = WeakSet()
+        self.notification_views = WeakSet()
         self.tactics = Tactics(self.store)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)
 
     async def cog_load(self):
+        for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notified_active():
+            view = FishingNotificationView(self, guild_id, user_id, spot_id, duration_id, started_at)
+            self.bot.add_view(view)
+            self.notification_views.add(view)
+        for guild_id, user_id, location_id, plant_id, planted_at in self.farming.notified_active():
+            view = FarmingNotificationView(self, guild_id, user_id, location_id, plant_id, planted_at)
+            self.bot.add_view(view)
+            self.notification_views.add(view)
         self.voice_tick.start()
         self.fishing_notification_tick.start()
+        self.farming_notification_tick.start()
         self.raids.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
         self.fishing_notification_tick.cancel()
+        self.farming_notification_tick.cancel()
         await self.raids.close()
         for view in tuple(self.menu_views):
             view.closed = True
+            view.stop()
+        for view in tuple(self.notification_views):
             view.stop()
         self.store.close()
 
@@ -103,7 +117,7 @@ class RPG(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def fishing_notification_tick(self):
-        for guild_id, user_id, spot_id in self.fishing.notifications_due():
+        for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notifications_due():
             if not self.fishing.reserve_notification(guild_id, user_id):
                 continue
             try:
@@ -111,9 +125,11 @@ class RPG(commands.Cog):
                 guild = self.bot.get_guild(guild_id)
                 guild_name = discord.utils.escape_markdown(guild.name if guild else str(guild_id))
                 embed = discord.Embed(title='安安大冒險｜可以收竿了！', color=0x38BDF8,
-                    description=f'你在 **{guild_name}** 的 **{SPOTS[spot_id].name}** 派遣已完成。')
-                embed.set_footer(text='回到該伺服器使用 /冒險 → 生活 → 釣魚 收竿。')
-                await asyncio.wait_for(user.send(embed=embed,
+                    description=f'你在 **{guild_name}** 的 **{SPOTS[spot_id].name}** 已經釣完了。')
+                embed.set_footer(text='可直接使用下方按鈕，或回到伺服器的釣魚頁收竿。')
+                view = FishingNotificationView(self, guild_id, user_id, spot_id, duration_id, started_at)
+                self.notification_views.add(view)
+                await asyncio.wait_for(user.send(embed=embed, view=view,
                                                  allowed_mentions=discord.AllowedMentions.none()), timeout=20)
             except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
                 logging.info('Fishing completion DM could not be delivered for guild %s user %s',
@@ -121,6 +137,31 @@ class RPG(commands.Cog):
 
     @fishing_notification_tick.before_loop
     async def before_fishing_notification_tick(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=30)
+    async def farming_notification_tick(self):
+        for guild_id, user_id, location_id, plant_id, planted_at in self.farming.notifications_due():
+            if not self.farming.reserve_notification(guild_id, user_id, location_id):
+                continue
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                guild = self.bot.get_guild(guild_id)
+                guild_name = discord.utils.escape_markdown(guild.name if guild else str(guild_id))
+                embed = discord.Embed(title='安安大冒險｜植物成熟了！', color=0x65A30D,
+                    description=(f'你在 **{guild_name}** 的 **{LOCATIONS[location_id]}** 種植的'
+                                 f' **{PLANTS[plant_id].name}** 已經成熟。'))
+                embed.set_footer(text='可直接使用下方按鈕，或回到伺服器的農耕頁收成。')
+                view = FarmingNotificationView(self, guild_id, user_id, location_id, plant_id, planted_at)
+                self.notification_views.add(view)
+                await asyncio.wait_for(user.send(embed=embed, view=view,
+                                                 allowed_mentions=discord.AllowedMentions.none()), timeout=20)
+            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
+                logging.info('Farming completion DM could not be delivered for guild %s user %s location %s',
+                             guild_id, user_id, location_id)
+
+    @farming_notification_tick.before_loop
+    async def before_farming_notification_tick(self):
         await self.bot.wait_until_ready()
 
 

@@ -120,7 +120,7 @@ class Fishing:
     def start(self, guild, user, spot_id, duration_id, now=None):
         now = time.time() if now is None else now
         if spot_id not in SPOTS or duration_id not in DURATIONS:
-            raise CharacterError('請重新選擇釣場與派遣時間。')
+            raise CharacterError('請重新選擇釣場與釣魚時間。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self._ensure_player(guild, user)
@@ -134,7 +134,7 @@ class Fishing:
                 'SELECT status FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?',
                 (guild, user)).fetchone()
             if previous and previous[0] == 'active':
-                raise CharacterError('目前已有釣魚派遣；完成後請先收竿。')
+                raise CharacterError('目前正在釣魚；完成後請先收竿。')
             label, seconds, catches = DURATIONS[duration_id]
             self.db.execute('DELETE FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?', (guild, user))
             self.db.execute('''INSERT INTO rpg_fishing_sessions
@@ -145,21 +145,25 @@ class Fishing:
                     rod_id=rod, base_catches=catches, level_snapshot=level,
                     mastery_percent=fishing_mastery(level, SPOTS[spot_id]))
 
-    def claim(self, guild, user, now=None):
+    def claim(self, guild, user, now=None, expected_started_at=None):
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT spot_id,rod_id,base_catches,level_snapshot,ready_at,status,result
+            row = self.db.execute('''SELECT spot_id,rod_id,base_catches,level_snapshot,started_at,ready_at,status,result
                 FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
             if not row:
-                raise CharacterError('目前沒有可以收竿的釣魚派遣。')
-            spot_id, rod, base_catches, level_snapshot, ready_at, status, saved = row
+                raise CharacterError('目前沒有可以收竿的釣魚行程。')
+            spot_id, rod, base_catches, level_snapshot, started_at, ready_at, status, saved = row
+            if expected_started_at is not None and started_at != expected_started_at:
+                raise CharacterError('這則通知的釣魚行程已經結束，請查看目前的釣魚狀態。')
+            if expected_started_at is not None and status == 'claimed':
+                raise CharacterError('這次釣魚已經收竿，不能重複領取。')
             if status == 'claimed':
                 result = json.loads(saved)
                 result['replayed'] = True
                 return result
             if now < ready_at:
-                raise CharacterError('魚還沒有上鉤，派遣完成後才能收竿。')
+                raise CharacterError('還沒釣完，時間結束後才能收竿。')
             spot = SPOTS[spot_id]
             bonus_chance, rare_multiplier = ROD_BONUS.get(rod, (0, 1))
             bonus = self.rng.random() < bonus_chance
@@ -244,7 +248,7 @@ class Fishing:
 
     def notifications_due(self, now=None):
         now = time.time() if now is None else now
-        return self.db.execute('''SELECT s.guild_id,s.user_id,s.spot_id
+        return self.db.execute('''SELECT s.guild_id,s.user_id,s.spot_id,s.duration_id,s.started_at
             FROM rpg_fishing_sessions s JOIN rpg_fishing_players p
             ON p.guild_id=s.guild_id AND p.user_id=s.user_id
             WHERE s.status='active' AND s.ready_at<=? AND s.notified=0 AND p.notify=1''', (now,)).fetchall()
@@ -257,6 +261,10 @@ class Fishing:
                 AND EXISTS (SELECT 1 FROM rpg_fishing_players p WHERE p.guild_id=? AND p.user_id=? AND p.notify=1)''',
                 (guild, user, now, guild, user))
         return bool(cursor.rowcount)
+
+    def notified_active(self):
+        return self.db.execute('''SELECT guild_id,user_id,spot_id,duration_id,started_at
+            FROM rpg_fishing_sessions WHERE status='active' AND notified=1''').fetchall()
 
 
 def fishing_progress(xp):

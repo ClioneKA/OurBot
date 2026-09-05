@@ -55,6 +55,7 @@ class FarmingView(discord.ui.View):
         ready = bool(active and time.time() >= session['ready_at'])
         self._button('種植', 'plant', 2, active, discord.ButtonStyle.success)
         self._button('收成', 'harvest', 2, not ready, discord.ButtonStyle.primary)
+        self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 2)
         self._button('返回生活', 'life', 3)
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)
@@ -83,6 +84,7 @@ class FarmingView(discord.ui.View):
         embed.add_field(name='目前選擇', value=
                         f'{LOCATIONS[self.location_id]}｜{selected.name}\n'
                         f'成長 {growth_text(selected.seconds)}｜基礎收成 {selected.base_yield}｜每份 {selected.xp_each} XP', inline=False)
+        embed.add_field(name='成熟通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
         embed.set_footer(text='每高於作物需求 10 級必定 +1 收成；不足 10 級的差距每級提供 10% 機率 +1，最多合計 +3。')
@@ -125,6 +127,10 @@ class FarmingView(discord.ui.View):
                               f'、等級加成 {result["level_bonus"]}），獲得 {result["xp"]:,} 農耕 XP。')
                     if result['new_level'] > result['old_level']:
                         notice += f'\n農耕等級提升至 Lv.{result["new_level"]}！'
+                elif action == 'notify':
+                    state = self.cog.farming.state(self.guild_id, self.owner.id)
+                    enabled = self.cog.farming.set_notify(self.guild_id, self.owner.id, not state['notify'])
+                    notice = '植物成熟時會私訊通知。' if enabled else '已關閉植物成熟私訊。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()
