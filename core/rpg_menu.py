@@ -6,7 +6,7 @@ import discord
 from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_text
 
 
-BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '煉金素材', '製作材料', '換金道具', '釣竿')
+BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '煉金素材', '製作材料', '換金道具', '釣竿', '料理', '藥水')
 
 
 def add_back(view, row):
@@ -33,6 +33,12 @@ async def navigate(view, interaction, page='home'):
     elif page == 'fishing':
         from core.rpg_fishing_view import FishingView
         next_view = FishingView(view.cog, view.origin)
+    elif page == 'farming':
+        from core.rpg_farming_view import FarmingView
+        next_view = FarmingView(view.cog, view.origin)
+    elif page == 'provisions':
+        from core.rpg_provision_view import ProvisionView
+        next_view = ProvisionView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -73,6 +79,8 @@ class AdventureView(discord.ui.View):
                 self.button(label, action, i // 3)
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
+            self.button('農耕', 'farming', 0)
+            self.button('料理／煉金', 'provisions', 0)
         elif self.page == 'jobs':
             from core.rpg_equipment_view import PanelSelect
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
@@ -120,7 +128,9 @@ class AdventureView(discord.ui.View):
         elif self.page == 'life':
             embed = discord.Embed(title='安安大冒險｜生活', description=
                 '透過生活技能取得料理、煉金與製作素材。\n\n'
-                '**釣魚**：派遣至釣場，完成後收竿取得漁獲並提升獨立的釣魚等級。', color=0x38BDF8)
+                '**釣魚**：派遣至釣場，完成後收竿取得漁獲並提升獨立的釣魚等級。\n'
+                '**農耕**：中庭花圃自 Lv.1 開放，監獄菜園自 Lv.20 開放；可種植已解鎖植物，等級越高收成越多。\n'
+                '**料理／煉金**：製作並選擇討伐攜帶的料理與藥水。', color=0x38BDF8)
         elif self.page == 'jobs':
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
             embed = discord.Embed(title='安安大冒險｜轉職', description=
@@ -139,7 +149,7 @@ class AdventureView(discord.ui.View):
                 '失敗或回合上限：以怪物結束時已削減 HP 比例發放勝利經驗與金幣，無條件捨去，無掉落；多隻怪物合計血量。\n\n'
                 '討伐頻道動態難度：成功後 ×1.1，失敗或回合上限後 ×0.9，範圍 0.5–3 倍；取消不調整，下一場套用。勝利經驗與金幣隨動態難度增減，失敗依該場勝利獎勵折算，掉落率不變。\n\n'
                 '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。綁定物品不可給予或賣出，穿戴中的那一件需先卸下。\n\n'
-                '生活頁可派遣釣魚：30 分鐘／2 小時／8 小時分別基礎捕獲 2／6／20 次，釣場提供料理、煉金、換金與釣竿素材。\n\n'
+                '生活頁可派遣釣魚，也能在中庭花圃種植，農耕 Lv.20 再解鎖可同步耕作的監獄菜園；農耕等級也會解鎖植物並提高收成量。魚與作物可製成自動回血料理，水草與藥草可製成整場增益藥水。\n\n'
                 '使用 /討伐通知 領取出怪通知身分組，可選取消退訂。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
             embed.add_field(name='基礎能力效果（含飾品加成）', value=
                 '生命力：每點最大 HP +10（另有基礎 50 HP）。\n'
@@ -174,7 +184,8 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'fishing', 'help', 'give'):
+            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'fishing',
+                          'farming', 'provisions', 'help', 'give'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

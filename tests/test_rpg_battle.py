@@ -11,6 +11,57 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_food_triggers_once_and_rare_regen_starts_next_round(self):
+        from unittest.mock import patch
+        player = fighter(hp=200, rules=[])
+        player.food_name = '香酥七彩錦魚'
+        player.food_heal_permille = 150
+        player.food_regen_permille = 50
+        player.food_regen_rounds = 2
+        enemy = fighter('敵人', 1, hp=1000, attack=140, rules=[])
+        battle = Battle([player, enemy], seed=1)
+        battle.hit(enemy, player, precise=True)
+        self.assertEqual(player.hp, 97)  # 133 damage, then 15% of 200.
+        self.assertTrue(player.food_used)
+        self.assertEqual(player.food_regen_left, 2)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        with patch.object(restored, 'act'):
+            restored.step()
+            self.assertEqual(restored.fighters[0].hp, 107)
+            restored.step()
+            self.assertEqual(restored.fighters[0].hp, 117)
+            restored.step()
+            self.assertEqual(restored.fighters[0].hp, 117)
+
+    def test_food_does_not_revive_lethal_damage(self):
+        player = fighter(hp=100, rules=[])
+        player.food_name = '鯽魚馬鈴薯湯'
+        player.food_heal_permille = 150
+        enemy = fighter('敵人', 1, hp=1000, attack=200, rules=[])
+        enemy.stats['暴擊率'] = 0
+        player.stats['防禦'] = 0
+        battle = Battle([player, enemy], seed=1)
+        battle.hit(enemy, player, precise=True)
+        self.assertEqual(player.hp, 0)
+        self.assertFalse(player.food_used)
+
+    def test_raid_provisions_apply_potions_and_food_snapshot(self):
+        state = dict(job='民兵', level=1,
+                     combat={'HP': 101, '攻擊': 101, '防禦': 101, '治療量': 101,
+                             '命中率': 149, '閃避率': 39, '暴擊率': 49},
+                     total=(1, 1, 1, 1, 1), equipped={'武器': 'starter:club'})
+        potion = dict(name='初級專注藥水', stat='命中率', mode='points', amount=3)
+        food = dict(name='香酥七彩錦魚', heal_permille=150, regen_permille=50, regen_rounds=2)
+        participant = dict(name='玩家', state=state, rules=[], provisions={'food': food, 'potion': potion})
+        battle = raid_battle([participant], dict(name='怪物', kind='巨獸'), 1)
+        player = battle.fighters[0]
+        self.assertEqual(player.stats['命中率'], 150)
+        self.assertEqual((player.food_name, player.food_regen_rounds), ('香酥七彩錦魚', 2))
+        percent = dict(name='初級生命藥水', stat='HP', mode='percent', amount=5)
+        participant['provisions']['potion'] = percent
+        player = raid_battle([participant], dict(name='怪物', kind='巨獸'), 1).fighters[0]
+        self.assertEqual((player.stats['HP'], player.hp), (106, 106))
+
     def test_structured_combat_stats_track_actual_values_and_survive_restart(self):
         actor = fighter(attack=100, hp=200, rules=[])
         target = fighter('敵人', 1, hp=50, rules=[])

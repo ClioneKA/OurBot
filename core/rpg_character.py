@@ -146,6 +146,42 @@ for key, name, description in (
     ITEMS[key] = Item(name, '釣竿', '', 0, (0, 0, 0, 0, 0), category='釣竿',
                       description=description, transferable=False)
 
+for key, name, category, description, sell_price in (
+    ('farming:potato', '馬鈴薯', '料理素材', '農耕 Lv.1 解鎖，可搭配池塘鯽魚。', 25),
+    ('farming:dew_herb', '晨露藥草', '煉金素材', '農耕 Lv.5 解鎖，可搭配青苔水草。', 30),
+    ('farming:wheat', '小麥', '料理素材', '農耕 Lv.10 解鎖，可搭配七彩錦魚。', 50),
+    ('farming:witch_tomato', '魔女番茄', '料理素材', '農耕 Lv.20 解鎖，可搭配魔女湖鱒。', 50),
+    ('farming:moonbell', '月鈴草', '煉金素材', '農耕 Lv.25 解鎖，可搭配月光水草。', 60),
+    ('farming:chili', '火紅辣椒', '料理素材', '農耕 Lv.30 解鎖，可搭配星紋魔女鰻。', 100),
+):
+    ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
+                      description=description, sell_price=sell_price)
+
+for key, name, description, sell_price in (
+    ('food:pond:common', '鯽魚馬鈴薯湯', 'HP 首次降至 40% 以下時回復最大 HP 的 15%。', 50),
+    ('food:pond:rare', '香酥七彩錦魚', 'HP 首次降至 40% 以下時回復 15%，後續兩回合各回復 5%。', 100),
+    ('food:lake:common', '番茄湖鱒燉湯', 'HP 首次降至 40% 以下時回復最大 HP 的 25%。', 100),
+    ('food:lake:rare', '香辣星紋魔女鰻', 'HP 首次降至 40% 以下時回復 25%，後續兩回合各回復 7.5%。', 200),
+):
+    ITEMS[key] = Item(name, '料理', '', 0, (0, 0, 0, 0, 0), category='料理',
+                      description=description, sell_price=sell_price)
+
+_POTION_KINDS = {
+    'hp': ('生命', '最大 HP'), 'attack': ('強攻', '攻擊'), 'defense': ('硬化', '防禦'),
+    'healing': ('治癒', '治療量'), 'hit': ('專注', '命中率'),
+    'evasion': ('靈敏', '閃避率'), 'critical': ('會心', '暴擊率'),
+}
+for tier, prefix, percent, chance, sell_price in (
+    (1, '初級', 5, (3, 2, 3), 100),
+    (2, '中級', 8, (5, 3, 5), 200),
+):
+    for kind, (name, stat) in _POTION_KINDS.items():
+        amount = {'hit': chance[0], 'evasion': chance[1], 'critical': chance[2]}.get(kind, percent)
+        unit = ' 個百分點' if kind in ('hit', 'evasion', 'critical') else '%'
+        ITEMS[f'potion:{tier}:{kind}'] = Item(
+            f'{prefix}{name}藥水', '藥水', '', 0, (0, 0, 0, 0, 0), category='藥水',
+            description=f'下一場討伐使{stat} +{amount}{unit}，效果持續整場。', sell_price=sell_price)
+
 
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):

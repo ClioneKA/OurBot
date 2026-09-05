@@ -15,6 +15,8 @@ from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, st
 from core.rpg_battle import Tactics, CONDITIONS, TARGETS, FIXED_TARGETS, rule_skill
 from core.rpg_raids import RaidService
 from core.rpg_fishing import Fishing, SPOTS
+from core.rpg_farming import Farming
+from core.rpg_provisions import Provisions
 
 
 class RPG(commands.Cog):
@@ -24,6 +26,8 @@ class RPG(commands.Cog):
         self.store = RPGStore(Path(__file__).resolve().parent.parent / 'data/rpg.db')
         self.characters = Characters(self.store, self.settings)
         self.fishing = Fishing(self.store)
+        self.farming = Farming(self.store)
+        self.provisions = Provisions(self.store)
         self.tracker = VoiceTracker()
         self.menu_views = WeakSet()
         self.tactics = Tactics(self.store)

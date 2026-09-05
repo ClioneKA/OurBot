@@ -265,6 +265,12 @@ class RaidService:
                     state = self.cog.characters.snapshot(raid['guild_id'], uid)
                     participants.append(dict(id=uid, name=safe_text(member.display_name, 16), state=state,
                                              rules=[asdict(r) for r in self.cog.tactics.rules(raid['guild_id'], uid, state['job'])]))
+                provisions = getattr(self.cog, 'provisions', None)
+                if participants and provisions is not None:
+                    prepared = provisions.prepare_for_raid(
+                        raid['id'], raid['guild_id'], [participant['id'] for participant in participants])
+                    for participant in participants:
+                        participant['provisions'] = prepared.get(participant['id'], {})
                 raid['participants'] = participants
                 if not participants:
                     raid.update(status='cancelled', reason='沒有人參與，魔物離開了。')

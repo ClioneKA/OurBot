@@ -168,6 +168,13 @@ class Fighter:
     lifesteal: int = 0
     user_id: int | None = None
     combat_stats: dict = field(default_factory=empty_combat_stats)
+    food_name: str = ''
+    food_heal_permille: int = 0
+    food_regen_permille: int = 0
+    food_regen_rounds: int = 0
+    food_used: bool = False
+    food_regen_left: int = 0
+    food_regen_start: int = 0
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -207,6 +214,25 @@ class Battle:
         actor.combat_stats['overhealing'] += requested - amount
         target.combat_stats['healing_received'] += amount
         return amount
+
+    @staticmethod
+    def restore(target, requested):
+        """Restore HP without attributing skill healing to another fighter."""
+        amount = min(target.stats['HP'] - target.hp, max(0, int(requested)))
+        target.hp += amount
+        target.combat_stats['healing_received'] += amount
+        return amount
+
+    def maybe_eat(self, target):
+        if (target.team != 0 or target.food_used or not target.food_name or target.hp <= 0
+                or target.hp * 100 > target.stats['HP'] * 40):
+            return
+        target.food_used = True
+        amount = self.restore(target, max(1, target.stats['HP'] * target.food_heal_permille // 1000))
+        self.log.append(f'{target.name} 食用【{target.food_name}】，恢復 {amount} HP。')
+        if target.food_regen_permille and target.food_regen_rounds:
+            target.food_regen_left = target.food_regen_rounds
+            target.food_regen_start = self.round + 1
 
     def living(self, team):
         return [f for f in self.fighters if f.team == team and f.hp > 0]
@@ -313,6 +339,7 @@ class Battle:
             target.combat_stats['deaths'] += 1
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
                         f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}{"，倒下" if target.hp == 0 else ""}')
+        self.maybe_eat(target)
         drain = actor.lifesteal if lifesteal is None else lifesteal
         healing = self.heal(actor, actor, actual_damage * drain // 100)
         if healing > 0 and actor.hp > 0:
@@ -478,6 +505,7 @@ class Battle:
                     if source is not None and source is not actor:
                         source.combat_stats['knockouts'] += 1
                 self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
+                self.maybe_eat(actor)
                 if self.check_end():
                     break
                 if actor.hp == 0:
@@ -489,6 +517,13 @@ class Battle:
             self.act(actor)
             if self.check_end():
                 break
+        if not self.result:
+            for fighter in self.living(0):
+                if fighter.food_regen_left and self.round >= fighter.food_regen_start:
+                    amount = self.restore(
+                        fighter, max(1, fighter.stats['HP'] * fighter.food_regen_permille // 1000))
+                    fighter.food_regen_left -= 1
+                    self.log.append(f'{fighter.name} 的【{fighter.food_name}】緩補恢復 {amount} HP。')
         if not self.result and self.round >= self.max_rounds:
             self.result = '平手（達回合上限）'
 
@@ -514,6 +549,29 @@ def raid_battle(participants, monster, seed):
             fighter.dexterity += count
             fighter.hp = fighter.stats['HP']
             badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
+    provision_logs = []
+    stat_caps = {'命中率': 150, '閃避率': 40, '暴擊率': 50}
+    for fighter, participant in zip(fighters, participants):
+        provisions = participant.get('provisions', {})
+        food = provisions.get('food')
+        if food:
+            fighter.food_name = food['name']
+            fighter.food_heal_permille = food['heal_permille']
+            fighter.food_regen_permille = food['regen_permille']
+            fighter.food_regen_rounds = food['regen_rounds']
+            provision_logs.append(f'{fighter.name} 攜帶【{food["name"]}】：生命低於 40% 時自動食用。')
+        potion = provisions.get('potion')
+        if potion:
+            stat, amount = potion['stat'], potion['amount']
+            before = fighter.stats[stat]
+            if potion['mode'] == 'percent':
+                fighter.stats[stat] = max(1 if stat == 'HP' else 0, before * (100 + amount) // 100)
+            else:
+                fighter.stats[stat] = min(stat_caps.get(stat, 10_000), before + amount)
+            if stat == 'HP':
+                fighter.hp = fighter.stats['HP']
+            provision_logs.append(
+                f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
     average = sum(p['state']['level'] for p in participants) / len(participants)
     stats = {'HP': int(sum(150 + p['state']['level'] * 28 for p in participants)),
              '攻擊': int(22 + average * 6), '防禦': int(10 + average * 2),
@@ -542,6 +600,7 @@ def raid_battle(participants, monster, seed):
         fighters.append(Fighter(name, 1, job, individual, speed, []))
     battle = Battle(fighters, seed=seed)
     battle.log.extend(badge_logs)
+    battle.log.extend(provision_logs)
     return battle
 
 
@@ -568,6 +627,13 @@ def load_battle(data):
         f.armed = data_f.get('armed', True)
         f.lifesteal = data_f.get('lifesteal', 0)
         f.user_id = data_f.get('user_id')
+        f.food_name = data_f.get('food_name', '')
+        f.food_heal_permille = data_f.get('food_heal_permille', 0)
+        f.food_regen_permille = data_f.get('food_regen_permille', 0)
+        f.food_regen_rounds = data_f.get('food_regen_rounds', 0)
+        f.food_used = data_f.get('food_used', False)
+        f.food_regen_left = data_f.get('food_regen_left', 0)
+        f.food_regen_start = data_f.get('food_regen_start', 0)
         saved_stats = data_f.get('combat_stats', {})
         f.combat_stats = empty_combat_stats()
         for key in f.combat_stats:
