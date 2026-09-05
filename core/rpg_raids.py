@@ -16,7 +16,7 @@ from discord.ext import tasks
 
 from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
-from core.rpg_raid_store import RaidStore, DROP_TABLES
+from core.rpg_raid_store import RaidStore, DROP_TABLES, MID_RAID_MIN_LEVEL
 from core.rpg_notifications import RaidNotifications
 from core.rpg_monsters import prepare_monster, monster_name
 from core.settings import daily_periods
@@ -233,7 +233,8 @@ class RaidService:
         embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
-        embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}',
+        requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') == 'mid' else ''
+        embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
         embed.add_field(name='魔物特性', value=traits + '；開戰時按隊伍人數及等級決定強度。', inline=False)
         embed.add_field(name='強度倍率', value=f'{raid["monster"].get("strength", 1):g} 倍（血量、攻擊、防禦）')
@@ -316,6 +317,8 @@ class RaidService:
                     if not member or member.bot:
                         continue
                     state = self.cog.characters.snapshot(raid['guild_id'], uid)
+                    if raid.get('pool') == 'mid' and state['level'] < MID_RAID_MIN_LEVEL:
+                        continue
                     participants.append(dict(id=uid, name=safe_text(member.display_name, 16), state=state,
                                              rules=[asdict(r) for r in self.cog.tactics.rules(raid['guild_id'], uid, state['job'])]))
                 provisions = getattr(self.cog, 'provisions', None)

@@ -5,7 +5,11 @@ import time
 import uuid
 from decimal import Decimal
 
+from core.rpg import level_for
 from core.rpg_character import CharacterError
+
+
+MID_RAID_MIN_LEVEL = 30
 
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
@@ -27,7 +31,7 @@ FIXED_DROPS = {'深淵鐘龍': 'paint:red', '王城傀儡師': 'paint:yellow', '
 
 class RaidStore:
     def __init__(self, store):
-        self.db = store.db
+        self.store, self.db = store, store.db
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raids (
                 id TEXT PRIMARY KEY, guild_id INTEGER, channel_id INTEGER,
@@ -171,6 +175,8 @@ class RaidStore:
             else:
                 if user in raid['members']:
                     raise CharacterError('你已經報名了。')
+                if raid.get('pool') == 'mid' and level_for(self.store.xp(guild, user)) < MID_RAID_MIN_LEVEL:
+                    raise CharacterError(f'中階討伐需達 Lv.{MID_RAID_MIN_LEVEL} 才能參加。')
                 if len(raid['members']) >= maximum:
                     raise CharacterError('討伐隊伍已滿。')
                 for other in self.pending():

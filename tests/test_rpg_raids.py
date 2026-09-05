@@ -8,7 +8,7 @@ import sqlite3
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.rpg import RPGStore
+from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError
 from core.rpg_raids import RaidService, RaidSignup, channel_ids
@@ -424,6 +424,23 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                 self.repo.join(raid['id'], guild, uid, now, 1)
         self.repo.join(raid['id'], 1, 1, 399, 1, leave=True)
         self.assertEqual(self.repo.get(raid['id'])['members'], [])
+
+    async def test_mid_tier_requires_level_30_but_regular_does_not(self):
+        regular = self.lobby()
+        self.repo.join(regular['id'], 1, 1, 101, 20)
+
+        mid = self.repo.create(1, 3, dict(self.monster, kind='深淵鐘龍'), 100, pool='mid')
+        mid.update(status='lobby', message_id=4)
+        self.repo.save(mid)
+        self.assertIn('需 Lv.30', self.service.lobby_embed(mid).fields[1].name)
+        with self.assertRaisesRegex(CharacterError, r'Lv\.30'):
+            self.repo.join(mid['id'], 1, 2, 101, 20)
+
+        with self.store.db:
+            self.store.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?)',
+                                  (1, 2, level_floor(30)))
+        self.repo.join(mid['id'], 1, 2, 101, 20)
+        self.assertEqual(self.repo.get(mid['id'])['members'], [2])
 
     async def test_no_early_start_then_resumable_battle_and_rewards(self):
         raid = self.lobby()
