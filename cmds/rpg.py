@@ -297,8 +297,9 @@ class RPG(commands.Cog):
                               description=f'{count} 場｜勝率 {wins * 100 / count:.1f}%｜平均 {average_rounds:.1f} 回合｜平均 {average_players:.1f} 人')
         monster_lines = [f'{kind}：{battles} 場｜勝率 {victories * 100 / battles:.1f}%｜平均 {rounds:.1f} 回合｜強度 {strength:.2f}'
                          for kind, battles, victories, rounds, strength in report['monsters']]
-        job_lines = [f'{job}：{battles} 人次｜勝率 {victories * 100 / battles:.1f}%｜傷害 {damage:.0f}｜治療 {healing:.0f}｜承傷 {taken:.0f}'
-                     for job, battles, victories, damage, healing, taken in report['jobs']]
+        job_lines = [f'{job}：{battles} 人次｜勝率 {victories * 100 / battles:.1f}%｜'
+                     f'實際傷害 {direct:.0f}｜輔助傷害 {support:.0f}｜治療 {healing:.0f}｜承傷 {taken:.0f}'
+                     for job, battles, victories, direct, support, healing, taken in report['jobs']]
         embed.add_field(name='怪物表現', value='\n'.join(monster_lines)[:1024], inline=False)
         embed.add_field(name='職業每場平均', value='\n'.join(job_lines)[:1024] or '尚無玩家資料', inline=False)
         embed.set_footer(text='僅統計本功能上線後完成的討伐；樣本少時請勿單獨依勝率調整。')

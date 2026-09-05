@@ -357,18 +357,20 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.repo.save(raid)
         battle = raid_battle([participant], self.monster, 1)
         player = battle.fighters[0]
-        player.combat_stats.update(damage_dealt=321, damage_taken=45, healing_done=67,
+        player.combat_stats.update(damage_dealt=321, direct_damage=280, support_damage=41,
+                                   damage_taken=45, healing_done=67,
                                    attacks=5, hits=4, misses=1, critical_hits=2)
         player.combat_stats['skills_used'] = {'奮力一擊': 2}
         battle.result = '勝利'
 
         self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
 
-        stored = self.store.db.execute('''SELECT damage_dealt, damage_taken, healing_done,
+        stored = self.store.db.execute('''SELECT damage_dealt, direct_damage, support_damage,
+            damage_taken, healing_done,
             attacks, hits, misses, critical_hits, skills_used
             FROM rpg_battle_participants WHERE raid_id=? AND user_id=?''',
                                        (raid['id'], 1)).fetchone()
-        self.assertEqual(stored, (321, 45, 67, 5, 4, 1, 2, '{"奮力一擊": 2}'))
+        self.assertEqual(stored, (321, 280, 41, 45, 67, 5, 4, 1, 2, '{"奮力一擊": 2}'))
         report = self.repo.balance_report(1, 0)
         self.assertEqual(report['overall'][:2], (1, 1))
         self.assertEqual(report['monsters'][0][:3], ('巨獸', 1, 1))

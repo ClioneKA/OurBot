@@ -111,6 +111,8 @@ class BattleTests(unittest.TestCase):
 
         self.assertTrue(battle.hit(actor, target, precise=True))
         self.assertEqual(actor.combat_stats['damage_dealt'], 40)
+        self.assertEqual(actor.combat_stats['direct_damage'], 40)
+        self.assertEqual(actor.combat_stats['support_damage'], 0)
         self.assertEqual(actor.combat_stats['attacks'], 1)
         self.assertEqual(actor.combat_stats['hits'], 1)
         self.assertEqual(actor.combat_stats['knockouts'], 1)
@@ -132,6 +134,14 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(restored_legacy.combat_stats['damage_dealt'], 0)
         self.assertIsNone(restored_legacy.user_id)
 
+        old_stats = dump_battle(battle)
+        old_stats['fighters'][0]['combat_stats'].pop('direct_damage')
+        old_stats['fighters'][0]['combat_stats'].pop('support_damage')
+        restored_old_stats = load_battle(old_stats).fighters[0]
+        self.assertEqual(restored_old_stats.combat_stats['direct_damage'],
+                         restored_old_stats.combat_stats['damage_dealt'])
+        self.assertEqual(restored_old_stats.combat_stats['support_damage'], 0)
+
     def test_player_poison_damage_is_credited_after_reload(self):
         from unittest.mock import patch
         player = fighter(rules=[])
@@ -146,9 +156,30 @@ class BattleTests(unittest.TestCase):
             battle.step()
 
         self.assertEqual(battle.fighters[0].combat_stats['damage_dealt'], 1)
+        self.assertEqual(battle.fighters[0].combat_stats['direct_damage'], 0)
+        self.assertEqual(battle.fighters[0].combat_stats['support_damage'], 1)
         self.assertEqual(battle.fighters[0].combat_stats['knockouts'], 1)
         self.assertEqual(battle.fighters[1].combat_stats['damage_taken'], 1)
         self.assertEqual(battle.fighters[1].combat_stats['deaths'], 1)
+
+    def test_bless_bonus_is_attributed_as_support_damage_without_double_counting(self):
+        caster = fighter('施法者', hp=100, rules=[])
+        caster.user_id = 1
+        attacker = fighter('攻擊者', hp=100, attack=100, rules=[])
+        attacker.user_id = 2
+        target = fighter('敵人', 1, hp=1000, rules=[])
+        target.stats['防禦'] = 0
+        battle = Battle([caster, attacker, target], seed=1)
+        battle.round = 1
+        attacker.effects['bless'] = 2
+        attacker.effect_sources['bless'] = caster.user_id
+
+        battle.hit(attacker, target, precise=True)
+
+        self.assertEqual(attacker.combat_stats['damage_dealt'], 125)
+        self.assertEqual(attacker.combat_stats['direct_damage'], 100)
+        self.assertEqual(caster.combat_stats['support_damage'], 25)
+        self.assertEqual(attacker.combat_stats['direct_damage'] + caster.combat_stats['support_damage'], 125)
 
     def test_lifesteal_uses_actual_damage_and_survives_restart(self):
         from unittest.mock import patch

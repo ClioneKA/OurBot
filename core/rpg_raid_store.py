@@ -45,7 +45,14 @@ class RaidStore:
                 overhealing INTEGER NOT NULL, attacks INTEGER NOT NULL, hits INTEGER NOT NULL,
                 misses INTEGER NOT NULL, critical_hits INTEGER NOT NULL, knockouts INTEGER NOT NULL,
                 deaths INTEGER NOT NULL, skills_used TEXT NOT NULL,
+                direct_damage INTEGER NOT NULL DEFAULT 0,
+                support_damage INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (raid_id, user_id))''')
+            participant_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_battle_participants)')}
+            if 'direct_damage' not in participant_columns:
+                self.db.execute('ALTER TABLE rpg_battle_participants ADD COLUMN direct_damage INTEGER NOT NULL DEFAULT 0')
+            if 'support_damage' not in participant_columns:
+                self.db.execute('ALTER TABLE rpg_battle_participants ADD COLUMN support_damage INTEGER NOT NULL DEFAULT 0')
             self.db.execute('CREATE INDEX IF NOT EXISTS rpg_battle_results_guild_time ON rpg_battle_results(guild_id, completed_at)')
 
     def difficulty(self, guild, channel):
@@ -198,10 +205,16 @@ class RaidStore:
                 values = [stats.get(key, 0) for key in ('damage_dealt', 'damage_taken', 'healing_done',
                           'healing_received', 'overhealing', 'attacks', 'hits', 'misses', 'critical_hits',
                           'knockouts', 'deaths')]
-                self.db.execute('INSERT OR REPLACE INTO rpg_battle_participants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                                (raid['id'], participant['id'], fighter['job'], participant['state']['level'],
-                                 fighter['stats']['HP'], fighter['hp'], *values,
-                                 json.dumps(stats.get('skills_used', {}), ensure_ascii=False)))
+                self.db.execute('''INSERT OR REPLACE INTO rpg_battle_participants
+                    (raid_id,user_id,job,level,max_hp,final_hp,damage_dealt,damage_taken,
+                     healing_done,healing_received,overhealing,attacks,hits,misses,critical_hits,
+                     knockouts,deaths,skills_used,direct_damage,support_damage)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (raid['id'], participant['id'], fighter['job'], participant['state']['level'],
+                     fighter['stats']['HP'], fighter['hp'], *values,
+                     json.dumps(stats.get('skills_used', {}), ensure_ascii=False),
+                     stats.get('direct_damage', stats.get('damage_dealt', 0)),
+                     stats.get('support_damage', 0)))
             if raid['participants']:
                 before = self.difficulty(raid['guild_id'], raid['channel_id'])
                 after = round(max(0.5, min(3.0, before * (1.1 if victory else 0.9))), 6)
@@ -219,8 +232,8 @@ class RaidStore:
         monsters = self.db.execute('''SELECT monster_kind, COUNT(*), SUM(result='勝利'), AVG(rounds), AVG(strength)
             FROM rpg_battle_results WHERE guild_id=? AND completed_at>=?
             GROUP BY monster_kind ORDER BY COUNT(*) DESC, monster_kind LIMIT 8''', (guild_id, since)).fetchall()
-        jobs = self.db.execute('''SELECT p.job, COUNT(*), SUM(r.result='勝利'), AVG(p.damage_dealt),
-            AVG(p.healing_done), AVG(p.damage_taken)
+        jobs = self.db.execute('''SELECT p.job, COUNT(*), SUM(r.result='勝利'), AVG(p.direct_damage),
+            AVG(p.support_damage), AVG(p.healing_done), AVG(p.damage_taken)
             FROM rpg_battle_participants p JOIN rpg_battle_results r ON r.raid_id=p.raid_id
             WHERE r.guild_id=? AND r.completed_at>=? GROUP BY p.job ORDER BY COUNT(*) DESC, p.job''',
                                (guild_id, since)).fetchall()

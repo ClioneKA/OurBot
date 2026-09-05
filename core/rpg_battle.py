@@ -31,7 +31,8 @@ TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': 
 
 def empty_combat_stats():
     """Per-fighter counters kept in battle snapshots for settlement and analysis."""
-    return dict(damage_dealt=0, damage_taken=0, healing_done=0, healing_received=0,
+    return dict(damage_dealt=0, direct_damage=0, support_damage=0,
+                damage_taken=0, healing_done=0, healing_received=0,
                 overhealing=0, attacks=0, hits=0, misses=0, critical_hits=0,
                 knockouts=0, deaths=0, skills_used={})
 
@@ -296,6 +297,12 @@ class Battle:
     def living(self, team):
         return [f for f in self.fighters if f.team == team and f.hp > 0]
 
+    def effect_source(self, target, effect):
+        source_id = target.effect_sources.get(effect)
+        if source_id is None:
+            return None
+        return next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
+
     def check_end(self):
         if not self.living(0) and not self.living(1):
             self.result = '平手'
@@ -380,31 +387,52 @@ class Battle:
             actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
             return False
-        attack = actor.stats['攻擊']
-        attack *= 1.25 if actor.has('bless', self.round) else 1
-        attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
-        defense = target.stats['防禦']
+        base_attack = actor.stats['攻擊']
+        base_attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
+        blessed = actor.has('bless', self.round)
+        attack = base_attack * (1.25 if blessed else 1)
+        base_defense = target.stats['防禦']
         if target.has('guard', self.round):
-            defense += target.guard_bonus
-        if target.has('break', self.round):
-            defense *= 0.6
-        damage = max(1, int(attack * power - defense * 0.35))
+            base_defense += target.guard_bonus
+        broken = target.has('break', self.round)
+        defense = base_defense * (0.6 if broken else 1)
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
-        damage = max(1, damage * stability // 100)
         critical = self.rng.random() * 100 < actor.stats['暴擊率']
-        if critical:
-            damage = int(damage * 1.5)
-        if target.has('stance', self.round):
-            multiplier = {'民兵': 0.8, '騎士': 0.5}.get(target.job, 0.65)
-            damage = max(1, int(damage * multiplier))
-        if target.has('taunt', self.round):
-            damage = max(1, int(damage * 0.85))
+
+        def final_damage(attack_value, defense_value):
+            value = max(1, int(attack_value * power - defense_value * 0.35))
+            value = max(1, value * stability // 100)
+            if critical:
+                value = int(value * 1.5)
+            if target.has('stance', self.round):
+                multiplier = {'民兵': 0.8, '騎士': 0.5}.get(target.job, 0.65)
+                value = max(1, int(value * multiplier))
+            if target.has('taunt', self.round):
+                value = max(1, int(value * 0.85))
+            return value
+
+        damage = final_damage(attack, defense)
+        base_damage = final_damage(base_attack, base_defense)
+        broken_damage = final_damage(base_attack, defense)
         actual_damage = min(target.hp, damage)
+        base_actual = min(target.hp, base_damage)
+        broken_actual = min(target.hp, broken_damage)
+        break_assist = max(0, broken_actual - base_actual) if broken else 0
+        bless_assist = max(0, actual_damage - broken_actual) if blessed else 0
         target.hp = max(0, target.hp - damage)
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
         actor.combat_stats['damage_dealt'] += actual_damage
+        actor.combat_stats['direct_damage'] += actual_damage - break_assist - bless_assist
+        for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor)):
+            if not amount:
+                continue
+            source = self.effect_source(affected, effect)
+            if source is None:
+                actor.combat_stats['direct_damage'] += amount
+            else:
+                source.combat_stats['support_damage'] += amount
         target.combat_stats['damage_taken'] += actual_damage
         if actual_damage and target.hp == 0:
             actor.combat_stats['knockouts'] += 1
@@ -438,6 +466,7 @@ class Battle:
             self.record_skill(actor, '戰團鼓舞')
             for ally in self.living(1):
                 ally.effects['bless'] = self.round + 1
+                ally.effect_sources.pop('bless', None)
             self.log.append(f'{actor.name} 使用【戰團鼓舞】：存活戰團成員攻擊 +25%，持續至第 {self.round + 1} 回合結束。')
             return
         if actor.team == 1 and actor.job == '史萊姆':
@@ -518,6 +547,7 @@ class Battle:
             target.effects.pop('poison', None)
             target.effects.pop('break', None)
             target.effect_sources.pop('poison', None)
+            target.effect_sources.pop('break', None)
             self.log.append(f'移除 {target.name} 的負面狀態')
         elif effect == 'guard':
             bonus = max(1, actor.stats['HP'] // 20)
@@ -528,6 +558,8 @@ class Battle:
                     self.log.append(f'{ally.name} 防禦 +{bonus}，持續至第 {self.round + 1} 回合結束')
         elif effect in ('bless', 'stance', 'taunt'):
             target.effects[effect] = self.round + 1
+            if effect == 'bless':
+                target.effect_sources['bless'] = actor.user_id
             self.log.append(f'{target.name} 獲得效果，持續至第 {self.round + 1} 回合結束')
         elif effect in ('area', 'cleave'):
             for enemy in self.living(1 - actor.team):
@@ -542,6 +574,7 @@ class Battle:
                            precise=effect == 'precise')
             if hit and effect == 'break' and target.hp > 0:
                 target.effects['break'] = self.round + 1
+                target.effect_sources['break'] = actor.user_id
             if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
                 status = 'stun' if effect == 'shield_bash' else 'poison'
                 if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
@@ -569,11 +602,10 @@ class Battle:
                 actual_damage = min(actor.hp, damage)
                 actor.hp = max(0, actor.hp - damage)
                 actor.combat_stats['damage_taken'] += actual_damage
-                source_id = actor.effect_sources.get('poison')
-                source = (next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
-                          if source_id is not None else None)
+                source = self.effect_source(actor, 'poison')
                 if source is not None and source is not actor:
                     source.combat_stats['damage_dealt'] += actual_damage
+                    source.combat_stats['support_damage'] += actual_damage
                 if actual_damage and actor.hp == 0:
                     actor.combat_stats['deaths'] += 1
                     if source is not None and source is not actor:
@@ -713,6 +745,9 @@ def load_battle(data):
         for key in f.combat_stats:
             if key in saved_stats:
                 f.combat_stats[key] = saved_stats[key]
+        if 'direct_damage' not in saved_stats:
+            # Old snapshots cannot distinguish direct hits from indirect poison damage.
+            f.combat_stats['direct_damage'] = saved_stats.get('damage_dealt', 0)
         fighters.append(f)
     battle = Battle(fighters, max_rounds=data['max_rounds'])
     battle.round, battle.result, battle.log = data['round'], data['result'], list(data['log'])

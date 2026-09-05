@@ -246,14 +246,17 @@ class RaidService:
             lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣' + (f'、{ITEMS[r["item"]].name}' if r['item'] else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
             players = [fighter for fighter in battle.fighters if fighter.team == 0]
-            players.sort(key=lambda fighter: fighter.combat_stats['damage_dealt'], reverse=True)
+            players.sort(key=lambda fighter: (fighter.combat_stats['direct_damage']
+                                              + fighter.combat_stats['support_damage']), reverse=True)
             summary = []
             for fighter in players:
                 stats = fighter.combat_stats
                 label = f'<@{fighter.user_id}>' if fighter.user_id else safe_text(fighter.name, 24)
-                summary.append(f'{label}：傷害 {stats["damage_dealt"]:,}｜治療 {stats["healing_done"]:,}｜'
+                summary.append(f'{label}：實際傷害 {stats["direct_damage"]:,}｜輔助傷害 {stats["support_damage"]:,}｜'
+                               f'治療 {stats["healing_done"]:,}｜'
                                f'承傷 {stats["damage_taken"]:,}｜命中 {stats["hits"]}/{stats["attacks"]}')
-            embed.add_field(name='戰鬥結算｜依傷害排序', value='\n'.join(summary)[:1024] or '沒有戰鬥數據', inline=False)
+            embed.add_field(name='戰鬥結算｜依實際＋輔助傷害排序',
+                            value='\n'.join(summary)[:1024] or '沒有戰鬥數據', inline=False)
         embed.set_footer(text='靈巧決定順序；每回合每人一次行動。完整戰報於結束後附上。')
         return embed
 
@@ -307,7 +310,8 @@ class RaidService:
         if raid['status'] == 'completed':
             battle = load_battle(raid['battle'])
             report = '\n'.join(battle.log) + '\n\n戰鬥結算：\n' + '\n'.join(
-                f'{f.user_id or f.name}: 傷害 {f.combat_stats["damage_dealt"]}, 治療 {f.combat_stats["healing_done"]}, '
+                f'{f.user_id or f.name}: 實際傷害 {f.combat_stats["direct_damage"]}, '
+                f'輔助傷害 {f.combat_stats["support_damage"]}, 治療 {f.combat_stats["healing_done"]}, '
                 f'承傷 {f.combat_stats["damage_taken"]}, 命中 {f.combat_stats["hits"]}/{f.combat_stats["attacks"]}, '
                 f'暴擊 {f.combat_stats["critical_hits"]}, 技能 {json.dumps(f.combat_stats["skills_used"], ensure_ascii=False)}'
                 for f in battle.fighters if f.team == 0) + '\n\n獎勵：\n' + '\n'.join(
