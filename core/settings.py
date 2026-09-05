@@ -133,7 +133,7 @@ class RPGSettings:
     voice_min_members: int = field(default=2, metadata={'minimum': 2, 'maximum': 100})
     regular_level: int = field(default=20, metadata={'minimum': 11, 'maximum': 118})
     veteran_level: int = field(default=50, metadata={'minimum': 12, 'maximum': 119})
-    elite_level: int = field(default=80, metadata={'minimum': 13, 'maximum': 120})
+    elite_level: int = field(default=90, metadata={'minimum': 13, 'maximum': 120})
     raid: RaidSettings = field(default_factory=RaidSettings)
 
     def __post_init__(self):

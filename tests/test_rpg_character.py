@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from core.rpg import RPGStore, level_floor
-from core.rpg_character import Characters, CharacterError, JOBS, ITEMS, item_sellable
+from core.rpg_character import (Characters, CharacterError, GROWTH, JOBS, ITEMS,
+                                combat_from_stats, item_sellable)
 from core.settings import RPGSettings, SettingsError
 
 
@@ -27,17 +28,17 @@ class CharacterTests(unittest.TestCase):
         self.characters.equip(1, 1, 'bat:bow')
         after = self.characters.snapshot(1, 1)
         self.assertEqual(after['combat']['閃避率'], before['combat']['閃避率'] + 5)
-        self.assertEqual(after['lifesteal'], 2)
+        self.assertEqual(after['lifesteal'], 3)
         battle = raid_battle([dict(name='玩家', state=after, rules=[])], dict(kind='巨獸', name='巨獸'), 1)
-        self.assertEqual(load_battle(dump_battle(battle)).fighters[0].lifesteal, 2)
+        self.assertEqual(load_battle(dump_battle(battle)).fighters[0].lifesteal, 3)
         self.characters.unequip(1, 1, '武器')
         self.characters.unequip(1, 1, '飾品1')
         self.assertEqual(self.characters.snapshot(1, 1)['lifesteal'], 0)
         self.assertEqual(self.characters.snapshot(1, 1)['combat']['閃避率'], before['combat']['閃避率'])
         for key in ('axe', 'sword_shield', 'bow', 'staff'):
             item = ITEMS['bat:' + key]
-            self.assertEqual((item.required_level, item.lifesteal, item.price), (20, 2, 0))
-            self.assertLess(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
+            self.assertEqual((item.required_level, item.lifesteal, item.price), (20, 3, 0))
+            self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
         self.assertIn('閃避率 +5%', item_text(ITEMS['fox:pendant']))
 
     def test_accuracy_can_exceed_100_and_caps_at_150(self):
@@ -60,7 +61,7 @@ class CharacterTests(unittest.TestCase):
         self.characters.equip(1, 1, 'goblin:badge')
         self.characters.equip(1, 1, 'goblin:bow')
         state = self.characters.snapshot(1, 1)
-        self.assertEqual(state['stability'], (40, 120))
+        self.assertEqual(state['stability'], (60, 140))
         self.assertEqual(state['equipped']['飾品1'], 'goblin:badge')
         with self.assertRaises(CharacterError):
             self.characters.equip(1, 1, 'goblin:axe')
@@ -68,7 +69,7 @@ class CharacterTests(unittest.TestCase):
             self.characters.buy(1, 1, 'goblin:bow')
         for key in ('axe', 'sword_shield', 'bow', 'staff'):
             item = ITEMS['goblin:' + key]
-            self.assertEqual(sum(item.stability) / 2, 80)
+            self.assertEqual(sum(item.stability) / 2, 100)
             self.assertEqual(item.required_level, 20)
             self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
         self.assertIn('整場固定', item_text(ITEMS['goblin:badge']))
@@ -95,9 +96,9 @@ class CharacterTests(unittest.TestCase):
     def test_starter_club_once_and_removal_requires_supply_claim(self):
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], 'starter:club')
-        self.assertEqual(state['combat']['攻擊'], 35)
-        self.assertEqual(state['combat']['防禦'], 35)
-        self.assertEqual(state['stability'], (60, 110))
+        self.assertEqual(state['combat']['攻擊'], 36)
+        self.assertEqual(state['combat']['防禦'], 36)
+        self.assertEqual(state['stability'], (80, 120))
         self.characters.unequip(1, 1, '武器')
         reloaded = Characters(self.store, RPGSettings())
         self.assertNotIn('武器', reloaded.snapshot(1, 1)['equipped'])
@@ -126,8 +127,40 @@ class CharacterTests(unittest.TestCase):
             self.assertEqual(equipped['stability'], ITEMS[f'{job}:0:武器'].stability)
         self.assertTrue(all(not any(item.stats) for item in ITEMS.values() if item.slot in ('武器', '套裝')))
 
+    def test_shop_sets_are_twenty_percent_at_each_canonical_tier(self):
+        for stage, level in enumerate((10, 20, 50, 90)):
+            for job in JOBS:
+                growth = GROWTH[job]
+                base_stats = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
+                                   + stage * weight * 2 for weight in growth)
+                naked = combat_from_stats(base_stats)
+                weapon = ITEMS[f'{job}:{stage}:武器'].combat
+                suit = ITEMS[f'{job}:{stage}:套裝'].combat
+                relevant = range(4) if job == '僧侶' else range(3)
+                for index in relevant:
+                    stat = ('HP', '攻擊', '防禦', '治療量')[index]
+                    self.assertEqual(weapon[index] + suit[index], (naked[stat] * 20 + 50) // 100,
+                                     (stage, job, stat))
+
+    def test_t20_pure_raid_weapon_and_suit_budget_is_thirty_percent(self):
+        raid_items = {
+            '裝甲步兵': ('golem:hammer', 'tree:infantry'),
+            '騎士': ('golem:sword_shield', 'tree:knight'),
+            '弓兵': ('golem:bow', 'tree:archer'),
+            '僧侶': ('golem:staff', 'tree:monk'),
+        }
+        for job, keys in raid_items.items():
+            growth = GROWTH[job]
+            base_stats = tuple(10 + 18 + 10 * weight + 2 * weight for weight in growth)
+            naked = combat_from_stats(base_stats)
+            relevant = range(4) if job == '僧侶' else range(3)
+            for index in relevant:
+                stat = ('HP', '攻擊', '防禦', '治療量')[index]
+                total = sum(ITEMS[key].combat[index] for key in keys)
+                self.assertEqual(total, (naked[stat] * 30 + 50) // 100, (job, stat))
+
     def test_shop_payment_gates_repeat_and_rollback(self):
-        self.level(80)
+        self.level(90)
         self.characters.change_job(1, 1, '騎士')
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,2000)')
@@ -227,7 +260,7 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(self.characters.claim(1, 1), [])
         for level, name, slots in ((19, '早期弓兵', 2), (20, '弓兵', 3),
                                    (49, '弓兵', 3), (50, '老練弓兵', 4),
-                                   (79, '老練弓兵', 4), (80, '精銳弓兵', 5)):
+                                   (89, '老練弓兵', 4), (90, '精銳弓兵', 5)):
             self.level(level)
             state = self.characters.snapshot(1, 1)
             self.assertEqual((state['title'], state['capacity']), (name, slots))
@@ -323,7 +356,7 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(self.characters.job(1, 1), '民兵')
 
     def test_balanced_growth_and_settings_order(self):
-        self.level(80)
+        self.level(90)
         totals = []
         for job in JOBS:
             state = self.characters.change_job(1, 1, job)

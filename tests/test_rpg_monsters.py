@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from core.rpg import RPGStore
 from core.rpg_battle import Rule, raid_battle, dump_battle, load_battle
+from core.rpg_character import ITEMS
 from core.rpg_monsters import prepare_monster, monster_name
 from core.rpg_raid_store import RaidStore
 from core.rpg_raids import RaidService
@@ -59,7 +60,7 @@ class MonsterTests(unittest.TestCase):
             people[0]['state']['equipped']['飾品1'] = 'goblin:badge'
             battle = raid_battle(people, monster(), 10)
             wearer = battle.fighters[0]
-            counted = min(count, 10)
+            counted = min(5, (count + 1) // 2)
             original = dict(people[0]['state']['combat'])
             for stat, per_player in (('HP', 10), ('攻擊', 3), ('防禦', 3), ('治療量', 3)):
                 self.assertEqual(wearer.stats[stat], original[stat] + counted * per_player)
@@ -86,12 +87,11 @@ class MonsterTests(unittest.TestCase):
         state['equipped']['飾品1'] = 'goblin:badge'
         state['total'] = [50, 60, 70, 374, 80]
         state['combat'] = combat_from_stats(state['total'])
-        state['combat']['攻擊'] += 54
-        state['combat']['治療量'] += 20
+        state['combat']['攻擊'] += ITEMS['goblin:bow'].combat[1]
         wearer = raid_battle(people, monster(), 10).fighters[0]
-        self.assertEqual(wearer.stats, {'HP': 650, '攻擊': 284, '防禦': 240,
-                                     '治療量': 290, '命中率': 150, '閃避率': 35, '暴擊率': 50})
-        self.assertEqual(wearer.dexterity, 384)
+        self.assertEqual(wearer.stats, {'HP': 600, '攻擊': 274, '防禦': 225,
+                                     '治療量': 255, '命中率': 150, '閃避率': 35, '暴擊率': 50})
+        self.assertEqual(wearer.dexterity, 379)
 
     def test_tiers_and_distinct_stats(self):
         expected = {

@@ -53,7 +53,7 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('尚未解鎖', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
 
     async def test_timeout_disables_actions_and_refresh_unlocks_slots(self):
-        self.store.award_voice([(1, 1, level_floor(80))])
+        self.store.award_voice([(1, 1, level_floor(90))])
         self.characters.change_job(1, 1, '僧侶')
         await self.view.handle(self.interaction, 'refresh')
         self.assertEqual(len(self.view.children[0].options), 7)

@@ -6,10 +6,6 @@ from core.rpg import level_for
 
 STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
 COMBAT_NAMES = ('HP', '攻擊', '防禦', '治療量')
-WEAPON_BONUSES = {'裝甲步兵': (10, 12, 2, 0), '騎士': (25, 5, 5, 0),
-                  '弓兵': (0, 10, 0, 0), '僧侶': (0, 6, 0, 10)}
-SUIT_BONUSES = {'裝甲步兵': (40, 2, 8, 0), '騎士': (60, 0, 12, 0),
-                '弓兵': (25, 3, 5, 0), '僧侶': (25, 0, 5, 8)}
 STABILITY = {'裝甲步兵': (60, 140), '騎士': (80, 120), '弓兵': (75, 125), '僧侶': (90, 110)}
 # Every profession gains the same total points per level, with different priorities.
 GROWTH = {
@@ -23,6 +19,35 @@ JOBS = tuple(job for job in GROWTH if job != '民兵')
 PREFIXES = ('早期', '', '老練', '精銳')
 WEAPONS = {'裝甲步兵': '戰斧', '騎士': '劍盾', '弓兵': '長弓', '僧侶': '權杖'}
 SUITS = {'裝甲步兵': '步兵甲', '騎士': '騎士鎧', '弓兵': '獵裝', '僧侶': '僧袍'}
+# Fixed at the canonical T10/T20/T50/T90 requirements.  A weapon and suit
+# together contribute about 20% of the naked character's relevant combat
+# values at that tier; the split preserves each profession's equipment role.
+SHOP_EQUIPMENT = {
+    '裝甲步兵': (
+        ((13, 15, 3, 0), (53, 2, 14, 0)),
+        ((23, 33, 6, 0), (91, 5, 25, 0)),
+        ((48, 82, 14, 0), (194, 14, 56, 0)),
+        ((82, 147, 24, 0), (328, 25, 96, 0)),
+    ),
+    '騎士': (
+        ((19, 17, 5, 0), (47, 0, 12, 0)),
+        ((48, 24, 11, 0), (114, 0, 27, 0)),
+        ((123, 43, 28, 0), (295, 0, 68, 0)),
+        ((222, 68, 51, 0), (532, 0, 121, 0)),
+    ),
+    '弓兵': (
+        ((0, 13, 0, 0), (66, 4, 17, 0)),
+        ((0, 26, 0, 0), (114, 8, 24, 0)),
+        ((0, 60, 0, 0), (242, 18, 43, 0)),
+        ((0, 105, 0, 0), (410, 32, 68, 0)),
+    ),
+    '僧侶': (
+        ((0, 17, 0, 9), (66, 0, 17, 8)),
+        ((0, 31, 0, 26), (114, 0, 24, 20)),
+        ((0, 70, 0, 68), (242, 0, 43, 54)),
+        ((0, 120, 0, 124), (410, 0, 68, 99)),
+    ),
+}
 
 
 class CharacterError(ValueError):
@@ -52,14 +77,13 @@ class Item:
 
 ITEMS = {}
 ITEMS['starter:club'] = Item('木棒', '武器', '', 0, (0, 0, 0, 0, 0),
-                              (0, 5, 5, 0), (60, 110), sell_price=0, transferable=False)
+                              (0, 6, 6, 0), (80, 120), sell_price=0, transferable=False)
 for job in JOBS:
     for stage, prefix in enumerate(PREFIXES):
-        for slot, names in (('武器', WEAPONS), ('套裝', SUITS)):
-            weights = (WEAPON_BONUSES if slot == '武器' else SUIT_BONUSES)[job]
+        for slot_index, (slot, names) in enumerate((('武器', WEAPONS), ('套裝', SUITS))):
             key = f'{job}:{stage}:{slot}'
             ITEMS[key] = Item(prefix + names[job], slot, job, stage, (0, 0, 0, 0, 0),
-                              tuple(weight * (stage + 1) for weight in weights),
+                              SHOP_EQUIPMENT[job][stage][slot_index],
                               STABILITY[job] if slot == '武器' else (100, 100),
                               (0, 500, 1500, 4000)[stage],
                               sell_price=0 if stage == 0 else None,
@@ -77,20 +101,20 @@ for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '�
 
 # Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
 ITEMS['golem:hammer'] = Item('鐵核重鎚', '武器', '裝甲步兵', 1, (0, 0, 0, 0, 0),
-                            (20, 30, 4, 0), (50, 150))
+                            (34, 50, 9, 0), (50, 150))
 ITEMS['golem:sword_shield'] = Item('鐵核劍盾', '武器', '騎士', 1, (0, 0, 0, 0, 0),
-                                  (60, 12, 12, 0), (70, 130))
+                                  (71, 36, 17, 0), (70, 130))
 ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0),
-                         (0, 26, 2, 0), (65, 135))
+                         (0, 38, 0, 0), (65, 135))
 ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
-                           (10, 14, 0, 26), (85, 115))
+                           (0, 47, 0, 38), (85, 115))
 
 
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'infantry', '荊棘戰甲', (100, 6, 20, 0)),
-    ('騎士', 'knight', '古木重鎧', (160, 0, 30, 0)),
-    ('弓兵', 'archer', '藤葉獵裝', (70, 8, 12, 0)),
-    ('僧侶', 'monk', '靈根僧袍', (70, 0, 12, 20)),
+    ('裝甲步兵', 'infantry', '荊棘戰甲', (137, 8, 38, 0)),
+    ('騎士', 'knight', '古木重鎧', (172, 0, 41, 0)),
+    ('弓兵', 'archer', '藤葉獵裝', (171, 12, 36, 0)),
+    ('僧侶', 'monk', '靈根僧袍', (171, 0, 36, 30)),
 ):
     ITEMS[f'tree:{key}'] = Item(name, '套裝', job, 1, (0, 0, 0, 0, 0), bonuses)
 
@@ -98,25 +122,25 @@ for job, key, name, bonuses in (
 ITEMS['goblin:badge'] = Item('戰團徽章', '飾品', '', 1, (0, 0, 0, 0, 0),
                              required_level=20, party_bonus=True)
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'axe', '掠奪者戰斧', (0, 60, 0, 0)),
-    ('騎士', 'sword_shield', '掠奪者劍盾', (30, 40, 6, 0)),
-    ('弓兵', 'bow', '掠奪者長弓', (0, 54, 0, 0)),
-    ('僧侶', 'staff', '掠奪者權杖', (0, 42, 0, 20)),
+    ('裝甲步兵', 'axe', '掠奪者戰斧', (0, 67, 0, 0)),
+    ('騎士', 'sword_shield', '掠奪者劍盾', (35, 42, 8, 0)),
+    ('弓兵', 'bow', '掠奪者長弓', (0, 59, 0, 0)),
+    ('僧侶', 'staff', '掠奪者權杖', (0, 55, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                                 bonuses, (40, 120), required_level=20)
+                                 bonuses, (60, 140), required_level=20)
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
                             required_level=20, evasion=5)
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'axe', '血翼戰斧', (10, 18, 2, 0)),
-    ('騎士', 'sword_shield', '血翼劍盾', (40, 8, 8, 0)),
-    ('弓兵', 'bow', '血翼長弓', (0, 16, 0, 0)),
-    ('僧侶', 'staff', '血翼權杖', (0, 9, 0, 20)),
+    ('裝甲步兵', 'axe', '血翼戰斧', (29, 41, 8, 0)),
+    ('騎士', 'sword_shield', '血翼劍盾', (60, 30, 14, 0)),
+    ('弓兵', 'bow', '血翼長弓', (0, 32, 0, 0)),
+    ('僧侶', 'staff', '血翼權杖', (0, 39, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                              bonuses, STABILITY[job], required_level=20, lifesteal=2)
+                              bonuses, STABILITY[job], required_level=20, lifesteal=3)
 
 
 # Fishing items use the existing stackable inventory while remaining separate from
@@ -240,7 +264,7 @@ def item_text(item):
     if item.required_level is not None:
         parts.append(f'Lv.{item.required_level}')
     if item.party_bonus:
-        parts.append('開戰每人（含自己）生命力／力氣／耐力／靈巧／信仰各 +1，最多各 +10，整場固定，僅自身')
+        parts.append('開戰每兩名參戰者（不足兩名進位）使五項能力各 +1，最多各 +5，整場固定，僅自身')
     if item.evasion:
         parts.append(f'閃避率 +{item.evasion}%')
     if item.lifesteal:

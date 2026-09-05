@@ -553,7 +553,7 @@ def raid_battle(participants, monster, seed):
     badge_logs = []
     for fighter, participant in zip(fighters, participants):
         if any(ITEMS[key].party_bonus for key in participant['state'].get('equipped', {}).values() if key in ITEMS):
-            count = min(len(participants), 10)
+            count = min(5, (len(participants) + 1) // 2)
             total = participant['state']['total']
             before = combat_from_stats(total)
             after = combat_from_stats([value + count for value in total])
