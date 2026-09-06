@@ -11,6 +11,38 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_noah_paint_set_and_socket_variants(self):
+        self.level(45)
+        self.characters.change_job(1, 1, '弓兵')
+        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:archer:weapon', 'clock:archer'):
+            self.characters.grant_item(1, 1, key)
+        self.characters.combine_paint_set(1, 1)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts['paint:set'], 1)
+        self.assertFalse(any(counts.get(key, 0) for key in ('paint:red', 'paint:yellow', 'paint:blue')))
+
+        self.characters.grant_item(1, 1, 'paint:blue')
+        self.characters.equip(1, 1, 'noah:archer:weapon')
+        colored = self.characters.socket_paint(1, 1, 'noah:archer:weapon', 'blue')
+        self.assertEqual(colored, 'noah:archer:weapon:blue')
+        self.assertEqual(self.characters.snapshot(1, 1)['equipped']['武器'], colored)
+        self.characters.equip(1, 1, 'clock:archer')
+        self.assertEqual(self.characters.snapshot(1, 1)['damage_guard_chance'], 10)
+
+        self.characters.grant_item(1, 1, 'paint:yellow')
+        recolored = self.characters.socket_paint(1, 1, colored, 'yellow')
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual(state['equipped']['武器'], recolored)
+        self.assertEqual(ITEMS[recolored].accuracy, 5)
+        self.assertNotIn(colored, self.characters.inventory(1, 1))
+        self.assertEqual(ITEMS['noah:archer:weapon:red'].combat[1],
+                         ITEMS['noah:archer:weapon'].combat[1] * 130 // 100)
+        self.assertEqual(ITEMS['noah:archer:suit:red'].combat[0],
+                         ITEMS['noah:archer:suit'].combat[0] * 150 // 100)
+        self.assertEqual(ITEMS['noah:archer:suit:yellow'].speed, 15)
+        self.assertEqual(ITEMS['noah:archer:suit:blue'].evasion, 5)
+        self.assertFalse(item_sellable(ITEMS['noah:unfinished']))
+
     def test_tier_three_items_require_level_thirty_and_snapshot_effects(self):
         from core.rpg_character import item_text
         self.level(10)
@@ -61,7 +93,7 @@ class CharacterTests(unittest.TestCase):
             item = ITEMS['bat:' + key]
             self.assertEqual((item.required_level, item.lifesteal, item.price), (20, 3, 0))
             self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
-        self.assertIn('閃避率 +5%', item_text(ITEMS['fox:pendant']))
+        self.assertIn('閃避率 +5 個百分點', item_text(ITEMS['fox:pendant']))
 
     def test_accuracy_can_exceed_100_and_caps_at_150(self):
         from core.rpg_character import combat_from_stats

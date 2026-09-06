@@ -5,7 +5,7 @@ from core.rpg_menu import add_back, navigate
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, item_level, item_text
+from core.rpg_character import CharacterError, ITEMS, PAINT_ITEMS, PAINT_NAMES, item_level, item_text
 
 
 class PanelSelect(discord.ui.Select):
@@ -26,6 +26,7 @@ class EquipmentView(discord.ui.View):
         self.guild_id = interaction.guild_id
         self.slot = '武器'
         self.item_id = None
+        self.paint_color = 'red'
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -57,11 +58,19 @@ class EquipmentView(discord.ui.View):
         self.add_item(PanelSelect('item', placeholder='選擇要穿戴的物品' if options else '這個欄位沒有可用裝備',
                                  row=1, disabled=not options, options=options or [
                                      discord.SelectOption(label='沒有可用裝備', value='empty')]))
-        for button in (self.wear, self.remove, self.provisions, self.refresh, self.close_panel):
+        self.add_item(PanelSelect('paint', placeholder='選擇鑲嵌顏料', row=2, options=[
+            discord.SelectOption(label=f'{PAINT_NAMES[color]}噴漆', value=color,
+                                 description=('武器攻擊 +30%；套裝 HP +50%' if color == 'red' else
+                                              '武器命中 +5 個百分點；套裝速度 +15' if color == 'yellow' else
+                                              '武器 5% 機率減傷 50%；套裝閃避 +5 個百分點'),
+                                 default=color == self.paint_color)
+            for color in PAINT_ITEMS]))
+        for button in (self.wear, self.remove, self.socket, self.provisions, self.refresh, self.close_panel):
             self.add_item(button)
-        add_back(self, 3)
+        add_back(self, 4)
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']
+        self.socket.disabled = self.item_id is None or not ITEMS[self.item_id].socket_base
         return state
 
     def embed(self, notice=None):
@@ -70,7 +79,7 @@ class EquipmentView(discord.ui.View):
         embed.add_field(name='目前選擇', value=f'{self.slot}：{ITEMS[self.item_id].name if self.item_id else "請選擇物品"}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='先選欄位，再選物品並按穿戴；操作後更新能力值。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
+        embed.set_footer(text='先選欄位與物品；諾亞裝備可另選顏料後鑲嵌或改色，舊顏料不返還。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -104,6 +113,10 @@ class EquipmentView(discord.ui.View):
                     if value not in self.available:
                         raise CharacterError('這件裝備目前無法穿戴，請重新選擇。')
                     self.item_id = value
+                elif action == 'paint':
+                    if value not in PAINT_ITEMS:
+                        raise CharacterError('請選擇紅色、黃色或藍色顏料。')
+                    self.paint_color = value
                 elif action == 'wear':
                     if self.item_id is None:
                         raise CharacterError('請先選擇可穿戴的物品。')
@@ -113,28 +126,38 @@ class EquipmentView(discord.ui.View):
                 elif action == 'remove':
                     self.cog.characters.unequip(self.guild_id, self.owner.id, self.slot)
                     notice = f'已卸下{self.slot}，物品保留在背包。'
+                elif action == 'socket':
+                    if self.item_id is None:
+                        raise CharacterError('請先選擇具有鑲嵌格的裝備。')
+                    self.item_id = self.cog.characters.socket_paint(
+                        self.guild_id, self.owner.id, self.item_id, self.paint_color)
+                    notice = f'已消耗 {ITEMS[PAINT_ITEMS[self.paint_color]].name}，裝備變為 {ITEMS[self.item_id].name}。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()
             await interaction.response.edit_message(embed=self.embed(notice), view=self)
 
-    @discord.ui.button(label='穿戴', style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label='穿戴', style=discord.ButtonStyle.success, row=3)
     async def wear(self, interaction, button):
         await self.handle(interaction, 'wear')
 
-    @discord.ui.button(label='卸下', style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label='卸下', style=discord.ButtonStyle.secondary, row=3)
     async def remove(self, interaction, button):
         await self.handle(interaction, 'remove')
 
-    @discord.ui.button(label='討伐補給', style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label='鑲嵌／改色', style=discord.ButtonStyle.primary, row=3)
+    async def socket(self, interaction, button):
+        await self.handle(interaction, 'socket')
+
+    @discord.ui.button(label='討伐補給', style=discord.ButtonStyle.secondary, row=4)
     async def provisions(self, interaction, button):
         await self.handle(interaction, 'provision_loadout')
 
-    @discord.ui.button(label='重新整理', style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label='重新整理', style=discord.ButtonStyle.secondary, row=4)
     async def refresh(self, interaction, button):
         await self.handle(interaction, 'refresh')
 
-    @discord.ui.button(label='關閉', style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label='關閉', style=discord.ButtonStyle.secondary, row=4)
     async def close_panel(self, interaction, button):
         await self.handle(interaction, 'close')
 

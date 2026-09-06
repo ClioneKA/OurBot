@@ -6,9 +6,10 @@ from decimal import Decimal
 BALANCE_VERSION = 3
 # Calibrated encounter tiers are content levels. Higher-level players are
 # intentionally stronger when returning to these lower-tier encounters.
-REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30}
+REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 45}
 # HP, attack, defense. Tiers are internal and never part of display names.
-TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15)}
+TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
+         4: (2.2, 1.25, 1.2)}
 # tier, HP, attack, defense, speed, accuracy, evasion, critical. Speed is an
 # absolute initiative value on the same narrow scale as player speed.
 PROFILES = {
@@ -28,6 +29,9 @@ PROFILES = {
     '深淵鐘龍': (3, 2.16, 1.35, 1.15, 45, 92, 0, 10),
     '王城傀儡師': (3, 1.47, 1.755, 0.9, 55, 94, 8, 10),
     '瘟疫縫合獸': (3, 1.955, 2.288, 1.0, 50, 93, 3, 8),
+    # Special summon calibrated around Lv.45 equipment. It is always ordinary
+    # quality and is excluded from both scheduled encounter pools.
+    '城崎諾亞': (4, 2.0, 0.65, 1.15, 60, 95, 8, 12),
 }
 # probability, equivalent level bonus, victory rewards, equipment drop chance
 QUALITIES = {

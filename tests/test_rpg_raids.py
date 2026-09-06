@@ -8,6 +8,8 @@ import sqlite3
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import discord
+
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError
@@ -17,6 +19,91 @@ from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_noah_special_rewards_prefer_own_job_and_skip_dynamic_difficulty(self):
+        from core.rpg_monsters import prepare_monster
+
+        self.store.award_voice([(1, 1, level_floor(45))])
+        self.characters.change_job(1, 1, '弓兵')
+        participant = dict(id=1, name='玩家', state=self.characters.snapshot(1, 1), rules=[])
+        monster = prepare_monster(dict(kind='城崎諾亞', name='城崎諾亞', description='測試',
+                                       primary_color='red'), quality='普通')
+        with self.store.db:
+            self.store.db.execute('INSERT OR REPLACE INTO rpg_raid_difficulty VALUES (1,2,2.0,3)')
+        raid = self.repo.create(1, 2, monster, 100,
+                                asdict(replace(self.settings.mid_raid, drop_chance=1)),
+                                pool='special', use_dynamic=False)
+        self.assertNotIn('difficulty', raid)
+        self.assertEqual(raid['monster']['difficulty_multiplier'], 1.0)
+        raid.update(status='running', participants=[participant], members=[1])
+        self.repo.save(raid)
+        battle = raid_battle([participant], raid['monster'], 1)
+        battle.result = '勝利'
+
+        class FixedRng:
+            values = iter((0.0, 0.0, 1.0))
+            def random(self):
+                return next(self.values)
+            @staticmethod
+            def choice(values):
+                return values[0]
+
+        with patch('core.rpg_raid_store.random.Random', return_value=FixedRng()):
+            result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.mid_raid)
+        self.assertIn(result['rewards'][0]['item'], ('noah:archer:weapon', 'noah:archer:suit'))
+        self.assertNotIn('difficulty_change', result)
+        self.assertEqual(self.repo.difficulty(1, 2, 3), 2.0)
+
+    async def test_using_paint_set_summons_noah_and_blocks_second_mid_raid(self):
+        class FakeChannel:
+            id = 3
+            mention = '<#3>'
+            guild = SimpleNamespace(id=1, unavailable=False)
+
+        channel = FakeChannel()
+        channel.send = AsyncMock(return_value=SimpleNamespace(id=9))
+        self.cog.bot.get_channel = lambda cid: channel if cid == 3 else None
+        self.store.award_voice([(1, 1, level_floor(30))])
+        self.characters.grant_item(1, 1, 'paint:set')
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        user = SimpleNamespace(id=1, bot=False)
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
+                patch('core.rpg_raids.random.choice', return_value='blue'):
+            summoned_channel, _, raid = await service.summon_noah(channel.guild, user)
+            self.assertEqual(summoned_channel, channel)
+            self.assertEqual((raid['status'], raid['members']), ('lobby', [1]))
+            self.assertEqual((raid['monster']['tier'], raid['monster']['primary_color']), (4, 'blue'))
+            self.assertNotIn('difficulty', raid)
+            self.assertEqual(self.characters.inventory_counts(1, 1).get('paint:set', 0), 0)
+            self.characters.grant_item(1, 1, 'paint:set')
+            with self.assertRaises(CharacterError):
+                await service.summon_noah(channel.guild, user)
+            self.assertEqual(self.characters.inventory_counts(1, 1)['paint:set'], 1)
+        await service.close()
+
+    async def test_noah_publish_failure_refunds_paint_set(self):
+        class FakeChannel:
+            id = 3
+            mention = '<#3>'
+            guild = SimpleNamespace(id=1, unavailable=False)
+
+        channel = FakeChannel()
+        channel.send = AsyncMock(side_effect=discord.HTTPException(AsyncMock(), 'send failed'))
+        self.cog.bot.get_channel = lambda cid: channel if cid == 3 else None
+        self.store.award_voice([(1, 1, level_floor(30))])
+        self.characters.grant_item(1, 1, 'paint:set')
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel):
+            with self.assertRaises(discord.HTTPException):
+                await service.summon_noah(channel.guild, SimpleNamespace(id=1, bot=False))
+        self.assertEqual(self.characters.inventory_counts(1, 1)['paint:set'], 1)
+        self.assertFalse(any(raid['status'] in ('posting', 'lobby', 'running')
+                             for raid in service.repo.pending()))
+        await service.close()
+
     async def test_mid_tier_channel_pool_rewards_and_fixed_paint_drop(self):
         from cmds.rpg import RPG
         choices = next(p.choices for p in RPG.spawn_raid.parameters if p.name == 'kind')

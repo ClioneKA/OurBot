@@ -416,7 +416,8 @@ class Battle:
                 continue
             if rule.condition == 'enemy_charging' and not any(
                     f.has('charged_punch', self.round) or
-                    (f.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) for f in enemies):
+                    (f.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
+                    (f.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) for f in enemies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect in ('heal', 'greater_heal', 'group_heal'):
@@ -479,6 +480,8 @@ class Battle:
                 value = max(1, int(value * multiplier))
             if target.has('taunt', self.round):
                 value = max(1, int(value * 0.85))
+            if target.has('noah_blue_guard', self.round):
+                value = max(1, value * self.mechanics.get('noah_blue_reduction', 0) // 100)
             if puppet_shield:
                 value = max(1, value // 2)
             if guarded:
@@ -622,7 +625,61 @@ class Battle:
         if target is not None:
             self.hit(actor, target)
 
+    def noah_act(self, actor):
+        """Resolve Noah's announced colour and the below-70% composition loop."""
+        if actor.hp * 100 <= actor.stats['HP'] * 70 and not self.mechanics.get('noah_phase_two'):
+            self.mechanics.update(noah_phase_two=True, noah_color_index=0,
+                                  noah_composition=0, noah_draft_charging=False)
+            self.log.append(f'{actor.name} 進入第二階段【開始調色】：顏料順序重置為紅 → 黃 → 藍，並開始未完成構圖！')
+
+        if self.mechanics.get('noah_draft_charging'):
+            self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
+            self.record_skill(actor, '未完成稿')
+            self.log.append(f'{actor.name} 完成【未完成稿】：對全隊造成 180% 傷害！')
+            for enemy in self.living(0):
+                self.hit(actor, enemy, 1.8)
+            return
+
+        phase_two = self.mechanics.get('noah_phase_two', False)
+        colors = ('red', 'yellow', 'blue')
+        color = colors[self.mechanics.get('noah_color_index', 0)] if phase_two else self.mechanics['noah_primary_color']
+        color_name = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}[color]
+        power = {'red': 1.8 if phase_two else 1.5,
+                 'yellow': 0.75 if phase_two else 0.6,
+                 'blue': 1.3 if phase_two else 1.1}[color]
+        self.record_skill(actor, f'{color_name}顏料罐')
+        if color == 'yellow':
+            self.log.append(f'{actor.name} 潑灑【黃色顏料罐】：對全隊造成 {power * 100:g}% 傷害！')
+            for enemy in self.living(0):
+                self.hit(actor, enemy, power)
+        else:
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            self.log.append(f'{actor.name} 使用【{color_name}顏料罐】')
+            if target is not None:
+                self.hit(actor, target, power)
+                if color == 'red' and target.hp > 0:
+                    target.effects['break'] = self.round + 1
+                    self.log.append(f'{target.name} 遭紅色顏料破甲至第 {self.round + 1} 回合結束。')
+            if color == 'blue' and actor.hp > 0:
+                healing = self.restore(actor, actor.stats['HP'] * (5 if phase_two else 3) // 100)
+                reduction = 30 if phase_two else 20
+                self.mechanics['noah_blue_reduction'] = 100 - reduction
+                actor.effects['noah_blue_guard'] = self.round + 1
+                self.log.append(f'{actor.name} 恢復 {healing} HP，受到傷害 -{reduction}% 至第 {self.round + 1} 回合結束。')
+
+        if phase_two:
+            composition = self.mechanics.get('noah_composition', 0) + 1
+            self.mechanics['noah_composition'] = composition
+            self.mechanics['noah_color_index'] = (self.mechanics.get('noah_color_index', 0) + 1) % 3
+            self.log.append(f'{actor.name} 的【未完成構圖】進度 {composition}/3。')
+            if composition >= 3:
+                self.mechanics['noah_draft_charging'] = True
+                self.log.append(f'{actor.name} 正在替【未完成稿】收尾；下一次行動將對全隊造成 180% 傷害！')
+
     def act(self, actor):
+        if actor.team == 1 and actor.job == '城崎諾亞':
+            self.noah_act(actor)
+            return
         if actor.team == 1 and actor.job == '深淵鐘龍':
             self.clockwork_act(actor)
             return
@@ -797,6 +854,11 @@ class Battle:
                 status = 'stun' if effect == 'shield_bash' else 'poison'
                 if status == 'stun' and target.job == '深淵鐘龍':
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
+                    return
+                if status == 'stun' and target.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging'):
+                    self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
+                    target.effects['break'] = self.round + 1
+                    self.log.append(f'{target.name} 的【未完成稿】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
                     return
                 if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
                     self.log.append(f'{target.name} 的蓄力被打斷')
@@ -1034,6 +1096,11 @@ def raid_battle(participants, monster, seed):
     if monster['kind'] == '王城傀儡師':
         battle.mechanics['puppet_base_attack'] = fighters[-3].stats['攻擊']
         fighters[-2].effects['taunt'] = battle.max_rounds
+    if monster['kind'] == '城崎諾亞':
+        colors = ('red', 'yellow', 'blue')
+        color = monster.get('primary_color') or colors[random.Random(seed).randrange(3)]
+        battle.mechanics.update(noah_primary_color=color, noah_color_index=0,
+                                noah_composition=0, noah_draft_charging=False)
     battle.log.extend(badge_logs)
     battle.log.extend(provision_logs)
     return battle

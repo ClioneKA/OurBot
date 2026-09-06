@@ -28,6 +28,14 @@ def participant():
 
 
 class MonsterTests(unittest.TestCase):
+    def test_noah_is_fixed_tier_four_and_starts_with_seeded_colour(self):
+        noah = prepare_monster(dict(kind='城崎諾亞', name='城崎諾亞', description='測試'), quality='普通')
+        self.assertEqual(noah['tier'], 4)
+        self.assertEqual(monster_name(noah), '城崎諾亞')
+        battle = raid_battle([participant()], noah, 17)
+        self.assertIn(battle.mechanics['noah_primary_color'], ('red', 'yellow', 'blue'))
+        self.assertEqual(battle.fighters[-1].job, '城崎諾亞')
+
     def test_goblin_group_buffs_death_and_restart(self):
         battle = raid_battle([participant()], monster('哥布林戰團'), 42)
         player, captain, *grunts = battle.fighters

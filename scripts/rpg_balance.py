@@ -14,6 +14,12 @@ T30_EQUIPMENT = {
     '弓兵': ('plague:bow', 'clock:archer'),
     '僧侶': ('plague:staff', 'clock:monk'),
 }
+T45_EQUIPMENT = {
+    '裝甲步兵': ('noah:infantry:weapon', 'noah:infantry:suit'),
+    '騎士': ('noah:knight:weapon', 'noah:knight:suit'),
+    '弓兵': ('noah:archer:weapon', 'noah:archer:suit'),
+    '僧侶': ('noah:monk:weapon', 'noah:monk:suit'),
+}
 COMPOSITIONS = {
     'balanced': ('裝甲步兵', '騎士', '弓兵', '僧侶'),
     'no_healer': ('裝甲步兵', '騎士', '弓兵', '弓兵'),
@@ -33,7 +39,10 @@ def reference_participant(job, tier, user_id, level_bonus=0):
     base = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
                  + stage * weight * 2 for weight in growth)
     combat = combat_from_stats(base)
-    if tier == 3:
+    if tier == 4:
+        weapon_key, suit_key = T45_EQUIPMENT[job]
+        equipped = {'武器': weapon_key, '套裝': suit_key}
+    elif tier == 3:
         weapon_key, suit_key = T30_EQUIPMENT[job]
         equipped = {'武器': weapon_key, '套裝': suit_key}
     else:

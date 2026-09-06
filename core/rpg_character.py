@@ -69,6 +69,7 @@ class Item:
     required_level: int | None = None
     party_bonus: bool = False
     speed: int = 0
+    accuracy: int = 0
     evasion: int = 0
     lifesteal: int = 0
     damage_guard_chance: int = 0
@@ -79,6 +80,8 @@ class Item:
     description: str = ''
     sell_price: int | None = None
     transferable: bool = True
+    socket_base: str = ''
+    paint_color: str = ''
 
 
 ITEMS = {}
@@ -175,12 +178,59 @@ for job, key, name, bonuses in (
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (
-    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
-    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
-    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得，未來可與另外兩種原色組合。'),
+    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得；可組成套組，或鑲嵌於諾亞裝備。'),
+    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得；可組成套組，或鑲嵌於諾亞裝備。'),
+    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得；可組成套組，或鑲嵌於諾亞裝備。'),
 ):
     ITEMS[key] = Item(name, '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
                       description=description)
+
+ITEMS['paint:set'] = Item(
+    '噴漆罐套組', '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    description='由紅、黃、藍色噴漆罐各一罐組合；可在背包中使用，召喚特殊四階討伐「城崎諾亞」。')
+ITEMS['noah:unfinished'] = Item(
+    '未完成的魔女畫作', '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    description='城崎諾亞留下的未完成畫作，未來可用於召喚繪畫魔女．城崎諾亞。')
+
+PAINT_ITEMS = {'red': 'paint:red', 'yellow': 'paint:yellow', 'blue': 'paint:blue'}
+PAINT_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
+NOAH_EQUIPMENT = {}
+for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
+    ('裝甲步兵', 'infantry', '緋彩戰斧', (52, 86, 15, 0), '潑彩戰甲', (205, 15, 59, 0)),
+    ('騎士', 'knight', '調色劍盾', (132, 46, 30, 0), '畫框重鎧', (312, 0, 72, 0)),
+    ('弓兵', 'archer', '虹跡長弓', (0, 64, 0, 0), '顏料獵裝', (255, 19, 46, 0)),
+    ('僧侶', 'monk', '繪夢權杖', (0, 74, 0, 72), '白紙僧袍', (255, 0, 46, 57)),
+):
+    for slot, name, combat in (('武器', weapon_name, weapon_combat), ('套裝', suit_name, suit_combat)):
+        base_key = f'noah:{slug}:{"weapon" if slot == "武器" else "suit"}'
+        base = Item(name, slot, job, 2, (0, 0, 0, 0, 0), combat,
+                    STABILITY[job] if slot == '武器' else (100, 100),
+                    required_level=45, socket_base=base_key,
+                    description='具有一個顏料鑲嵌格。')
+        ITEMS[base_key] = base
+        NOAH_EQUIPMENT.setdefault(job, []).append(base_key)
+        for color in ('red', 'yellow', 'blue'):
+            colored_combat = combat
+            speed = accuracy = evasion = guard = 0
+            if color == 'red':
+                values = list(combat)
+                index = 1 if slot == '武器' else 0
+                values[index] = values[index] * (130 if slot == '武器' else 150) // 100
+                colored_combat = tuple(values)
+            elif color == 'yellow':
+                if slot == '武器':
+                    accuracy = 5
+                else:
+                    speed = 15
+            elif slot == '武器':
+                guard = 5
+            else:
+                evasion = 5
+            ITEMS[f'{base_key}:{color}'] = replace(
+                base, name=f'{name}・{PAINT_NAMES[color]}鑲嵌', combat=colored_combat,
+                speed=speed, accuracy=accuracy, evasion=evasion,
+                damage_guard_chance=guard, paint_color=color,
+                description=f'鑲嵌{PAINT_NAMES[color]}噴漆，可再次改色；原顏料不返還。')
 
 
 # Fishing items use the existing stackable inventory while remaining separate from
@@ -253,6 +303,8 @@ for tier, prefix, percent, chance, sell_price in (
 for key, item in list(ITEMS.items()):
     if key.startswith('raid:'):
         ITEMS[key] = replace(item, value=300)
+    elif key.startswith('noah:') and item.slot in ('武器', '套裝'):
+        ITEMS[key] = replace(item, value=1200)
     elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:', 'clock:', 'puppet:', 'plague:')):
         ITEMS[key] = replace(item, value=750)
 
@@ -313,8 +365,10 @@ def item_text(item):
         parts.append('開戰每兩名參戰者（不足兩名進位）使五項能力各 +1，最多各 +5，整場固定，僅自身')
     if item.speed:
         parts.append(f'速度 {item.speed:+d}')
+    if item.accuracy:
+        parts.append(f'命中率 +{item.accuracy} 個百分點')
     if item.evasion:
-        parts.append(f'閃避率 +{item.evasion}%')
+        parts.append(f'閃避率 +{item.evasion} 個百分點')
     if item.lifesteal:
         parts.append(f'吸血 {item.lifesteal}%（直接傷害實際扣血量）')
     if item.damage_guard_chance:
@@ -413,6 +467,7 @@ class Characters:
             combat[name] += value
         weapon = ITEMS.get(equipped.get('武器'))
         combat['閃避率'] += sum(ITEMS[key].evasion for key in equipped.values())
+        combat['命中率'] += sum(ITEMS[key].accuracy for key in equipped.values())
         speed = speed_from_equipment(job, equipped)
         combat['速度'] = speed
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
@@ -420,7 +475,7 @@ class Characters:
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
                     combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100), speed=speed,
                     lifesteal=weapon.lifesteal if weapon else 0,
-                    damage_guard_chance=max((ITEMS[key].damage_guard_chance for key in equipped.values()), default=0),
+                    damage_guard_chance=min(100, sum(ITEMS[key].damage_guard_chance for key in equipped.values())),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
                     vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
                     healing_share=max((ITEMS[key].healing_share for key in equipped.values()), default=0))
@@ -534,6 +589,76 @@ class Characters:
         equipped = self.db.execute('SELECT 1 FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
                                    (guild, user, key)).fetchone()
         return max(0, owned - bool(equipped))
+
+    def combine_paint_set(self, guild, user):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            counts = self.inventory_counts(guild, user)
+            if any(counts.get(key, 0) < 1 for key in PAINT_ITEMS.values()):
+                raise CharacterError('需要紅色、黃色、藍色噴漆罐各一罐才能組合。')
+            for key in PAINT_ITEMS.values():
+                self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
+                                'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, key))
+                self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
+                                'AND item_id=? AND quantity=0', (guild, user, key))
+            self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+                VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
+                DO UPDATE SET quantity=quantity+1''', (guild, user, 'paint:set'))
+        return ITEMS['paint:set']
+
+    def socket_paint(self, guild, user, item_id, color):
+        if color not in PAINT_ITEMS:
+            raise CharacterError('請選擇紅色、黃色或藍色顏料。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            item = ITEMS.get(item_id)
+            if not item or not item.socket_base:
+                raise CharacterError('這件裝備沒有顏料鑲嵌格。')
+            if item.paint_color == color:
+                raise CharacterError(f'這件裝備已經鑲嵌{PAINT_NAMES[color]}顏料。')
+            counts = self.inventory_counts(guild, user)
+            if counts.get(item_id, 0) < 1:
+                raise CharacterError('背包中沒有這件裝備。')
+            paint_key = PAINT_ITEMS[color]
+            if counts.get(paint_key, 0) < 1:
+                raise CharacterError(f'背包中沒有{ITEMS[paint_key].name}。')
+            target_key = f'{item.socket_base}:{color}'
+            equipped = self.db.execute(
+                'SELECT slot FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
+                (guild, user, item_id)).fetchone()
+            for key in (item_id, paint_key):
+                self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
+                                'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, key))
+                self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
+                                'AND item_id=? AND quantity=0', (guild, user, key))
+            self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+                VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
+                DO UPDATE SET quantity=quantity+1''', (guild, user, target_key))
+            if equipped:
+                self.db.execute('UPDATE rpg_equipment SET item_id=? '
+                                'WHERE guild_id=? AND user_id=? AND slot=?',
+                                (target_key, guild, user, equipped[0]))
+        return target_key
+
+    def consume_item(self, guild, user, key, quantity=1):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            counts = self.inventory_counts(guild, user)
+            if quantity < 1 or counts.get(key, 0) < quantity:
+                raise CharacterError('背包中的物品數量不足。')
+            self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? '
+                            'WHERE guild_id=? AND user_id=? AND item_id=?',
+                            (quantity, guild, user, key))
+            self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
+                            'AND item_id=? AND quantity=0', (guild, user, key))
+
+    def grant_item(self, guild, user, key, quantity=1):
+        if key not in ITEMS or quantity < 1:
+            raise CharacterError('無效的物品。')
+        with self.db:
+            self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+                VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
+                DO UPDATE SET quantity=quantity+excluded.quantity''', (guild, user, key, quantity))
 
     def dispose(self, guild, user, key, quantity, recipient=None):
         """Transfer or sell only unequipped copies in one transaction."""

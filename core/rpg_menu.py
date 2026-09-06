@@ -103,6 +103,10 @@ class AdventureView(discord.ui.View):
             self.button('上一頁', 'previous', 1, self.index == 0)
             self.button('下一頁', 'next', 1, self.index == self.pages - 1)
             self.button('給予物品', 'give', 1)
+            counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
+            self.button('組合噴漆罐', 'combine_paint', 1,
+                        any(counts.get(key, 0) < 1 for key in ('paint:red', 'paint:yellow', 'paint:blue')))
+            self.button('使用噴漆罐套組', 'use_paint_set', 1, counts.get('paint:set', 0) < 1)
         if self.page != 'home':
             add_back(self, 2)
         self.button('重新整理', 'refresh', 2)
@@ -151,6 +155,7 @@ class AdventureView(discord.ui.View):
                 '初始裝備木棒；空手無法造成傷害。武器／套裝增加戰鬥數值，飾品增加基礎能力，同名限穿一件。進階裝備從商店購買；魔像專屬武器、妖樹專屬套裝僅由討伐掉落。\n\n'
                 '在頻道點擊報名，五分鐘後自動討伐；開戰前可調整裝備和技能。勝利獲得經驗、金幣與機率專屬物品（可重複），稀有史萊姆群報酬較高但不掉飾品；實際獎勵依公告。\n\n'
                 '失敗或回合上限：以怪物結束時已削減 HP 比例發放勝利經驗與金幣，無條件捨去，無掉落；多隻怪物合計血量。\n\n'
+                '集齊紅、黃、藍色噴漆罐後，可在背包組成噴漆罐套組並直接使用；中階討伐空閒時會消耗套組，在中階頻道召喚固定四階「城崎諾亞」並自動報名。諾亞裝備可在裝備面板消耗單色噴漆鑲嵌或改色。\n\n'
                 '討伐頻道動態難度：勝利緩慢增加，平手或戰敗依削減 HP 大幅下降，範圍 1–2.5 倍；HP／攻擊／防禦分別套用 100%／40%／10% 幅度。取消不調整，下一場套用；勝利經驗與金幣隨動態難度增加，掉落率不變。\n\n'
                 '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。穿戴中的那一件需先卸下。\n\n'
                 '生活頁可選擇時間開始釣魚，也能在中庭花圃種植，農耕 Lv.20 再解鎖可同步耕作的監獄菜園；釣魚與農耕都可設定完成私訊。魚與作物可製成自動回血料理，水草與藥草可製成整場增益藥水。\n\n'
@@ -197,6 +202,19 @@ class AdventureView(discord.ui.View):
                 self.closed = True
                 self.stop()
                 return
+            if action == 'use_paint_set' and self.page == 'backpack':
+                await interaction.response.defer()
+                try:
+                    channel, _, raid = await self.cog.raids.summon_noah(interaction.guild, self.owner)
+                    color = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}[raid['monster']['primary_color']]
+                    notice = f'已消耗噴漆罐套組，在 {channel.mention} 召喚四階城崎諾亞；起始顏料為{color}，你已自動報名。'
+                except CharacterError as exc:
+                    notice = str(exc)
+                except discord.HTTPException:
+                    notice = '特殊討伐發布失敗，噴漆罐套組已退回背包，請稍後再試。'
+                self.rebuild()
+                await interaction.edit_original_response(embed=self.embed(notice), view=self)
+                return
             notice = None
             try:
                 if action == 'job' and self.page == 'jobs' and value in JOBS:
@@ -208,6 +226,9 @@ class AdventureView(discord.ui.View):
                     granted = self.cog.characters.claim(self.guild_id, self.owner.id)
                     notice = ('已補發：' + '、'.join(ITEMS[key].name for key in granted)
                               if granted else '目前職業的免費補給都已在背包中。')
+                elif action == 'combine_paint' and self.page == 'backpack':
+                    item = self.cog.characters.combine_paint_set(self.guild_id, self.owner.id)
+                    notice = f'已消耗三色噴漆罐各 1，組合成 {item.name}。'
                 elif action == 'previous' and self.page == 'backpack':
                     self.index = max(0, self.index - 1)
                 elif action == 'next' and self.page == 'backpack':

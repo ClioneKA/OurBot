@@ -25,6 +25,8 @@ from core.settings import daily_periods
 logger = logging.getLogger(__name__)
 REGULAR_KINDS = ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王')
 MID_KINDS = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
+SPECIAL_KIND = '城崎諾亞'
+PAINT_COLOR_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
 
 
 def channel_ids(raw, label='RPG_RAID_CHANNEL_IDS'):
@@ -217,7 +219,8 @@ class RaidService:
                   '史萊姆群': '稀有史萊姆群，共用血量，每回合三次 45% 倍率撞擊；單體攻擊受嘲諷影響',
                   '深淵鐘龍': '蓄力時獲得鐘甲，直接命中可削減層數；鐘甲未破將釋放最高 300% 全體傷害；免疫暈眩',
                   '王城傀儡師': '劍傀儡護主、咒傀儡替本體減傷；每三回合修復，半血後吸收存活傀儡',
-                  '瘟疫縫合獸': '攻擊疊加腐敗，三層在行動前爆裂；腐敗者受到技能治療會使怪物回血，可淨化'}[raid['monster']['kind']]
+                  '瘟疫縫合獸': '攻擊疊加腐敗，三層在行動前爆裂；腐敗者受到技能治療會使怪物回血，可淨化',
+                  '城崎諾亞': '70% HP 前固定使用公告抽中的單色顏料；之後依紅 → 黃 → 藍輪替並累積未完成構圖，三色完成後蓄力未完成稿，可用盾擊打斷'}[raid['monster']['kind']]
         if raid['monster'].get('profile'):
             traits = {'巨獸': '血厚、攻擊高、防禦偏低、速度慢；每三回合對全隊橫掃',
                       '月影妖狐': '血薄、速度快、閃避高；每三回合月影斬：150% 單體攻擊，閃避率 +15% 至下一回合結束；精準射擊必中',
@@ -229,23 +232,30 @@ class RaidService:
                       '荊棘妖樹': '高血量、速度慢；每三回合回血 5%，隨機暈眩存活玩家的 33%（向下取整），可淨化',
                       '深淵鐘龍': '免疫暈眩；蓄力鐘甲須靠全隊直接命中擊碎，失敗將承受最高 300% 全體傷害',
                       '王城傀儡師': '本體與兩具傀儡各自獨立血量；善用群攻製造兩具傀儡同時倒下的破綻',
-                      '瘟疫縫合獸': '腐敗三層在行動前爆裂並波及全隊；淨化優先於治療可阻止共享血肉回血'}[raid['monster']['kind']]
+                      '瘟疫縫合獸': '腐敗三層在行動前爆裂並波及全隊；淨化優先於治療可阻止共享血肉回血',
+                      '城崎諾亞': '70% HP 前固定使用公告抽中的單色顏料；70% 以下從紅色開始依序調色，完成紅黃藍構圖後蓄力全體未完成稿；盾擊可打斷'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
-        requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') == 'mid' else ''
+        requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') in ('mid', 'special') else ''
         embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
+        if raid['monster']['kind'] == SPECIAL_KIND:
+            primary = PAINT_COLOR_NAMES[raid['monster']['primary_color']]
+            embed.add_field(name='階級／起始顏料', value=f'四階｜{primary}', inline=False)
         balance_version = raid['monster'].get('balance_version', 1)
         v2 = balance_version >= 2
-        scaling_text = ('；以階級與品質的固定內容等級為基準，人數只調整血量。'
+        scaling_text = ('；特殊討伐採固定四階強度，不套用品質或頻道動態難度，人數只調整血量。'
+                        if raid['monster']['kind'] == SPECIAL_KIND else
+                        '；以階級與品質的固定內容等級為基準，人數只調整血量。'
                         if balance_version >= 3 else
                         '；以內容階級為基準，隊伍平均等級主要調整血量並小幅調整攻擊。'
                         if v2 else '；開戰時按隊伍人數及等級決定強度。')
         embed.add_field(name='魔物特性', value=traits + scaling_text, inline=False)
         strength = raid['monster'].get('manual_strength', raid['monster'].get('strength', 1))
-        embed.add_field(name='強度倍率', value=f'{strength:g} 倍（管理員設定）' if v2
-                        else f'{strength:g} 倍（血量、攻擊、防禦）')
+        if raid['monster']['kind'] != SPECIAL_KIND:
+            embed.add_field(name='強度倍率', value=f'{strength:g} 倍（管理員設定）' if v2
+                            else f'{strength:g} 倍（血量、攻擊、防禦）')
         if raid.get('difficulty'):
             d = raid['difficulty']
             if balance_version >= 3:
@@ -262,6 +272,8 @@ class RaidService:
         category = '討伐飾品' if pool and all(ITEMS[key].slot == '飾品' for key in pool) else '專屬裝備'
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
                      else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
+        if raid['monster']['kind'] == SPECIAL_KIND:
+            loot_text += '；裝備有 50% 機率符合自身職業，皆帶一個顏料鑲嵌格；另有 2% 機率取得未完成的魔女畫作'
         if raid.get('fixed_drop'):
             if raid.get('fixed_drop_mode', 'per_participant') == 'single_random':
                 loot_text += f'；勝利時全隊固定掉落 1 個 {ITEMS[raid["fixed_drop"]].name}，隨機給一名參戰者'
@@ -298,7 +310,8 @@ class RaidService:
                                 f'依已削減血量 {percent:.2f}% 發放經驗與金幣（無條件捨去），無掉落。', inline=False)
             lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣'
                      + (f'、{ITEMS[r["item"]].name}' if r['item'] else '')
-                     + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '') for r in raid['rewards']]
+                     + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '')
+                     + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
             players = [fighter for fighter in battle.fighters if fighter.team == 0]
             players.sort(key=lambda fighter: (fighter.combat_stats['direct_damage']
@@ -319,7 +332,7 @@ class RaidService:
         message = channel.get_partial_message(raid['message_id'])
         settings = self.settings_for_channel(raid['channel_id'])
         if raid['status'] == 'lobby':
-            expected_channels = self.mid_channels if raid.get('pool') == 'mid' else self.channels
+            expected_channels = self.mid_channels if raid.get('pool') in ('mid', 'special') else self.channels
             if raid['channel_id'] not in expected_channels or not settings.enabled:
                 raid.update(status='cancelled', reason='討伐活動已停用。')
                 self.repo.save(raid)
@@ -336,7 +349,7 @@ class RaidService:
                     if not member or member.bot:
                         continue
                     state = self.cog.characters.snapshot(raid['guild_id'], uid)
-                    if raid.get('pool') == 'mid' and state['level'] < MID_RAID_MIN_LEVEL:
+                    if raid.get('pool') in ('mid', 'special') and state['level'] < MID_RAID_MIN_LEVEL:
                         continue
                     participants.append(dict(id=uid, name=safe_text(member.display_name, 16), state=state,
                                              rules=[asdict(r) for r in self.cog.tactics.rules(raid['guild_id'], uid, state['job'])]))
@@ -376,7 +389,8 @@ class RaidService:
                 for f in battle.fighters if f.team == 0) + '\n\n獎勵：\n' + '\n'.join(
                 f'{r["id"]}: {r["xp"]} XP, {r.get("gold", 0)} 金幣, '
                 f'{ITEMS[r["item"]].name if r["item"] else "無隨機掉落"}'
-                f'{", " + ITEMS[r["fixed_item"]].name if r.get("fixed_item") else ""}' for r in raid['rewards'])
+                f'{", " + ITEMS[r["fixed_item"]].name if r.get("fixed_item") else ""}'
+                f'{", " + ITEMS[r["extra_item"]].name if r.get("extra_item") else ""}' for r in raid['rewards'])
             await message.edit(embed=self.battle_embed(raid, battle), view=None,
                                attachments=[discord.File(io.BytesIO(report.encode('utf-8')), filename='討伐戰報.txt')],
                                allowed_mentions=discord.AllowedMentions.none())
@@ -456,6 +470,77 @@ class RaidService:
                     view.stop()
             if bag_draw:
                 self.repo.return_mid_kind(channel.id, kind)
+            raise
+        finally:
+            self.spawning.discard(channel.id)
+            self.spawn_tasks.discard(task)
+
+    async def summon_noah(self, guild, user):
+        """Consume a paint set and publish the fixed special raid in this guild's mid channel."""
+        if user.bot:
+            raise CharacterError('機器人不能召喚特殊討伐。')
+        state = self.cog.characters.snapshot(guild.id, user.id)
+        if state['level'] < MID_RAID_MIN_LEVEL:
+            raise CharacterError(f'使用噴漆罐套組需達 Lv.{MID_RAID_MIN_LEVEL}。')
+        channels = sorted((self.bot.get_channel(cid) for cid in self.mid_channels),
+                          key=lambda channel: channel.id if channel else 0)
+        channels = [channel for channel in channels if isinstance(channel, discord.TextChannel)
+                    and channel.guild.id == guild.id]
+        if not channels:
+            raise CharacterError('這個伺服器尚未設定中階討伐文字頻道。')
+        active = [raid for raid in self.repo.pending()
+                  if raid['guild_id'] == guild.id and raid.get('pool') in ('mid', 'special')
+                  and raid['status'] in ('posting', 'lobby', 'running')]
+        if active or any(channel.id in self.spawning for channel in channels):
+            raise CharacterError('目前已有中階討伐正在發布或進行，暫時不能使用噴漆罐套組。')
+        if any(raid['status'] in ('lobby', 'running') and user.id in raid.get('members', ())
+               for raid in self.repo.pending()):
+            raise CharacterError('你已參與另一場討伐，請先完成或退出。')
+        channel = next((item for item in channels if self.settings_for_channel(item.id).enabled), None)
+        if channel is None:
+            raise CharacterError('這個伺服器的中階討伐活動目前已停用。')
+        if guild.unavailable:
+            raise CharacterError('伺服器暫時無法使用，請稍後再試。')
+
+        self.spawning.add(channel.id)
+        task = asyncio.current_task()
+        self.spawn_tasks.add(task)
+        self.next_spawn(channel.id, time.time())
+        raid = None
+        consumed = False
+        try:
+            primary_color = random.choice(('red', 'yellow', 'blue'))
+            monster = prepare_monster(dict(
+                kind=SPECIAL_KIND, name=SPECIAL_KIND, strength=1.0, primary_color=primary_color,
+                description='她把王城牆面當成畫布，單色顏料逐漸交疊成一幅危險的未完成構圖。'), quality='普通')
+            settings = self.settings_for_channel(channel.id)
+            raid = self.repo.create(guild.id, channel.id, monster, time.time(), asdict(settings),
+                                    pool='special', use_dynamic=False)
+            raid['members'] = [user.id]
+            self.repo.save(raid)
+            self.cog.characters.consume_item(guild.id, user.id, 'paint:set')
+            consumed = True
+            role = None
+            try:
+                role = await self.notifications.ensure(guild, 'mid')
+            except (CharacterError, discord.HTTPException) as exc:
+                logger.warning('Raid notification role unavailable for guild %s: %s', guild.id, exc)
+            message = await channel.send(content=role.mention if role else None,
+                                         embed=self.lobby_embed(raid), view=self.signup(raid),
+                                         allowed_mentions=discord.AllowedMentions(everyone=False, users=False,
+                                                                                 roles=[role] if role else [], replied_user=False))
+            raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
+            self.repo.save(raid)
+            return channel, message, raid
+        except (Exception, asyncio.CancelledError):
+            if consumed:
+                self.cog.characters.grant_item(guild.id, user.id, 'paint:set')
+            if raid is not None:
+                raid.update(status='cancelled', delivered=True)
+                self.repo.save(raid)
+                view = self.views.pop(raid['id'], None)
+                if view:
+                    view.stop()
             raise
         finally:
             self.spawning.discard(channel.id)

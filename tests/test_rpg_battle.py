@@ -13,6 +13,39 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_noah_colour_transition_composition_and_shield_interrupt(self):
+        knight = fighter('騎士', job='騎士', hp=5000, attack=80, rules=[])
+        ally = fighter('隊友', hp=5000, attack=80, rules=[])
+        noah = fighter('城崎諾亞', 1, job='城崎諾亞', hp=10000, attack=100, rules=[])
+        battle = Battle([knight, ally, noah], seed=2)
+        battle.mechanics.update(noah_primary_color='yellow', noah_color_index=0,
+                                noah_composition=0, noah_draft_charging=False)
+        battle.round = 1
+        battle.act(noah)
+        self.assertEqual(noah.combat_stats['skills_used'], {'黃色顏料罐': 1})
+        self.assertLess(knight.hp, knight.stats['HP'])
+        self.assertLess(ally.hp, ally.stats['HP'])
+
+        noah.hp = 7000
+        battle.round = 2
+        battle.act(noah)
+        self.assertTrue(battle.mechanics['noah_phase_two'])
+        self.assertEqual((battle.mechanics['noah_color_index'], battle.mechanics['noah_composition']), (1, 1))
+        battle.round = 3
+        battle.act(noah)
+        battle.round = 4
+        battle.act(noah)
+        self.assertTrue(battle.mechanics['noah_draft_charging'])
+        self.assertEqual(battle.mechanics['noah_composition'], 3)
+
+        battle.round = 5
+        bash = SKILLS['騎士'][3]
+        battle.use_skill(knight, Rule(4, 4, True, 'always', 'lowest'), bash, noah)
+        self.assertFalse(battle.mechanics['noah_draft_charging'])
+        self.assertEqual((battle.mechanics['noah_color_index'], battle.mechanics['noah_composition']), (0, 0))
+        self.assertTrue(noah.has('break', 6))
+        self.assertIn('被打斷', battle.log[-1])
+
     def test_clock_dragon_armor_requires_hits_and_survives_restart(self):
         player = fighter('弓兵', job='弓兵', attack=100, rules=[])
         dragon = fighter('深淵鐘龍', 1, job='深淵鐘龍', hp=5000, rules=[])

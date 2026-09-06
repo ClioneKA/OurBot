@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 
 from core.rpg import level_for
-from core.rpg_character import CharacterError
+from core.rpg_character import CharacterError, NOAH_EQUIPMENT
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -14,6 +14,7 @@ MID_RAID_MIN_LEVEL = 30
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
 DROP_TABLES = {
+    '城崎諾亞': tuple(key for keys in NOAH_EQUIPMENT.values() for key in keys),
     '深淵鐘龍': ('clock:infantry', 'clock:knight', 'clock:archer', 'clock:monk'),
     '王城傀儡師': ('puppet:twin_charm',),
     '瘟疫縫合獸': ('plague:axe', 'plague:sword_shield', 'plague:bow', 'plague:staff'),
@@ -86,7 +87,8 @@ class RaidStore:
             return 1.0
         return row[0]
 
-    def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None, pool='regular'):
+    def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None,
+               pool='regular', use_dynamic=True):
         if 'quality' in monster:
             from dataclasses import asdict
             from core.settings import RaidSettings
@@ -111,11 +113,11 @@ class RaidStore:
                     seed=random.randrange(2**31), participants=[], delivered=False, reward_policy=reward_policy,
                     drop_version=6, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
                     fixed_drop=FIXED_DROPS.get(monster['kind']),
-                    fixed_drop_mode='single_random', pool=pool)
+                    fixed_drop_mode='single_random', pool=pool, no_dynamic=not use_dynamic)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             balance_version = monster.get('balance_version', 1)
-            dynamic = self.difficulty(guild, channel, balance_version)
+            dynamic = self.difficulty(guild, channel, balance_version) if use_dynamic else 1.0
             if reward_policy is not None:
                 # Freeze final rewards at announcement; explicit admin amounts remain final.
                 policy = dict(reward_policy)
@@ -132,7 +134,8 @@ class RaidStore:
                                        difficulty_multiplier=dynamic)
             else:
                 raid['monster'] = dict(monster, strength=round(base_strength * dynamic, 6))
-            raid['difficulty'] = dict(current=dynamic, base_strength=base_strength)
+            if use_dynamic:
+                raid['difficulty'] = dict(current=dynamic, base_strength=base_strength)
             self.db.execute('INSERT INTO rpg_raids(id,guild_id,channel_id,status,data) VALUES (?,?,?,?,?)',
                             (raid['id'], guild, channel, raid['status'], json.dumps(raid, ensure_ascii=False)))
         return raid
@@ -198,7 +201,7 @@ class RaidStore:
             else:
                 if user in raid['members']:
                     raise CharacterError('你已經報名了。')
-                if raid.get('pool') == 'mid' and level_for(self.store.xp(guild, user)) < MID_RAID_MIN_LEVEL:
+                if raid.get('pool') in ('mid', 'special') and level_for(self.store.xp(guild, user)) < MID_RAID_MIN_LEVEL:
                     raise CharacterError(f'中階討伐需達 Lv.{MID_RAID_MIN_LEVEL} 才能參加。')
                 if len(raid['members']) >= maximum:
                     raise CharacterError('討伐隊伍已滿。')
@@ -242,7 +245,12 @@ class RaidStore:
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < settings.drop_chance:
-                    drop = rng.choice(pool)
+                    if raid['monster']['kind'] == '城崎諾亞':
+                        own = list(NOAH_EQUIPMENT.get(p['state']['job'], ()))
+                        other = [key for key in pool if key not in own]
+                        drop = rng.choice(own if own and rng.random() < 0.5 else other or own)
+                    else:
+                        drop = rng.choice(pool)
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], drop))
@@ -259,9 +267,17 @@ class RaidStore:
                     self.db.execute('INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
                                     (raid['guild_id'], p['id'], gold))
+                extra_item = None
+                if victory and raid['monster']['kind'] == '城崎諾亞' and rng.random() < 0.02:
+                    extra_item = 'noah:unfinished'
+                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
+                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
+                                    (raid['guild_id'], p['id'], extra_item))
                 reward = dict(id=p['id'], xp=xp, gold=gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
+                if extra_item:
+                    reward['extra_item'] = extra_item
                 rewards.append(reward)
             raid.update(status='completed', battle=battle_data, rewards=rewards)
             difficulty = raid.get('difficulty', {}).get('current', 1.0)
@@ -298,7 +314,7 @@ class RaidStore:
                      json.dumps(stats.get('skills_used', {}), ensure_ascii=False),
                      stats.get('direct_damage', stats.get('damage_dealt', 0)),
                      stats.get('support_damage', 0)))
-            if raid['participants']:
+            if raid['participants'] and not raid.get('no_dynamic'):
                 balance_version = raid['monster'].get('balance_version', 1)
                 before = self.difficulty(raid['guild_id'], raid['channel_id'], balance_version)
                 if balance_version >= 2:
