@@ -259,6 +259,12 @@ class Fighter:
     food_used: bool = False
     food_regen_left: int = 0
     food_regen_start: int = 0
+    fortune_card: str = ''
+    damage_dealt_percent: int = 0
+    damage_taken_percent: int = 0
+    healing_received_percent: int = 0
+    cooldown_reduction: int = 0
+    linked_user_id: int | None = None
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -306,16 +312,19 @@ class Battle:
         return 0
 
     def damage_dealt_multiplier(self, actor):
-        return 1.0
+        return (100 + actor.damage_dealt_percent) / 100
 
     def damage_taken_multiplier(self, target):
-        return 1.0
+        percent = target.damage_taken_percent
+        if target.has('fortune_hermit_guard', self.round):
+            percent -= 25
+        return max(0, 100 + percent) / 100
 
     def healing_done_multiplier(self, actor):
         return 1.0
 
     def healing_received_multiplier(self, target):
-        return 1.0
+        return max(0, 100 + target.healing_received_percent) / 100
 
     def heal(self, actor, target, requested, trigger_share=True):
         requested = max(0, int(requested * self.healing_done_multiplier(actor)
@@ -359,6 +368,46 @@ class Battle:
         if target.food_regen_permille and target.food_regen_rounds:
             target.food_regen_left = target.food_regen_rounds
             target.food_regen_start = self.round + 1
+
+    def apply_damage(self, target, damage, share_link=True):
+        """Apply final damage, including tarot survival and Lovers sharing."""
+        partner = None
+        if share_link and target.team == 0 and target.linked_user_id is not None:
+            partner = next((fighter for fighter in self.living(0)
+                            if fighter.user_id == target.linked_user_id and fighter is not target), None)
+
+        def apply_one(victim, requested):
+            before = victim.hp
+            actual = min(before, max(0, int(requested)))
+            if (actual >= before and before > 0 and victim.fortune_card == 'judgement'
+                    and not victim.effects.get('fortune_judgement_used')):
+                actual = max(0, before - 1)
+                victim.effects['fortune_judgement_used'] = True
+                self.log.append(f'{victim.name} 的【審判】生效，在致死傷害中保留 1 HP。')
+            victim.hp -= actual
+            victim.combat_stats['damage_taken'] += actual
+            if actual and victim.hp == 0:
+                victim.combat_stats['deaths'] += 1
+            if (before * 100 > victim.stats['HP'] * 40
+                    and victim.hp * 100 <= victim.stats['HP'] * 40
+                    and victim.fortune_card == 'hermit'
+                    and not victim.effects.get('fortune_hermit_used')):
+                victim.effects['fortune_hermit_used'] = True
+                victim.effects['fortune_hermit_guard'] = self.round + 1
+                self.log.append(f'{victim.name} 的【隱者】生效，獲得 25% 減傷至第 {self.round + 1} 回合結束。')
+            return actual
+
+        if partner is None:
+            target_actual, partner_actual = apply_one(target, damage), 0
+        else:
+            target_actual = apply_one(target, (damage + 1) // 2)
+            partner_actual = apply_one(partner, damage // 2)
+            self.log.append(f'{target.name} 與 {partner.name} 的【戀人】連結分攤傷害：'
+                            f'{target_actual}／{partner_actual} HP。')
+        self.maybe_eat(target)
+        if partner is not None:
+            self.maybe_eat(partner)
+        return target_actual, partner, partner_actual
 
     def living(self, team):
         return [f for f in self.fighters if f.team == team and f.hp > 0]
@@ -524,24 +573,27 @@ class Battle:
         break_assist = max(0, broken_actual - base_actual) if broken else 0
         bless_assist = max(0, pre_vulnerable_actual - broken_actual) if blessed else 0
         vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
-        target.hp = max(0, target.hp - damage)
+        target_actual, partner, partner_actual = self.apply_damage(target, damage)
+        actual_damage = target_actual + partner_actual
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
         actor.combat_stats['damage_dealt'] += actual_damage
-        actor.combat_stats['direct_damage'] += actual_damage - break_assist - bless_assist - vulnerable_assist
+        remaining_credit = actual_damage
         for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor),
                                          ('vulnerable', vulnerable_assist, target)):
+            amount = min(amount, remaining_credit)
             if not amount:
                 continue
+            remaining_credit -= amount
             source = self.effect_source(affected, effect)
             if source is None:
                 actor.combat_stats['direct_damage'] += amount
             else:
                 source.combat_stats['support_damage'] += amount
-        target.combat_stats['damage_taken'] += actual_damage
-        if actual_damage and target.hp == 0:
-            actor.combat_stats['knockouts'] += 1
-            target.combat_stats['deaths'] += 1
+        actor.combat_stats['direct_damage'] += remaining_credit
+        actor.combat_stats['knockouts'] += int(target_actual and target.hp == 0)
+        if partner is not None:
+            actor.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
                         f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}'
                         f'{"（套裝減傷）" if guarded else ""}{"，倒下" if target.hp == 0 else ""}')
@@ -559,7 +611,6 @@ class Battle:
             else:
                 target.effect_sources.pop('vulnerable', None)
             self.log.append(f'{target.name} 陷入易傷，受到的直接傷害 +{actor.vulnerable_percent}% 至第 {self.round + 1} 回合結束。')
-        self.maybe_eat(target)
         drain = actor.lifesteal if lifesteal is None else lifesteal
         healing = self.heal(actor, actor, actual_damage * drain // 100)
         if healing > 0 and actor.hp > 0:
@@ -586,7 +637,8 @@ class Battle:
                 self.record_skill(actor, '終末鐘聲')
                 self.log.append(f'{actor.name} 釋放【終末鐘聲】：剩餘 {layers} 層鐘甲，全體 {power * 100:g}% 傷害！')
                 for enemy in self.living(0):
-                    self.hit(actor, enemy, power)
+                    if enemy.hp > 0:
+                        self.hit(actor, enemy, power)
             self.mechanics['next_clock_charge'] = self.round + (2 if self.mechanics.get('clock_phase_two') else 3)
             return
         if self.round >= self.mechanics.get('next_clock_charge', 3):
@@ -624,7 +676,8 @@ class Battle:
                 power += 0.25 * int(actor.lifesteal >= 20)
                 self.log.append(f'{actor.name} 使用【王城謝幕】')
                 for enemy in self.living(0):
-                    self.hit(actor, enemy, power)
+                    if enemy.hp > 0:
+                        self.hit(actor, enemy, power)
                 return
         elif self.round % 3 == 0:
             self.record_skill(actor, '重編絲線')
@@ -659,7 +712,8 @@ class Battle:
             self.record_skill(actor, '未完成稿')
             self.log.append(f'{actor.name} 完成【未完成稿】：對全隊造成 180% 傷害！')
             for enemy in self.living(0):
-                self.hit(actor, enemy, 1.8)
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 1.8)
             return
 
         phase_two = self.mechanics.get('noah_phase_two', False)
@@ -673,7 +727,8 @@ class Battle:
         if color == 'yellow':
             self.log.append(f'{actor.name} 潑灑【黃色顏料罐】：對全隊造成 {power * 100:g}% 傷害！')
             for enemy in self.living(0):
-                self.hit(actor, enemy, power)
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, power)
         else:
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
             self.log.append(f'{actor.name} 使用【{color_name}顏料罐】')
@@ -712,7 +767,8 @@ class Battle:
             self.record_skill(actor, '旋刃')
             self.log.append(f'{actor.name} 使用【旋刃】')
             for enemy in self.living(0):
-                self.hit(actor, enemy, 0.55)
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 0.55)
             return
         if actor.team == 1 and actor.job == '咒傀儡' and self.round % 3 == 0:
             self.record_skill(actor, '斷線咒')
@@ -799,7 +855,8 @@ class Battle:
             self.record_skill(actor, '震地橫掃')
             self.log.append(f'{actor.name} 使用【震地橫掃】')
             for enemy in self.living(0):
-                self.hit(actor, enemy, 0.75)
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 0.75)
             return
         selected = self.select(actor)
         if not selected:
@@ -823,7 +880,8 @@ class Battle:
         modes can call this method after validating a player's explicit choice.
         """
         self.record_skill(actor, skill.name)
-        actor.ready[rule.slot] = self.round + skill.cooldown + 1
+        cooldown = max(1, skill.cooldown - actor.cooldown_reduction)
+        actor.ready[rule.slot] = self.round + cooldown + 1
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
         if effect in ('group_heal', 'rally'):
@@ -860,7 +918,8 @@ class Battle:
             self.log.append(f'{target.name} 獲得效果，持續至第 {self.round + 1} 回合結束')
         elif effect in ('area', 'cleave'):
             for enemy in self.living(1 - actor.team):
-                self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.8)
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.8)
         elif effect in ('double', 'triple'):
             for _ in range(3 if effect == 'triple' else 2):
                 if target.hp > 0:
@@ -909,22 +968,12 @@ class Battle:
             if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
                 actor.status_stacks.pop('corruption', None)
                 damage = max(1, actor.stats['HP'] * 12 // 100)
-                actual = min(actor.hp, damage)
-                actor.hp -= actual
-                actor.combat_stats['damage_taken'] += actual
-                if actual and actor.hp == 0:
-                    actor.combat_stats['deaths'] += 1
+                actual, _, _ = self.apply_damage(actor, damage)
                 self.log.append(f'{actor.name} 的【腐敗爆裂】：自身損失 {actual} HP，腐敗歸零。')
-                self.maybe_eat(actor)
                 for ally in [f for f in self.living(0) if f is not actor]:
                     splash = max(1, ally.stats['HP'] * 3 // 100)
-                    taken = min(ally.hp, splash)
-                    ally.hp -= taken
-                    ally.combat_stats['damage_taken'] += taken
-                    if taken and ally.hp == 0:
-                        ally.combat_stats['deaths'] += 1
+                    taken, _, _ = self.apply_damage(ally, splash)
                     self.log.append(f'{ally.name} 受到腐敗波及，損失 {taken} HP。')
-                    self.maybe_eat(ally)
                 beast = next((f for f in self.living(1) if f.job == '瘟疫縫合獸'), None)
                 if beast is not None:
                     rate = 2 if self.mechanics.get('plague_phase_two') else 1.5
@@ -946,19 +995,17 @@ class Battle:
                 # PvE poison only targets the opposing team: monsters poison players
                 # for 5%, while player poison arrows damage monsters for 2%.
                 damage = max(1, actor.stats['HP'] // (20 if actor.team == 0 else 50))
-                actual_damage = min(actor.hp, damage)
-                actor.hp = max(0, actor.hp - damage)
-                actor.combat_stats['damage_taken'] += actual_damage
+                actual_damage, partner, partner_damage = self.apply_damage(actor, damage)
+                total_damage = actual_damage + partner_damage
                 source = self.effect_source(actor, 'poison')
                 if source is not None and source is not actor:
-                    source.combat_stats['damage_dealt'] += actual_damage
-                    source.combat_stats['support_damage'] += actual_damage
-                if actual_damage and actor.hp == 0:
-                    actor.combat_stats['deaths'] += 1
-                    if source is not None and source is not actor:
-                        source.combat_stats['knockouts'] += 1
+                    source.combat_stats['damage_dealt'] += total_damage
+                    source.combat_stats['support_damage'] += total_damage
+                if source is not None and source is not actor:
+                    source.combat_stats['knockouts'] += int(actual_damage and actor.hp == 0)
+                    if partner is not None:
+                        source.combat_stats['knockouts'] += int(partner_damage and partner.hp == 0)
                 self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
-                self.maybe_eat(actor)
                 if self.check_end():
                     break
                 if actor.hp == 0:
@@ -1039,6 +1086,93 @@ def raid_battle(participants, monster, seed):
                 fighter.hp = fighter.stats['HP']
             provision_logs.append(
                 f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
+    fortune_logs = []
+    fortune_rng = random.Random(f'{seed}:divination')
+
+    def percent_stat(fighter, stat, percent):
+        before = fighter.stats[stat]
+        fighter.stats[stat] = max(1 if stat == 'HP' else 0, before * (100 + percent) // 100)
+        if stat == 'HP':
+            fighter.hp = fighter.stats['HP']
+
+    for fighter, participant in zip(fighters, participants):
+        fortune = participant.get('fortune') or {}
+        card = fortune.get('id')
+        if not card:
+            continue
+        fighter.fortune_card = card
+        if card == 'strength':
+            percent_stat(fighter, '攻擊', 6)
+        elif card == 'emperor':
+            percent_stat(fighter, '防禦', 6)
+        elif card == 'empress':
+            percent_stat(fighter, 'HP', 6)
+        elif card == 'star':
+            percent_stat(fighter, '治療量', 8)
+            fighter.healing_received_percent = 5
+        elif card == 'chariot':
+            fighter.speed += 8
+            fighter.stats['命中率'] = min(150, fighter.stats['命中率'] + 3)
+        elif card == 'moon':
+            fighter.stats['閃避率'] = min(40, fighter.stats['閃避率'] + 4)
+        elif card == 'sun':
+            fighter.stability = (min(fighter.stability[1], fighter.stability[0] + 8), fighter.stability[1])
+        elif card == 'justice':
+            fighter.damage_dealt_percent = 6
+            fighter.damage_taken_percent = 4
+        elif card == 'hanged_man':
+            fighter.speed = max(1, fighter.speed - 10)
+            percent_stat(fighter, '防禦', 10)
+        elif card == 'devil':
+            percent_stat(fighter, '攻擊', 10)
+            percent_stat(fighter, '治療量', 10)
+            fighter.healing_received_percent = -20
+        elif card == 'tower':
+            percent_stat(fighter, 'HP', -10)
+            percent_stat(fighter, '攻擊', 12)
+            fighter.stats['暴擊率'] = min(50, fighter.stats['暴擊率'] + 5)
+        elif card == 'death':
+            fighter.lifesteal += 5
+        elif card == 'magician':
+            fighter.cooldown_reduction = 1
+        elif card == 'fool':
+            stats = ['HP', '攻擊', '防禦', '治療量', '速度', '命中率', '閃避率', '暴擊率']
+            raised = fortune_rng.sample(stats, 2)
+            lowered = fortune_rng.choice([stat for stat in stats if stat not in raised])
+            for stat in raised:
+                if stat == '速度':
+                    fighter.speed = max(1, fighter.speed * 110 // 100)
+                else:
+                    percent_stat(fighter, stat, 10)
+            if lowered == '速度':
+                fighter.speed = max(1, fighter.speed * 90 // 100)
+            else:
+                percent_stat(fighter, lowered, -10)
+            fortune['fool_result'] = dict(raised=raised, lowered=lowered)
+        elif card == 'world':
+            for stat in ('HP', '攻擊', '防禦', '治療量', '命中率', '閃避率', '暴擊率'):
+                percent_stat(fighter, stat, 10)
+            fighter.speed = max(1, fighter.speed * 110 // 100)
+        for stat, cap in stat_caps.items():
+            fighter.stats[stat] = min(cap, fighter.stats[stat])
+        fortune_logs.append(f'{fighter.name} 的占卜【{fortune.get("name", card)}】生效；本場結算經驗 +10%。')
+
+    # Lovers form exclusive two-person links.  A linked teammate cannot be
+    # selected by another Lovers card, keeping damage sharing non-recursive.
+    linked = set()
+    for fighter in fighters[:len(participants)]:
+        if fighter.fortune_card != 'lovers' or fighter.user_id in linked:
+            continue
+        candidates = [ally for ally in fighters[:len(participants)]
+                      if ally is not fighter and ally.user_id not in linked]
+        if not candidates:
+            fortune_logs.append(f'{fighter.name} 的【戀人】找不到可以締結連結的隊友。')
+            continue
+        partner = fortune_rng.choice(candidates)
+        fighter.linked_user_id = partner.user_id
+        partner.linked_user_id = fighter.user_id
+        linked.update((fighter.user_id, partner.user_id))
+        fortune_logs.append(f'{fighter.name} 的【戀人】與 {partner.name} 締結連結，共享受到的傷害。')
     participant_average = sum(p['state']['level'] for p in participants) / len(participants)
     average = participant_average
     profile = monster.get('profile')
@@ -1131,6 +1265,7 @@ def raid_battle(participants, monster, seed):
                                 noah_composition=0, noah_draft_charging=False)
     battle.log.extend(badge_logs)
     battle.log.extend(provision_logs)
+    battle.log.extend(fortune_logs)
     return battle
 
 
@@ -1170,6 +1305,12 @@ def load_battle(data):
         f.food_used = data_f.get('food_used', False)
         f.food_regen_left = data_f.get('food_regen_left', 0)
         f.food_regen_start = data_f.get('food_regen_start', 0)
+        f.fortune_card = data_f.get('fortune_card', '')
+        f.damage_dealt_percent = data_f.get('damage_dealt_percent', 0)
+        f.damage_taken_percent = data_f.get('damage_taken_percent', 0)
+        f.healing_received_percent = data_f.get('healing_received_percent', 0)
+        f.cooldown_reduction = data_f.get('cooldown_reduction', 0)
+        f.linked_user_id = data_f.get('linked_user_id')
         saved_stats = data_f.get('combat_stats', {})
         f.combat_stats = empty_combat_stats()
         for key in f.combat_stats:

@@ -59,6 +59,11 @@ class RPGStore:
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             gold INTEGER NOT NULL DEFAULT 0 CHECK (gold >= 0),
             PRIMARY KEY (guild_id, user_id))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_divinations (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            day TEXT NOT NULL, draws INTEGER NOT NULL DEFAULT 0,
+            card TEXT, bound_raid_id TEXT, summon_raid_id TEXT,
+            PRIMARY KEY(guild_id,user_id))''')
         self.db.commit()
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_daily_xp (

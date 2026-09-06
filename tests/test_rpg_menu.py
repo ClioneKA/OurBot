@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import discord
 from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
+from core.rpg_divination import Divinations
 from core.rpg_menu import AdventureView
 from core.settings import RPGSettings
 
@@ -20,7 +21,9 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.store.close)
         settings = RPGSettings()
         self.characters = Characters(self.store, settings)
+        self.divinations = Divinations(self.store)
         self.cog = SimpleNamespace(characters=self.characters, settings=settings, menu_views=WeakSet(),
+                                   divinations=self.divinations,
                                    character_embed=lambda *args: discord.Embed(title='角色'))
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
             response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
@@ -92,3 +95,16 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         notice = self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value
         self.assertIn('尚未開放', notice)
         self.assertIn('沒有消耗', notice)
+
+    async def test_movement_page_opens_mag_divination_room(self):
+        labels = [child.label for child in self.view.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('移動', labels)
+        await self.view.handle(self.interaction, 'travel')
+        travel = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(travel.stop)
+        self.assertIn('移動', travel.embed().title)
+        await travel.handle(self.interaction, 'divination')
+        room = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(room.stop)
+        self.assertIn('寶生瑪格的占卜室', room.embed().title)
+        self.assertIn('300 金幣', room.embed().description)

@@ -361,10 +361,19 @@ class RaidService:
                         continue
                     participants.append(dict(id=uid, name=safe_text(member.display_name, 16), state=state,
                                              rules=[asdict(r) for r in self.cog.tactics.rules(raid['guild_id'], uid, state['job'])]))
+                divinations = getattr(self.cog, 'divinations', None)
+                fortunes = (divinations.prepare_for_raid(
+                    raid['id'], raid['guild_id'], [participant['id'] for participant in participants])
+                    if participants and divinations is not None else {})
+                for participant in participants:
+                    if participant['id'] in fortunes:
+                        participant['fortune'] = fortunes[participant['id']]
                 provisions = getattr(self.cog, 'provisions', None)
                 if participants and provisions is not None:
                     prepared = provisions.prepare_for_raid(
-                        raid['id'], raid['guild_id'], [participant['id'] for participant in participants])
+                        raid['id'], raid['guild_id'], [participant['id'] for participant in participants],
+                        preserve_users=[participant['id'] for participant in participants
+                                        if participant.get('fortune', {}).get('id') == 'temperance'])
                     for participant in participants:
                         participant['provisions'] = prepared.get(participant['id'], {})
                 raid['participants'] = participants
@@ -412,7 +421,8 @@ class RaidService:
         self.next_spawn(raid['channel_id'], now)
 
     async def spawn(self, channel, *, kind=None, name=None, strength=1.0,
-                    victory_xp=None, victory_gold=None, drop_percent=None):
+                    victory_xp=None, victory_gold=None, drop_percent=None,
+                    initial_member=None, return_raid=False):
         if kind is not None and kind not in REGULAR_KINDS + MID_KINDS:
             raise CharacterError('無效的怪物類型。')
         if not 0.1 <= strength <= 10:
@@ -457,6 +467,8 @@ class RaidService:
             monster = prepare_monster(monster)
             raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(settings), overrides,
                                     pool=pool)
+            if initial_member is not None:
+                raid['members'] = [initial_member]
             raid['bag_draw'] = bag_draw
             self.repo.save(raid)
             role = None
@@ -470,7 +482,7 @@ class RaidService:
                                                                                  roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
-            return message
+            return (message, raid) if return_raid else message
         except (Exception, asyncio.CancelledError):
             if raid is not None:
                 raid.update(status='cancelled', delivered=True)
@@ -484,6 +496,41 @@ class RaidService:
         finally:
             self.spawning.discard(channel.id)
             self.spawn_tasks.discard(task)
+
+    async def summon_divination(self, guild, user):
+        """Use the High Priestess to publish and join the highest eligible raid pool."""
+        if user.bot:
+            raise CharacterError('機器人不能使用占卜發起討伐。')
+        state = self.cog.characters.snapshot(guild.id, user.id)
+        pool = 'mid' if state['level'] >= MID_RAID_MIN_LEVEL else 'regular'
+        channel_ids = self.mid_channels if pool == 'mid' else self.channels
+        channels = sorted((self.bot.get_channel(channel_id) for channel_id in channel_ids),
+                          key=lambda channel: channel.id if channel else 0)
+        channels = [channel for channel in channels if isinstance(channel, discord.TextChannel)
+                    and channel.guild.id == guild.id and self.settings_for_channel(channel.id).enabled]
+        if not channels:
+            label = '中階' if pool == 'mid' else '一般'
+            raise CharacterError(f'這個伺服器尚未設定已啟用的{label}討伐文字頻道。')
+        if guild.unavailable:
+            raise CharacterError('伺服器暫時無法使用，請稍後再試。')
+        if any(raid['status'] in ('lobby', 'running') and user.id in raid.get('members', ())
+               for raid in self.repo.pending()):
+            raise CharacterError('你已參與另一場討伐，請先完成或退出。')
+        occupied = {raid['channel_id'] for raid in self.repo.pending()
+                    if raid['status'] in ('posting', 'lobby', 'running')}
+        channel = next((item for item in channels
+                        if item.id not in occupied and item.id not in self.spawning), None)
+        if channel is None:
+            raise CharacterError(f'目前所有可用的{"中階" if pool == "mid" else "一般"}討伐頻道都有活動，請稍後再試。')
+
+        self.cog.divinations.reserve_summon(guild.id, user.id)
+        try:
+            _, raid = await self.spawn(channel, initial_member=user.id, return_raid=True)
+            self.cog.divinations.finish_summon(guild.id, user.id, raid['id'])
+            return channel, raid
+        except (Exception, asyncio.CancelledError):
+            self.cog.divinations.release_summon(guild.id, user.id)
+            raise
 
     async def summon_noah(self, guild, user):
         """Consume a paint set and publish the fixed special raid in this guild's mid channel."""
@@ -573,6 +620,9 @@ class RaidService:
                 raid = self.repo.get(raid['id'])
                 if raid['status'] != 'completed':
                     raid['status'] = 'cancelled'
+                    divinations = getattr(self.cog, 'divinations', None)
+                    if divinations is not None:
+                        divinations.clear_raid(raid['id'])
                 raid['delivered'] = True
                 self.repo.save(raid)
                 self.next_spawn(raid['channel_id'], now)

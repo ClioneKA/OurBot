@@ -45,6 +45,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'use_items':
         from core.rpg_item_use_view import ItemUseView
         next_view = ItemUseView(view.cog, view.origin)
+    elif page == 'divination':
+        from core.rpg_divination_view import DivinationView
+        next_view = DivinationView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -81,12 +84,14 @@ class AdventureView(discord.ui.View):
         if self.page == 'home':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
                 ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('生活', 'life'),
-                ('說明', 'help'))):
+                ('移動', 'travel'), ('說明', 'help'))):
                 self.button(label, action, i // 3)
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
             self.button('農耕', 'farming', 0)
             self.button('料理／煉金', 'provisions', 0)
+        elif self.page == 'travel':
+            self.button('寶生瑪格的占卜室', 'divination', 0)
         elif self.page == 'jobs':
             from core.rpg_equipment_view import PanelSelect
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
@@ -139,6 +144,11 @@ class AdventureView(discord.ui.View):
                 '**釣魚**：選擇釣場與時間開始釣魚，完成後收竿取得漁獲並提升獨立的釣魚等級。\n'
                 '**農耕**：中庭花圃自 Lv.1 開放，監獄菜園／廢棄溫室自 Lv.20／40 開放；可種植已解鎖植物，等級越高收成越多。\n'
                 '**料理／煉金**：使用釣魚與農耕素材製作料理及藥水；攜帶設定在裝備／能力的討伐補給。', color=0x38BDF8)
+        elif self.page == 'travel':
+            embed = discord.Embed(title='安安大冒險｜移動', description=
+                '**寶生瑪格的占卜室**\n'
+                '支付金幣抽取一張塔羅牌，讓下一場討伐獲得特殊效果與額外經驗。\n'
+                '每日不限次數，但每次占卜都會比前一次多花 300 金幣。', color=0x6D3A8D)
         elif self.page == 'jobs':
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
             embed = discord.Embed(title='安安大冒險｜轉職', description=
@@ -159,6 +169,7 @@ class AdventureView(discord.ui.View):
                 '討伐頻道動態難度：勝利緩慢增加，平手或戰敗依削減 HP 大幅下降，範圍 1–2.5 倍；HP／攻擊／防禦分別套用 100%／40%／10% 幅度。取消不調整，下一場套用；勝利經驗與金幣隨動態難度增加，掉落率不變。\n\n'
                 '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。穿戴中的那一件需先卸下。\n\n'
                 '生活頁可選擇時間開始釣魚，也能在已解鎖農地種植；Lv.40 可前往監獄地下水路，並解鎖第三塊農地廢棄溫室。釣魚與農耕都可設定完成私訊。魚與作物可製成自動回血料理，水草與藥草可製成整場增益藥水。\n\n'
+                '移動頁可前往寶生瑪格的占卜室；每天可不限次數支付逐次提高的金幣抽牌，為下一場討伐取得特殊效果與 10% 額外經驗。\n\n'
                 '使用 /討伐通知 分別領取一般或中階出怪通知，也可一次操作全部。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
             embed.add_field(name='基礎能力效果（含飾品加成）', value=
                 '生命力：每點最大 HP +10（另有基礎 50 HP）。\n'
@@ -193,8 +204,8 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'fishing',
-                          'farming', 'provisions', 'help', 'give', 'use_items'):
+            if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'travel',
+                          'divination', 'fishing', 'farming', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

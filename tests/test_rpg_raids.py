@@ -13,12 +13,40 @@ import discord
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError
+from core.rpg_divination import Divinations
 from core.rpg_raids import RaidService, RaidSignup, channel_ids
 from core.rpg_raid_store import RaidStore, DROP_TABLES
 from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
 class RaidTests(unittest.IsolatedAsyncioTestCase):
+    async def test_high_priestess_summons_highest_eligible_pool_and_auto_joins(self):
+        class FakeChannel:
+            def __init__(self, channel_id):
+                self.id = channel_id
+                self.mention = f'<#{channel_id}>'
+                self.guild = SimpleNamespace(id=1, unavailable=False)
+                self.send = AsyncMock(return_value=SimpleNamespace(id=channel_id + 100))
+
+        regular, mid = FakeChannel(2), FakeChannel(3)
+        self.cog.bot.get_channel = lambda cid: {2: regular, 3: mid}.get(cid)
+        self.cog.divinations = Divinations(self.store)
+        self.store.award_voice([(1, 1, level_floor(30))])
+        with self.store.db:
+            self.store.db.execute("INSERT OR REPLACE INTO rpg_divinations VALUES (1,1,'2026-01-01',1,'high_priestess',NULL,NULL)")
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        user = SimpleNamespace(id=1, bot=False)
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
+                patch.dict('os.environ', {'OPENAI_API_KEY': ''}), \
+                patch('core.rpg_monsters.random.choices', return_value=['普通']):
+            channel, raid = await service.summon_divination(mid.guild, user)
+        self.assertEqual(channel.id, 3)
+        self.assertEqual((raid['pool'], raid['members'], raid['status']), ('mid', [1], 'lobby'))
+        self.assertEqual(self.cog.divinations.status(1, 1)['summon_raid_id'], raid['id'])
+        await service.close()
+
     async def test_noah_special_rewards_prefer_own_job_and_skip_dynamic_difficulty(self):
         from core.rpg_monsters import prepare_monster
 

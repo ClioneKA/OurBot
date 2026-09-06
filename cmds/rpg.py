@@ -19,6 +19,7 @@ from core.rpg_total_battle import TotalRaidError
 from core.rpg_fishing import Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_provisions import Provisions
+from core.rpg_divination import Divinations
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 
 
@@ -31,6 +32,7 @@ class RPG(commands.Cog):
         self.fishing = Fishing(self.store)
         self.farming = Farming(self.store)
         self.provisions = Provisions(self.store)
+        self.divinations = Divinations(self.store)
         self.tracker = VoiceTracker()
         self.menu_views = WeakSet()
         self.notification_views = WeakSet()
@@ -170,7 +172,7 @@ class RPG(commands.Cog):
         await self.bot.wait_until_ready()
 
 
-    @app_commands.command(name='冒險', description='開啟安安大冒險：角色、戰鬥、背包、商店與生活技能')
+    @app_commands.command(name='冒險', description='開啟安安大冒險：角色、戰鬥、背包、商店、生活與移動')
     @app_commands.guild_only()
     async def adventure(self, interaction: discord.Interaction):
         view = AdventureView(self, interaction)

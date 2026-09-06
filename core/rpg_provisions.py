@@ -118,9 +118,10 @@ class Provisions:
                 (guild, user, kind, item_id))
         return ITEMS[item_id]
 
-    def prepare_for_raid(self, raid_id, guild, users):
+    def prepare_for_raid(self, raid_id, guild, users, preserve_users=()):
         """Consume selected items once and return frozen effects for each user."""
         result = {}
+        preserve_users = set(preserve_users)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             for user in users:
@@ -140,6 +141,8 @@ class Provisions:
                         continue
                     effect = {field: value for field, value in catalog[key].items() if field != 'ingredients'}
                     data[kind] = dict(item_id=key, name=ITEMS[key].name, **effect)
+                    if user in preserve_users:
+                        continue
                     counts[key] -= 1
                     self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
                         WHERE guild_id=? AND user_id=? AND item_id=?''', (guild, user, key))

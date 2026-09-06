@@ -257,9 +257,13 @@ class RaidStore:
                     chance_drop_results.append((winner, item))
             rewards = []
             for p in raid['participants']:
+                fortune = p.get('fortune') or {}
+                personal_xp = xp * (100 + fortune.get('xp_percent', 0)) // 100
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
-                if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < settings.drop_chance:
+                drop_chance = min(1.0, settings.drop_chance
+                                  + (0.10 if fortune.get('id') == 'wheel' else 0))
+                if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < drop_chance:
                     if raid['monster']['kind'] == '城崎諾亞':
                         own = list(NOAH_EQUIPMENT.get(p['state']['job'], ()))
                         other = [key for key in pool if key not in own]
@@ -283,7 +287,7 @@ class RaidStore:
                                     (raid['guild_id'], p['id'], chance_item))
                 self.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?) '
                                 'ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp',
-                                (raid['guild_id'], p['id'], xp))
+                                (raid['guild_id'], p['id'], personal_xp))
                 if gold:
                     self.db.execute('INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
@@ -294,7 +298,7 @@ class RaidStore:
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], extra_item))
-                reward = dict(id=p['id'], xp=xp, gold=gold, item=drop)
+                reward = dict(id=p['id'], xp=personal_xp, gold=gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
                 if chance_items:
@@ -302,6 +306,11 @@ class RaidStore:
                 if extra_item:
                     reward['extra_item'] = extra_item
                 rewards.append(reward)
+            # A divination is consumed by completing the raid, regardless of
+            # victory.  Keep the daily draw count so later readings cost more.
+            self.db.execute('''UPDATE rpg_divinations
+                SET card=NULL,bound_raid_id=NULL,summon_raid_id=NULL
+                WHERE bound_raid_id=?''', (raid['id'],))
             raid.update(status='completed', battle=battle_data, rewards=rewards)
             difficulty = raid.get('difficulty', {}).get('current', 1.0)
             recorded_strength = raid['monster'].get('strength', 1.0)
