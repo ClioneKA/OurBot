@@ -311,6 +311,12 @@ class TotalRaidBattle(Battle):
 
     def _begin_actor_turn(self, actor):
         """Apply persistent statuses before the actor's selected action."""
+        if actor.job == NOAH_JOB:
+            if actor.effects.pop('poison', None) is not None:
+                actor.effect_sources.pop('poison', None)
+                self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
+            if actor.effects.pop('stun', None) is not None:
+                self.log.append(f'{actor.name} 免疫暈眩；只有黑色能使她停止行動。')
         if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
             actor.status_stacks.pop('corruption', None)
             damage = max(1, actor.stats['HP'] * 12 // 100)
@@ -411,16 +417,12 @@ class TotalRaidBattle(Battle):
 
     def use_skill(self, actor, rule, skill, target):
         erosion = bool(skill.effect == 'cleanse' and target.status_stacks.get('source_erosion'))
-        noah_stun = skill.effect == 'shield_bash' and target.job == NOAH_JOB
         super().use_skill(actor, rule, skill, target)
         if erosion:
             target.status_stacks.pop('source_erosion', None)
             self.mechanics['noah_source_stacks'] = self.mechanics.get('noah_source_stacks', 0) + 1
             self.log.append(f'【源色侵蝕】被淨化；{self.noah().name} 的源色增加至 '
                             f'{self.mechanics["noah_source_stacks"]} 層。')
-        if noah_stun:
-            target.effects.pop('stun', None)
-            self.log.append(f'{target.name} 免疫一般暈眩；只有黑色能使她停止行動。')
 
     def _resolve_canvas(self, choices, intent):
         mask = 0

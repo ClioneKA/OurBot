@@ -877,6 +877,12 @@ class Battle:
                 if status == 'stun' and target.job == '深淵鐘龍':
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
                     return
+                if target.job == '繪畫魔女．城崎諾亞':
+                    if status == 'stun':
+                        self.log.append(f'{target.name} 免疫暈眩；只有黑色能使她停止行動。')
+                    else:
+                        self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
+                    return
                 if status == 'stun' and target.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging'):
                     self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
                     target.effects['break'] = self.round + 1
