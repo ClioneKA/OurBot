@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from core.rpg_battle import (
     ALLY_EFFECTS,
     FIXED_TARGETS,
+    PREPARATION_EFFECTS,
     Battle,
     Fighter,
     Rule,
@@ -193,7 +194,17 @@ class TotalRaidBattle(Battle):
         self.log.append(f'── 第 {self.round} 回合 ──')
         order = [fighter for fighter in self.fighters if fighter.hp > 0]
         self.rng.shuffle(order)
-        order.sort(key=lambda fighter: fighter.dexterity, reverse=True)
+
+        def priority(fighter):
+            if fighter.team != 0:
+                return 0
+            choice = choices.get(fighter.user_id)
+            if choice is None or choice.action != ACTION_SKILL:
+                return 0
+            _, skill = self._skill(fighter, choice.skill_slot)
+            return int(skill.effect in PREPARATION_EFFECTS)
+
+        order.sort(key=lambda fighter: (priority(fighter), fighter.speed), reverse=True)
         for actor in order:
             if actor.hp <= 0:
                 continue
@@ -351,7 +362,7 @@ def training_dummy_battle(players, seed=None, max_rounds=20):
          '命中率': 100, '閃避率': 0, '暴擊率': 0},
         # The dummy deliberately acts first so its announced defensive stance
         # protects the whole round and its target does not change beforehand.
-        dexterity=10_000, rules=[], armed=True, user_id=-1,
+        speed=100, rules=[], armed=True, user_id=-1,
     )
     return TotalRaidBattle([*players, dummy], seed=seed, max_rounds=max_rounds)
 

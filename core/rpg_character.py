@@ -6,6 +6,7 @@ from core.rpg import level_for
 
 STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
 COMBAT_NAMES = ('HP', '攻擊', '防禦', '治療量')
+BASE_SPEED = {'民兵': 50, '裝甲步兵': 45, '騎士': 40, '弓兵': 60, '僧侶': 50}
 STABILITY = {'裝甲步兵': (60, 140), '騎士': (80, 120), '弓兵': (75, 125), '僧侶': (90, 110)}
 # Every profession gains the same total points per level, with different priorities.
 GROWTH = {
@@ -67,6 +68,7 @@ class Item:
     value: int = 0
     required_level: int | None = None
     party_bonus: bool = False
+    speed: int = 0
     evasion: int = 0
     lifesteal: int = 0
     damage_guard_chance: int = 0
@@ -90,6 +92,7 @@ for job in JOBS:
                               SHOP_EQUIPMENT[job][stage][slot_index],
                               STABILITY[job] if slot == '武器' else (100, 100),
                               (0, 500, 1500, 4000)[stage],
+                              speed=stage * 5 if slot == '武器' else 0,
                               sell_price=0 if stage == 0 else None,
                               transferable=stage != 0)
 for index, name in enumerate(('生命護符', '力量指環', '堅韌徽章', '靈巧吊墜', '信仰念珠')):
@@ -132,7 +135,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '掠奪者權杖', (0, 55, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                                 bonuses, (60, 140), required_level=20)
+                                 bonuses, (60, 140), required_level=20, speed=10)
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
@@ -144,7 +147,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '血翼權杖', (0, 39, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                              bonuses, STABILITY[job], required_level=20, lifesteal=3)
+                              bonuses, STABILITY[job], required_level=20, speed=10, lifesteal=3)
 
 
 # Tier-3 raid equipment. These pieces sit between regular T20 and veteran T50 gear.
@@ -168,6 +171,7 @@ for job, key, name, bonuses in (
 ):
     ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
                                  STABILITY[job], required_level=30,
+                                 speed=10,
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (
@@ -292,6 +296,12 @@ def combat_from_stats(total):
             '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
 
 
+def speed_from_equipment(job, equipped=()):
+    """Return level-independent initiative from profession and equipped items."""
+    keys = equipped.values() if isinstance(equipped, dict) else equipped
+    return max(1, min(100, BASE_SPEED.get(job, 50) + sum(ITEMS[key].speed for key in keys if key in ITEMS)))
+
+
 def item_text(item):
     parts = [f'{name} +{value}' for name, value in zip(STAT_NAMES, item.stats) if value]
     parts += [f'{name} +{value}' for name, value in zip(COMBAT_NAMES, item.combat) if value]
@@ -301,6 +311,8 @@ def item_text(item):
         parts.append(f'Lv.{item.required_level}')
     if item.party_bonus:
         parts.append('開戰每兩名參戰者（不足兩名進位）使五項能力各 +1，最多各 +5，整場固定，僅自身')
+    if item.speed:
+        parts.append(f'速度 {item.speed:+d}')
     if item.evasion:
         parts.append(f'閃避率 +{item.evasion}%')
     if item.lifesteal:
@@ -401,10 +413,12 @@ class Characters:
             combat[name] += value
         weapon = ITEMS.get(equipped.get('武器'))
         combat['閃避率'] += sum(ITEMS[key].evasion for key in equipped.values())
+        speed = speed_from_equipment(job, equipped)
+        combat['速度'] = speed
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
-                    combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100),
+                    combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100), speed=speed,
                     lifesteal=weapon.lifesteal if weapon else 0,
                     damage_guard_chance=max((ITEMS[key].damage_guard_chance for key in equipped.values()), default=0),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,

@@ -69,6 +69,22 @@ class CharacterTests(unittest.TestCase):
             with self.subTest(dexterity=dexterity):
                 self.assertEqual(combat_from_stats((10, 10, 10, dexterity, 10))['命中率'], accuracy)
 
+    def test_speed_is_level_independent_and_modified_by_equipment(self):
+        from core.rpg_character import item_text
+        self.level(10)
+        state = self.characters.change_job(1, 1, '弓兵')
+        self.assertEqual((state['speed'], state['combat']['速度']), (60, 60))
+        self.assertNotIn('速度', combat_from_stats((10, 10, 10, 500, 10)))
+
+        self.level(90)
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (1,1,'弓兵:3:武器')")
+        self.characters.equip(1, 1, '弓兵:3:武器')
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual((state['speed'], state['combat']['速度']), (75, 75))
+        self.assertIn('速度 +15', item_text(ITEMS['弓兵:3:武器']))
+
     def test_goblin_loot_level_jobs_and_no_free_supplies(self):
         from core.rpg_character import item_text
         self.level(10)

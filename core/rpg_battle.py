@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 import random
 
-from core.rpg_character import CharacterError, ITEMS, combat_from_stats
+from core.rpg_character import CharacterError, ITEMS, combat_from_stats, speed_from_equipment
 from core.rpg_monsters import REFERENCE_LEVELS, monster_name
 from core.rpg import level_for
 
@@ -72,6 +72,7 @@ SKILLS = {
              Skill('強效治療', 'greater_heal', 4, '恢復一名隊友 180% 治療量的 HP', 'ally50')),
 }
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'greater_heal'}
+PREPARATION_EFFECTS = {'guard', 'bless', 'stance', 'taunt'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
 # Defense is a role property of the target. Monsters and non-tank professions
@@ -219,7 +220,7 @@ class Fighter:
     team: int
     job: str
     stats: dict
-    dexterity: int
+    speed: int
     rules: list
     hp: int = field(init=False)
     ready: dict = field(default_factory=dict)
@@ -257,6 +258,15 @@ class Fighter:
 
     def has(self, effect, turn):
         return self.effects.get(effect, -1) >= turn
+
+    @property
+    def dexterity(self):
+        """Compatibility alias for code holding a pre-migration fighter."""
+        return self.speed
+
+    @dexterity.setter
+    def dexterity(self, value):
+        self.speed = value
 
 
 class Battle:
@@ -318,6 +328,13 @@ class Battle:
 
     def living(self, team):
         return [f for f in self.fighters if f.team == team and f.hp > 0]
+
+    def action_priority(self, actor):
+        """Resolve proactive player buffs in a preparation phase before attacks."""
+        if actor.team != 0:
+            return 0
+        selected = self.select(actor)
+        return int(bool(selected and selected[1].effect in PREPARATION_EFFECTS))
 
     def effect_source(self, target, effect):
         source_id = target.effect_sources.get(effect)
@@ -780,8 +797,8 @@ class Battle:
         self.round += 1
         self.log.append(f'── 第 {self.round} 回合 ──')
         order = [f for f in self.fighters if f.hp > 0]
-        self.rng.shuffle(order)  # Equal dexterity uses seeded random tie-breaking.
-        order.sort(key=lambda f: f.dexterity, reverse=True)
+        self.rng.shuffle(order)  # Equal speed uses seeded random tie-breaking.
+        order.sort(key=lambda f: (self.action_priority(f), f.speed), reverse=True)
         for actor in order:
             if actor.hp <= 0:
                 continue
@@ -863,8 +880,19 @@ class Battle:
 
 def raid_battle(participants, monster, seed):
     """Build enemies from the announcement snapshot; keep legacy raids compatible."""
+    balance_version = monster.get('balance_version', 1)
+
+    def participant_speed(participant):
+        state = participant['state']
+        if 'speed' in state:
+            return state['speed']
+        if balance_version < 3:
+            return state['total'][3]
+        return speed_from_equipment(state['job'], state.get('equipped', {}))
+
     fighters = [Fighter(p['name'], 0, p['state']['job'], dict(p['state']['combat']),
-                        p['state']['total'][3], [Rule(**r) for r in p['rules']],
+                        participant_speed(p),
+                        [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         lifesteal=p['state'].get('lifesteal', 0),
                         damage_guard_chance=p['state'].get('damage_guard_chance', 0),
@@ -882,7 +910,6 @@ def raid_battle(participants, monster, seed):
             after = combat_from_stats([value + count for value in total])
             for stat in before:
                 fighter.stats[stat] += after[stat] - before[stat]
-            fighter.dexterity += count
             fighter.hp = fighter.stats['HP']
             badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
     provision_logs = []
@@ -910,28 +937,47 @@ def raid_battle(participants, monster, seed):
                 f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
     participant_average = sum(p['state']['level'] for p in participants) / len(participants)
     average = participant_average
-    if monster.get('balance_version', 1) >= 2 and monster.get('tier') in REFERENCE_LEVELS:
+    profile = monster.get('profile')
+    party_hp_scale = 1
+    if balance_version >= 3 and monster.get('tier') in REFERENCE_LEVELS:
+        # V3 encounters have an explicit content level.  Quality raises that
+        # level instead of multiplying already-derived stats, while party size
+        # remains the only automatic HP scaling axis.
+        average = REFERENCE_LEVELS[monster['tier']] + profile.get('level_bonus', 0)
+        base_hp = 100 + average * 19
+        party_hp_scale = len(participants)
+    elif balance_version >= 2 and monster.get('tier') in REFERENCE_LEVELS:
         average = REFERENCE_LEVELS[monster['tier']]
         base_hp = len(participants) * (150 + average * 28)
     else:
         # Announced V1 encounters retain their player-level scaling.
         base_hp = sum(150 + p['state']['level'] * 28 for p in participants)
+    base_attack = 22 + average * 6 + max(0, average - 20)
+    # Shorter encounters need each successful monster action to stay relevant.
+    # V3's 10% threat budget is applied before per-monster skill/profile values.
+    if balance_version >= 3 and monster.get('tier') in REFERENCE_LEVELS:
+        base_attack *= 1.1
     stats = {'HP': int(base_hp),
-             '攻擊': int(22 + average * 6 + max(0, average - 20)),
+             '攻擊': int(base_attack),
              '防禦': int(10 + average * 2),
              '治療量': 0, '命中率': 92, '閃避率': 5, '暴擊率': 10}
-    profile = monster.get('profile')
-    speed = int(12 + average * 2)
+    # V1/V2 announcement snapshots stored a multiplier. V3 stores the new
+    # absolute narrow-scale speed, so old announced raids keep their ordering.
+    speed = 10 if balance_version >= 3 else int(12 + average * 2)
     if profile:
         for stat, key in (('HP', 'hp'), ('攻擊', 'attack'), ('防禦', 'defense')):
             stats[stat] = max(1, int(stats[stat] * Decimal(str(profile[key]))))
+        stats['HP'] *= party_hp_scale
         stats.update(命中率=profile['hit'], 閃避率=profile['dodge'], 暴擊率=profile['crit'])
-        speed = max(1, int(speed * profile['speed']))
+        speed = max(1, int(profile['speed'] if balance_version >= 3 else speed * profile['speed']))
     elif monster['kind'] == '鐵殼魔像':
         stats['HP'] = int(stats['HP'] * 1.2)
         stats['防禦'] *= 2
-    if monster.get('balance_version', 1) >= 2:
-        if monster.get('tier') in REFERENCE_LEVELS:
+    if balance_version >= 2:
+        # V2 softened monster scaling toward the actual party level.  V3 uses
+        # the fixed tier + quality content level so over-levelled players are
+        # genuinely stronger when revisiting an encounter.
+        if balance_version == 2 and monster.get('tier') in REFERENCE_LEVELS:
             reference = REFERENCE_LEVELS[monster['tier']]
             level_delta = Decimal(str(participant_average)) / Decimal(reference) - Decimal(1)
             level_hp = max(Decimal('0.6'), min(Decimal('2'), Decimal(1) + level_delta * Decimal('0.4')))
@@ -991,7 +1037,8 @@ def load_battle(data):
     fighters = []
     for data_f in data['fighters']:
         f = Fighter(data_f['name'], data_f['team'], data_f['job'], data_f['stats'],
-                    data_f['dexterity'], [Rule(**r) for r in data_f['rules']])
+                    data_f.get('speed', data_f.get('dexterity', 10)),
+                    [Rule(**r) for r in data_f['rules']])
         f.hp = data_f['hp']
         f.ready = {int(k): v for k, v in data_f['ready'].items()}
         f.effects = data_f['effects']

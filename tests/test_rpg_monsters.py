@@ -32,8 +32,8 @@ class MonsterTests(unittest.TestCase):
         battle = raid_battle([participant()], monster('哥布林戰團'), 42)
         player, captain, *grunts = battle.fighters
         self.assertEqual([f.job for f in battle.living(1)], ['哥布林隊長', '哥布林打手', '哥布林打手'])
-        self.assertEqual(sum(f.hp for f in battle.living(1)), 1853)
-        self.assertEqual(captain.stats['攻擊'], 204)
+        self.assertEqual(sum(f.hp for f in battle.living(1)), 1252)
+        self.assertEqual(captain.stats['攻擊'], 224)
         player.rules = [Rule(3, 1, True, 'enemies3', 'lowest')]
         with patch.object(battle, 'hit') as hit:
             battle.act(player)
@@ -64,7 +64,7 @@ class MonsterTests(unittest.TestCase):
             original = dict(people[0]['state']['combat'])
             for stat, per_player in (('HP', 10), ('攻擊', 3), ('防禦', 3), ('治療量', 3)):
                 self.assertEqual(wearer.stats[stat], original[stat] + counted * per_player)
-            self.assertEqual(wearer.dexterity, 20 + counted)
+            self.assertEqual(wearer.speed, 60)
             for stat, divisor in (('命中率', 5), ('閃避率', 10), ('暴擊率', 8)):
                 self.assertEqual(wearer.stats[stat], original[stat] + (20 + counted) // divisor - 20 // divisor)
             self.assertEqual(wearer.hp, wearer.stats['HP'])
@@ -91,21 +91,21 @@ class MonsterTests(unittest.TestCase):
         wearer = raid_battle(people, monster(), 10).fighters[0]
         self.assertEqual(wearer.stats, {'HP': 600, '攻擊': 274, '防禦': 225,
                                      '治療量': 255, '命中率': 150, '閃避率': 35, '暴擊率': 50})
-        self.assertEqual(wearer.dexterity, 379)
+        self.assertEqual(wearer.speed, 60)
 
     def test_tiers_and_distinct_stats(self):
         expected = {
-            '月影妖狐': (2, 1704, 242, 45, 78, 95, 20, 15),
-            '血翼蝠王': (2, 1650, 252, 52, 67, 94, 12, 10),
-            '巨獸': (1, 1625, 150, 24, 22, 88, 0, 10),
-            '毒蛛': (1, 963, 130, 21, 44, 95, 15, 15),
-            '史萊姆群': (0, 852, 113, 25, 57, 90, 8, 5),
-            '鐵殼魔像': (2, 1917, 262, 130, 26, 90, 0, 5),
-            '荊棘妖樹': (2, 1938, 408, 84, 31, 92, 0, 5),
-            '哥布林戰團': (2, 1853, 204, 52, 57, 92, 8, 10),
-            '深淵鐘龍': (3, 3335, 318, 92, 54, 92, 0, 10),
-            '王城傀儡師': (3, 2269, 412, 72, 72, 94, 8, 10),
-            '瘟疫縫合獸': (3, 3018, 538, 80, 64, 93, 3, 8),
+            '月影妖狐': (2, 1152, 266, 45, 70, 95, 20, 15),
+            '血翼蝠王': (2, 1166, 277, 52, 65, 94, 12, 10),
+            '巨獸': (1, 783, 151, 24, 40, 88, 0, 10),
+            '毒蛛': (1, 594, 131, 21, 65, 95, 15, 15),
+            '史萊姆群': (0, 852, 113, 25, 55, 90, 8, 5),
+            '鐵殼魔像': (2, 1296, 288, 130, 35, 90, 0, 5),
+            '荊棘妖樹': (2, 1310, 449, 84, 40, 92, 0, 5),
+            '哥布林戰團': (2, 1252, 224, 52, 55, 92, 8, 10),
+            '深淵鐘龍': (3, 2604, 361, 92, 45, 92, 0, 10),
+            '王城傀儡師': (3, 1772, 470, 72, 55, 94, 8, 10),
+            '瘟疫縫合獸': (3, 2357, 613, 80, 50, 93, 3, 8),
         }
         for kind, values in expected.items():
             with self.subTest(kind=kind):
@@ -113,17 +113,18 @@ class MonsterTests(unittest.TestCase):
                 enemies = raid_battle([participant()], m, 1).living(1)
                 f = enemies[0]
                 actual = (m['tier'], sum(e.stats['HP'] for e in enemies), f.stats['攻擊'],
-                          f.stats['防禦'], f.dexterity, f.stats['命中率'], f.stats['閃避率'], f.stats['暴擊率'])
+                          f.stats['防禦'], f.speed, f.stats['命中率'], f.stats['閃避率'], f.stats['暴擊率'])
                 self.assertEqual(actual, values)
                 self.assertEqual(monster_name(m), kind)
         self.assertEqual(monster_name(monster('鐵殼魔像', '精英')), '精英・鐵殼魔像')
-        for quality, hp, attack, defense in [('普通', 1625, 150, 24), ('精英', 1738, 150, 24),
-                                             ('首領', 1835, 150, 24), ('傳說', 1950, 150, 24)]:
+        for quality, hp, attack, defense in [
+                ('普通', 783, 151, 24), ('精英', 1039, 206, 32),
+                ('首領', 1296, 262, 40), ('傳說', 1809, 391, 56)]:
             f = raid_battle([participant()], monster(quality=quality), 1).living(1)[0]
             self.assertEqual((f.stats['HP'], f.stats['攻擊'], f.stats['防禦']), (hp, attack, defense))
-            self.assertEqual((f.dexterity, f.stats['命中率'], f.stats['暴擊率']), (22, 88, 10))
+            self.assertEqual((f.speed, f.stats['命中率'], f.stats['暴擊率']), (40, 88, 10))
 
-    def test_v2_monster_stats_use_the_tier_reference_level(self):
+    def test_v3_monster_stats_use_fixed_tier_and_quality_levels(self):
         attacks, hit_points = [], []
         for level in (10, 20, 50, 90):
             player = participant()
@@ -131,20 +132,36 @@ class MonsterTests(unittest.TestCase):
             enemy = raid_battle([player], monster('巨獸'), 1).living(1)[0]
             attacks.append(enemy.stats['攻擊'])
             hit_points.append(enemy.stats['HP'])
-        self.assertEqual(attacks, [137, 150, 171, 171])
-        self.assertEqual(hit_points, [1161, 1625, 2322, 2322])
+        self.assertEqual(attacks, [151, 151, 151, 151])
+        self.assertEqual(hit_points, [783, 783, 783, 783])
 
         player = participant()
         player['state']['level'] = 30
         golem = raid_battle([player], monster('鐵殼魔像'), 1).living(1)[0]
         self.assertEqual((golem.stats['HP'], golem.stats['攻擊'], golem.stats['防禦']),
-                         (2300, 275, 130))
+                         (1296, 288, 130))
 
         clock_dragon = raid_battle([player], monster('深淵鐘龍'), 1).living(1)[0]
         self.assertEqual((clock_dragon.stats['HP'], clock_dragon.stats['攻擊'],
-                          clock_dragon.stats['防禦']), (3849, 329, 92))
+                          clock_dragon.stats['防禦']), (2604, 361, 92))
 
-    def test_v2_calibrated_tiers_scale_total_hp_with_party_size(self):
+    def test_old_announcements_keep_multiplier_speed(self):
+        old = monster('巨獸')
+        old['balance_version'] = 2
+        old['profile']['speed'] = 0.7
+        enemy = raid_battle([participant()], old, 1).living(1)[0]
+        self.assertEqual(enemy.speed, 22)
+
+    def test_v2_announcements_keep_legacy_player_and_monster_speed(self):
+        old = monster('巨獸')
+        old['balance_version'] = 2
+        old['profile']['speed'] = 0.7
+        old['profile'].pop('level_bonus')
+        player, enemy = raid_battle([participant()], old, 1).fighters
+        self.assertEqual(player.speed, 20)
+        self.assertEqual(enemy.speed, 22)
+
+    def test_v3_calibrated_tiers_scale_total_hp_with_party_size(self):
         for kind, level in (('巨獸', 10), ('鐵殼魔像', 20), ('深淵鐘龍', 30)):
             with self.subTest(kind=kind):
                 one = participant()
@@ -218,8 +235,9 @@ class MonsterTests(unittest.TestCase):
                         'INSERT INTO rpg_raid_difficulty(guild_id,channel_id,multiplier,balance_version) '
                         'VALUES (1,12,1.1,2)')
                 raid = repo.create(1, 12, monster(quality='精英'), 0, asdict(RaidSettings()))
-                self.assertEqual(raid['reward_policy']['victory_xp'], 495)
-                self.assertEqual(raid['reward_policy']['victory_gold'], 165)
+                # A new balance version starts channel calibration from 1.0.
+                self.assertEqual(raid['reward_policy']['victory_xp'], 450)
+                self.assertEqual(raid['reward_policy']['victory_gold'], 150)
                 self.assertEqual(raid['reward_policy']['drop_chance'], .2)
             finally:
                 store.close()

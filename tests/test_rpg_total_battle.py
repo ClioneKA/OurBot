@@ -50,6 +50,19 @@ class TotalRaidBattleTests(unittest.TestCase):
         self.assertIn('玩家1', first_log)
         self.assertEqual(battle.choices, {})
 
+    def test_manual_support_skill_resolves_before_faster_enemy(self):
+        cleric = player(1, name='僧侶', job='僧侶', dex=1,
+                        rules=[Rule(2, 1, True, 'always', 'strongest')])
+        attacker = player(2, name='輸出', attack=100, dex=20, rules=[])
+        battle = training_dummy_battle([cleric, attacker], seed=1)
+        dummy = battle.living(1)[0]
+        battle.submit(1, ACTION_SKILL, battle.key(attacker), 2)
+        battle.submit(2, ACTION_ATTACK, battle.key(dummy))
+        battle.resolve()
+        self.assertLess(battle.log.index('僧侶 使用【祝福】'),
+                        battle.log.index('訓練用假人 使用【標準打擊】'))
+        self.assertTrue(attacker.has('bless', 1))
+
     def test_choice_can_be_replaced_and_timeout_defaults_to_attack(self):
         first, second = player(1), player(2)
         battle = training_dummy_battle([first, second], seed=1)

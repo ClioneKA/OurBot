@@ -306,7 +306,7 @@ class RaidService:
                                f'承傷 {stats["damage_taken"]:,}｜命中 {stats["hits"]}/{stats["attacks"]}')
             embed.add_field(name='戰鬥結算｜依實際＋輔助傷害排序',
                             value='\n'.join(summary)[:1024] or '沒有戰鬥數據', inline=False)
-        embed.set_footer(text='靈巧決定順序；每回合每人一次行動。完整戰報於結束後附上。')
+        embed.set_footer(text='準備型增益優先，其餘依速度排序；每回合每人一次行動。完整戰報於結束後附上。')
         return embed
 
     async def advance(self, raid, channel, now):

@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 from core.rpg_battle import default_rules, raid_battle
 from core.rpg_character import GROWTH, ITEMS, combat_from_stats
-from core.rpg_monsters import PROFILES, REFERENCE_LEVELS, prepare_monster
+from core.rpg_monsters import PROFILES, QUALITIES, REFERENCE_LEVELS, prepare_monster
 
 
 EQUIPMENT_STAGE = {1: 0, 2: 1}
@@ -19,12 +19,15 @@ COMPOSITIONS = {
     'no_healer': ('裝甲步兵', '騎士', '弓兵', '弓兵'),
     'no_knight': ('裝甲步兵', '弓兵', '弓兵', '僧侶'),
     'double_monk': ('騎士', '弓兵', '僧侶', '僧侶'),
+    'infantry_dps': ('裝甲步兵',) * 4,
+    'archer_dps': ('弓兵',) * 4,
+    'mixed_dps': ('裝甲步兵', '裝甲步兵', '弓兵', '弓兵'),
 }
 COMBAT_STATS = ('HP', '攻擊', '防禦', '治療量')
 
 
-def reference_participant(job, tier, user_id):
-    level = REFERENCE_LEVELS[tier]
+def reference_participant(job, tier, user_id, level_bonus=0):
+    level = REFERENCE_LEVELS[tier] + level_bonus
     stage = EQUIPMENT_STAGE.get(tier, 1)
     growth = GROWTH[job]
     base = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
@@ -47,15 +50,16 @@ def reference_participant(job, tier, user_id):
                 rules=[asdict(rule) for rule in default_rules(job)])
 
 
-def reference_party(tier, composition='balanced'):
-    return [reference_participant(job, tier, index)
+def reference_party(tier, composition='balanced', level_bonus=0):
+    return [reference_participant(job, tier, index, level_bonus)
             for index, job in enumerate(COMPOSITIONS[composition])]
 
 
 def simulate(kind, seeds, quality='普通', composition='balanced'):
     tier = PROFILES[kind][0]
     monster = prepare_monster(dict(kind=kind, name=kind, description='平衡模擬'), quality=quality)
-    party = reference_party(tier, composition)
+    level_bonus = QUALITIES[quality][1]
+    party = reference_party(tier, composition, level_bonus)
     wins = timeouts = total_rounds = winning_rounds = remaining_hp = 0
     for seed in range(seeds):
         battle = raid_battle(party, monster, seed)
@@ -69,7 +73,8 @@ def simulate(kind, seeds, quality='普通', composition='balanced'):
         enemies = [fighter for fighter in battle.fighters if fighter.team == 1]
         maximum = sum(fighter.stats['HP'] for fighter in enemies)
         remaining_hp += sum(max(0, fighter.hp) for fighter in enemies) / maximum if maximum else 0
-    return dict(kind=kind, tier=tier, level=REFERENCE_LEVELS[tier], seeds=seeds,
+    level = REFERENCE_LEVELS[tier] + level_bonus
+    return dict(kind=kind, tier=tier, level=level, seeds=seeds,
                 win_rate=wins / seeds, average_rounds=total_rounds / seeds,
                 victory_rounds=winning_rounds / wins if wins else 0,
                 timeout_rate=timeouts / seeds, remaining_hp=remaining_hp / seeds)

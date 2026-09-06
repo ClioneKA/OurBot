@@ -245,7 +245,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         finally:
             reopened.close()
 
-    async def test_v2_difficulty_is_narrow_performance_aware_and_ignores_rare_quality(self):
+    async def test_v3_difficulty_targets_seven_to_thirteen_rounds_and_ignores_rare_quality(self):
         from core.rpg_monsters import prepare_monster
 
         participant = self.participant()
@@ -268,17 +268,17 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                 'VALUES (1,8,2.5,1)')
         first = finish('勝利', 12)
         self.assertEqual(first['difficulty']['current'], 1)
-        self.assertEqual(self.repo.difficulty(1, 8), 1.03)
+        self.assertEqual(self.repo.difficulty(1, 8), 1)
         finish('勝利', 25)
-        self.assertEqual(self.repo.difficulty(1, 8), 1.03)
+        self.assertEqual(self.repo.difficulty(1, 8), 0.99)
         finish('戰敗', 12, remaining_percent=80)
-        self.assertEqual(self.repo.difficulty(1, 8), 0.9991)
+        self.assertEqual(self.repo.difficulty(1, 8), 0.9603)
         finish('勝利', 10, quality='首領')
-        self.assertEqual(self.repo.difficulty(1, 8), 0.9991)
+        self.assertEqual(self.repo.difficulty(1, 8), 0.9603)
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=1.1,balance_version=2 '
+                'UPDATE rpg_raid_difficulty SET multiplier=1.1,balance_version=3 '
                 'WHERE guild_id=1 AND channel_id=8')
         finish('勝利', 5)
         self.assertEqual(self.repo.difficulty(1, 8), 1.1)

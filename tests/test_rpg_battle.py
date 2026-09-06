@@ -83,6 +83,35 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(archer_rules[2].condition, 'enemies3')
         self.assertEqual(cleric_rules[1].target, 'strongest')
 
+    def test_slow_support_skills_resolve_before_fast_attacks(self):
+        tank = fighter('騎士', job='騎士', dex=1,
+                       rules=[Rule(1, 1, True, 'always', 'self')])
+        ally = fighter('隊友', dex=20, rules=[])
+        ally.hp = 100
+        enemy = fighter('敵人', 1, hp=500, dex=100, attack=40, rules=[])
+        battle = Battle([tank, ally, enemy], seed=1)
+        battle.step()
+        self.assertLess(tank.hp, tank.stats['HP'])
+        self.assertEqual(ally.hp, 100)
+        self.assertLess(battle.log.index('騎士 使用【嘲諷】'), battle.log.index('敵人 使用普通攻擊'))
+
+        cleric = fighter('僧侶', job='僧侶', dex=1,
+                         rules=[Rule(2, 1, True, 'always', 'strongest')])
+        attacker = fighter('輸出', dex=20, attack=100, rules=[])
+        target = fighter('木樁', 1, hp=500, dex=100, attack=1, rules=[])
+        battle = Battle([cleric, attacker, target], seed=1)
+        battle.step()
+        self.assertEqual(target.combat_stats['damage_taken'], 118)
+        self.assertLess(battle.log.index('僧侶 使用【祝福】'), battle.log.index('輸出 使用普通攻擊'))
+
+    def test_legacy_battle_snapshot_migrates_dexterity_to_speed(self):
+        battle = Battle([fighter(rules=[]), fighter('敵人', 1, rules=[])], seed=1)
+        data = dump_battle(battle)
+        for saved in data['fighters']:
+            saved['dexterity'] = saved.pop('speed')
+        restored = load_battle(data)
+        self.assertEqual([actor.speed for actor in restored.fighters], [10, 10])
+
     def test_tank_professions_use_higher_defense_effectiveness(self):
         results = {}
         for job in ('民兵', '裝甲步兵', '騎士', '弓兵', '僧侶'):

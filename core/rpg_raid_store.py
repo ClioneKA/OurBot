@@ -45,8 +45,8 @@ class RaidStore:
                 PRIMARY KEY (guild_id, channel_id))''')
             difficulty_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_raid_difficulty)')}
             if 'balance_version' not in difficulty_columns:
-                # Existing multipliers calibrated the V1 player-level formula and
-                # must not carry into the fixed-tier V2 model.
+                # Existing multipliers calibrated an older stat formula and
+                # must not carry into a newer balance version.
                 self.db.execute(
                     'ALTER TABLE rpg_raid_difficulty ADD COLUMN balance_version INTEGER NOT NULL DEFAULT 1')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_battle_results (
@@ -306,7 +306,8 @@ class RaidStore:
                     quality = raid['monster'].get('quality', '普通')
                     weight = {'普通': 1, '精英': 0.5, '首領': 0, '傳說': 0}.get(quality, 0)
                     if victory:
-                        change = 0.03 if battle_data['round'] <= 15 else 0.015 if battle_data['round'] <= 22 else 0
+                        rounds = battle_data['round']
+                        change = 0.03 if rounds < 7 else 0.015 if rounds < 10 else 0 if rounds <= 13 else -0.01
                     elif '回合上限' in battle_data['result']:
                         change = -0.02 if progress < 0.6 else -0.01 if progress < 0.85 else 0
                     else:
@@ -321,7 +322,7 @@ class RaidStore:
                     row = self.db.execute(
                         'SELECT balance_version FROM rpg_raid_difficulty WHERE guild_id=? AND channel_id=?',
                         (raid['guild_id'], raid['channel_id'])).fetchone()
-                    # Finishing an old snapshot must not overwrite a V2 channel.
+                    # Finishing an old snapshot must not overwrite a newer channel.
                     if not row or row[0] < 2:
                         after = round(max(0.5, min(3.0, before * (1.1 if victory else 0.9))), 6)
                         self.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?,1) '
