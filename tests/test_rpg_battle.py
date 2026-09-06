@@ -120,7 +120,7 @@ class BattleTests(unittest.TestCase):
     def test_preparation_is_a_visible_data_driven_skill_keyword(self):
         preparation = {skill.name for skills in SKILLS.values() for skill in skills
                        if skill.timing == PREPARATION_TIMING}
-        self.assertEqual(preparation, {'防禦', '攻守架勢', '嘲諷', '護衛', '堅守', '祝福'})
+        self.assertEqual(preparation, {'防禦', '破甲', '攻守架勢', '嘲諷', '護衛', '堅守', '祝福'})
         self.assertTrue(skill_description(SKILLS['騎士'][0]).startswith('【準備】'))
         self.assertFalse(skill_description(SKILLS['僧侶'][0]).startswith('【準備】'))
 
@@ -163,6 +163,24 @@ class BattleTests(unittest.TestCase):
             results[job] = target.combat_stats['damage_taken']
         self.assertEqual(results, {'民兵': 165, '裝甲步兵': 160, '騎士': 155,
                                    '弓兵': 165, '僧侶': 165})
+
+    def test_break_ignores_defense_and_credits_its_source(self):
+        caster = fighter('裝甲步兵', job='裝甲步兵', rules=[])
+        caster.user_id = 1
+        attacker = fighter('隊友', attack=200, rules=[])
+        attacker.user_id = 2
+        target = fighter('敵人', 1, hp=1000, rules=[])
+        target.stats['防禦'] = 100
+        target.effects['break'] = 2
+        target.effect_sources['break'] = caster.user_id
+        battle = Battle([caster, attacker, target], seed=1)
+        battle.round = 1
+
+        battle.hit(attacker, target, precise=True)
+
+        self.assertEqual(target.combat_stats['damage_taken'], 200)
+        self.assertEqual(attacker.combat_stats['direct_damage'], 165)
+        self.assertEqual(caster.combat_stats['support_damage'], 35)
 
     def test_configurable_numeric_conditions_use_the_saved_threshold(self):
         enemy = fighter('敵人', 1, hp=100, rules=[])

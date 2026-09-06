@@ -61,7 +61,8 @@ SKILLS = {
              Skill('防禦', 'stance', 3, '自身減傷 20%，持續至下一回合結束', 'self40',
                    timing=PREPARATION_TIMING)),
     '裝甲步兵': (Skill('重擊', 'strike', 2, '造成 160% 傷害'),
-                 Skill('破甲', 'break', 3, '造成 100% 傷害並降低目標防禦 40%，持續至下一回合結束'),
+                 Skill('破甲', 'break', 3, '造成 100% 傷害並使目標防禦歸零，持續至下一回合結束',
+                       timing=PREPARATION_TIMING),
                  Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40',
                        timing=PREPARATION_TIMING),
                  Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
@@ -460,7 +461,7 @@ class Battle:
         if target.has('guard', self.round):
             base_defense += target.guard_bonus
         broken = target.has('break', self.round)
-        defense = base_defense * (0.6 if broken else 1)
+        defense = 0 if broken else base_defense
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
         critical = self.rng.random() * 100 < actor.stats['暴擊率']
@@ -558,7 +559,7 @@ class Battle:
             self.mechanics['clock_charging'] = False
             if not layers:
                 actor.effects['break'] = self.round + 1
-                self.log.append(f'{actor.name} 的鐘甲崩解！終末鐘聲取消，防禦降低 40% 至第 {self.round + 1} 回合結束。')
+                self.log.append(f'{actor.name} 的鐘甲崩解！終末鐘聲取消，遭到破甲至第 {self.round + 1} 回合結束。')
             else:
                 power = min(3.0, 0.9 + layers * 0.15)
                 self.record_skill(actor, '終末鐘聲')
@@ -609,7 +610,7 @@ class Battle:
             dead = [f for f in puppets if f.hp <= 0]
             if len(dead) == 2:
                 actor.effects['break'] = self.round + 1
-                self.log.append(f'{actor.name} 的【重編絲線】失敗，防禦降低 40% 至第 {self.round + 1} 回合結束。')
+                self.log.append(f'{actor.name} 的【重編絲線】失敗，遭到破甲至第 {self.round + 1} 回合結束。')
             elif dead:
                 target = dead[0]
                 target.hp = max(1, target.stats['HP'] * 30 // 100)

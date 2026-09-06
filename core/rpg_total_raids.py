@@ -83,7 +83,7 @@ def effect_status(fighter, battle):
     if fighter.food_regen_left and turn >= fighter.food_regen_start:
         buffs.append(f'{fighter.food_name}緩補({fighter.food_regen_left}回合)')
     if fighter.has('break', turn):
-        debuffs.append(f'破甲(防禦-40%・{remaining("break")}回合)')
+        debuffs.append(f'破甲(防禦歸零・{remaining("break")}回合)')
     if fighter.has('poison', turn):
         debuffs.append(f'中毒({remaining("poison")}回合)')
     if fighter.has('stun', turn):
