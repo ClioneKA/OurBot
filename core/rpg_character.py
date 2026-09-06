@@ -138,7 +138,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '掠奪者權杖', (0, 55, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                                 bonuses, (60, 140), required_level=20, speed=10)
+                                 bonuses, (60, 140), required_level=20, speed=7)
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
@@ -150,7 +150,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '血翼權杖', (0, 39, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                              bonuses, STABILITY[job], required_level=20, speed=10, lifesteal=3)
+                              bonuses, STABILITY[job], required_level=20, speed=7, lifesteal=3)
 
 
 # Tier-3 raid equipment. These pieces sit between regular T20 and veteran T50 gear.
@@ -174,7 +174,7 @@ for job, key, name, bonuses in (
 ):
     ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
                                  STABILITY[job], required_level=30,
-                                 speed=10,
+                                 speed=8,
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (

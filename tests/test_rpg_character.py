@@ -62,6 +62,8 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(state['damage_guard_chance'], 5)
         self.assertEqual((state['vulnerable_chance'], state['vulnerable_percent']), (5, 10))
         self.assertEqual(state['healing_share'], 10)
+        self.assertEqual(ITEMS['plague:bow'].speed, 8)
+        self.assertLess(ITEMS['plague:bow'].speed, ITEMS['弓兵:2:武器'].speed)
         self.assertEqual(ITEMS['puppet:twin_charm'].stats, (2, 2, 2, 2, 2))
         self.assertIn('額外治療', item_text(ITEMS['puppet:twin_charm']))
         self.assertFalse(item_sellable(ITEMS['paint:red']))
@@ -94,6 +96,8 @@ class CharacterTests(unittest.TestCase):
         for key in ('axe', 'sword_shield', 'bow', 'staff'):
             item = ITEMS['bat:' + key]
             self.assertEqual((item.required_level, item.lifesteal, item.price), (20, 3, 0))
+            self.assertEqual(item.speed, 7)
+            self.assertLess(item.speed, ITEMS[f'{item.job}:2:武器'].speed)
             self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
         self.assertIn('閃避率 +5 個百分點', item_text(ITEMS['fox:pendant']))
 
@@ -143,6 +147,8 @@ class CharacterTests(unittest.TestCase):
             item = ITEMS['goblin:' + key]
             self.assertEqual(sum(item.stability) / 2, 100)
             self.assertEqual(item.required_level, 20)
+            self.assertEqual(item.speed, 7)
+            self.assertLess(item.speed, ITEMS[f'{item.job}:2:武器'].speed)
             self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
         self.assertIn('整場固定', item_text(ITEMS['goblin:badge']))
         self.level(19)
