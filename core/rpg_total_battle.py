@@ -4,13 +4,14 @@ from dataclasses import asdict, dataclass
 from core.rpg_battle import (
     ALLY_EFFECTS,
     FIXED_TARGETS,
-    PREPARATION_EFFECTS,
+    PREPARATION_TIMING,
     Battle,
     Fighter,
     Rule,
     dump_battle,
     load_battle,
     rule_skill,
+    skill_description,
 )
 
 
@@ -105,7 +106,7 @@ class TotalRaidBattle(Battle):
             skill = rule_skill(actor.job, rule)
             ready_round = actor.ready.get(rule.slot, 0)
             actions.append(dict(action=ACTION_SKILL, name=skill.name, skill_slot=rule.slot,
-                                description=skill.description,
+                                description=skill_description(skill),
                                 cooldown_remaining=max(0, ready_round - self.planning_round),
                                 fixed_target=FIXED_TARGETS.get(skill.effect)))
         return actions
@@ -202,7 +203,7 @@ class TotalRaidBattle(Battle):
             if choice is None or choice.action != ACTION_SKILL:
                 return 0
             _, skill = self._skill(fighter, choice.skill_slot)
-            return int(skill.effect in PREPARATION_EFFECTS)
+            return int(skill.timing == PREPARATION_TIMING)
 
         order.sort(key=lambda fighter: (priority(fighter), fighter.speed), reverse=True)
         for actor in order:

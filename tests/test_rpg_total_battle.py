@@ -56,6 +56,8 @@ class TotalRaidBattleTests(unittest.TestCase):
         attacker = player(2, name='輸出', attack=100, dex=20, rules=[])
         battle = training_dummy_battle([cleric, attacker], seed=1)
         dummy = battle.living(1)[0]
+        blessing = next(action for action in battle.available_actions(1) if action['name'] == '祝福')
+        self.assertTrue(blessing['description'].startswith('【準備】'))
         battle.submit(1, ACTION_SKILL, battle.key(attacker), 2)
         battle.submit(2, ACTION_ATTACK, battle.key(dummy))
         battle.resolve()

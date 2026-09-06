@@ -6,7 +6,7 @@ from core.rpg_menu import add_back, navigate
 import discord
 
 from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
-                             condition_text, rule_skill)
+                             condition_text, rule_skill, skill_description)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 
@@ -58,7 +58,7 @@ class SkillView(discord.ui.View):
         if self.choosing_skill:
             available = self.cog.tactics.available(self.guild_id, self.owner.id, self.job)
             self.add_item(PanelSelect('equip', row=1, placeholder='選擇已解鎖技能', options=[
-                discord.SelectOption(label=s.name, value=str(i), description=s.description[:100],
+                discord.SelectOption(label=s.name, value=str(i), description=skill_description(s)[:100],
                                      default=i == (rule.skill_id or rule.slot))
                 for i, s in enumerate(available, 1)]))
             self.change_skill.label = '返回策略設定'

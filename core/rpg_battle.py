@@ -44,20 +44,34 @@ class Skill:
     cooldown: int
     description: str
     condition: str = 'always'
+    timing: str = 'normal'
+
+
+PREPARATION_TIMING = 'preparation'
+
+
+def skill_description(skill):
+    prefix = '【準備】' if skill.timing == PREPARATION_TIMING else ''
+    return f'{prefix}{skill.description}'
 
 
 SKILLS = {
     '民兵': (Skill('奮力一擊', 'strike', 2, '造成 160% 傷害'),
              Skill('包紮', 'heal', 3, '以治療量的 50% 恢復一名隊友生命', 'ally50'),
-             Skill('防禦', 'stance', 3, '自身減傷 20%，持續至下一回合結束', 'self40')),
+             Skill('防禦', 'stance', 3, '自身減傷 20%，持續至下一回合結束', 'self40',
+                   timing=PREPARATION_TIMING)),
     '裝甲步兵': (Skill('重擊', 'strike', 2, '造成 160% 傷害'),
                  Skill('破甲', 'break', 3, '造成 100% 傷害並降低目標防禦 40%，持續至下一回合結束'),
-                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40'),
+                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40',
+                       timing=PREPARATION_TIMING),
                  Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
                  Skill('重裝猛擊', 'crush', 4, '對單一敵人造成 220% 傷害')),
-    '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊並使自身減傷 15%，持續至下一回合結束'),
-             Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值，持續至下一回合結束', 'ally50'),
-             Skill('堅守', 'stance', 3, '自身減傷 50%，持續至下一回合結束', 'self40'),
+    '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊並使自身減傷 15%，持續至下一回合結束',
+                   timing=PREPARATION_TIMING),
+             Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值，持續至下一回合結束', 'ally50',
+                   timing=PREPARATION_TIMING),
+             Skill('堅守', 'stance', 3, '自身減傷 50%，持續至下一回合結束', 'self40',
+                   timing=PREPARATION_TIMING),
              Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後打斷蓄力並暈眩至下一回合結束（跳過一次行動）'),
              Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 25%', 'self40')),
     '弓兵': (Skill('連射', 'double', 2, '兩次 85% 傷害，各自判定命中'),
@@ -66,13 +80,13 @@ SKILLS = {
              Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 75% 傷害，分別判定命中'),
              Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 2%（無條件捨去，最低 1）')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
-             Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%，持續至下一回合結束'),
+             Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%，持續至下一回合結束',
+                   timing=PREPARATION_TIMING),
              Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff'),
              Skill('群體治療', 'group_heal', 4, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
              Skill('強效治療', 'greater_heal', 4, '恢復一名隊友 180% 治療量的 HP', 'ally50')),
 }
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'greater_heal'}
-PREPARATION_EFFECTS = {'guard', 'bless', 'stance', 'taunt'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
 # Defense is a role property of the target. Monsters and non-tank professions
@@ -334,7 +348,7 @@ class Battle:
         if actor.team != 0:
             return 0
         selected = self.select(actor)
-        return int(bool(selected and selected[1].effect in PREPARATION_EFFECTS))
+        return int(bool(selected and selected[1].timing == PREPARATION_TIMING))
 
     def effect_source(self, target, effect):
         source_id = target.effect_sources.get(effect)

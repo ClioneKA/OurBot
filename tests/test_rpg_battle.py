@@ -3,7 +3,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from core.rpg_battle import Battle, Fighter, Rule, default_rules, dump_battle, load_battle, raid_battle
+from core.rpg_battle import (PREPARATION_TIMING, SKILLS, Battle, Fighter, Rule, default_rules,
+                             dump_battle, load_battle, raid_battle, skill_description)
 
 
 def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=None):
@@ -82,6 +83,13 @@ class BattleTests(unittest.TestCase):
         cleric_rules = default_rules('僧侶')
         self.assertEqual(archer_rules[2].condition, 'enemies3')
         self.assertEqual(cleric_rules[1].target, 'strongest')
+
+    def test_preparation_is_a_visible_data_driven_skill_keyword(self):
+        preparation = {skill.name for skills in SKILLS.values() for skill in skills
+                       if skill.timing == PREPARATION_TIMING}
+        self.assertEqual(preparation, {'防禦', '攻守架勢', '嘲諷', '護衛', '堅守', '祝福'})
+        self.assertTrue(skill_description(SKILLS['騎士'][0]).startswith('【準備】'))
+        self.assertFalse(skill_description(SKILLS['僧侶'][0]).startswith('【準備】'))
 
     def test_slow_support_skills_resolve_before_fast_attacks(self):
         tank = fighter('騎士', job='騎士', dex=1,
