@@ -304,15 +304,15 @@ class RaidStore:
                 if balance_version >= 2:
                     progress = depleted / maximum if maximum else 0
                     quality = raid['monster'].get('quality', '普通')
-                    weight = {'普通': 1, '精英': 0.5, '首領': 0, '傳說': 0}.get(quality, 0)
+                    weight = {'普通': 1, '精英': 0.5, '首領': 0.25, '傳說': 0.1}.get(quality, 0)
                     if victory:
                         rounds = battle_data['round']
-                        change = 0.03 if rounds < 7 else 0.015 if rounds < 10 else 0 if rounds <= 13 else -0.01
+                        change = 0.02 if rounds < 7 else 0.01 if rounds <= 13 else 0.005
                     elif '回合上限' in battle_data['result']:
-                        change = -0.02 if progress < 0.6 else -0.01 if progress < 0.85 else 0
+                        change = -0.15 if progress < 0.6 else -0.1 if progress < 0.85 else -0.05
                     else:
-                        change = -0.03 if progress < 0.6 else -0.02 if progress < 0.75 else -0.01
-                    after = round(max(0.9, min(1.1, before * (1 + change * weight))), 6)
+                        change = -0.25 if progress < 0.6 else -0.2 if progress < 0.85 else -0.15
+                    after = round(max(1.0, min(2.5, before * (1 + change * weight))), 6)
                     self.db.execute('INSERT INTO rpg_raid_difficulty VALUES (?,?,?,?) '
                                     'ON CONFLICT(guild_id,channel_id) DO UPDATE SET '
                                     'multiplier=excluded.multiplier,balance_version=excluded.balance_version',

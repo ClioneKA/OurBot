@@ -176,6 +176,13 @@ class MonsterTests(unittest.TestCase):
                 self.assertEqual(party_hp, solo_hp * 4)
                 self.assertEqual(party_enemies[0].stats['攻擊'], solo_enemies[0].stats['攻擊'])
 
+    def test_v3_dynamic_difficulty_scales_hp_attack_and_defense_by_separate_amplitudes(self):
+        boosted = monster('巨獸')
+        boosted['difficulty_multiplier'] = 2.5
+        enemy = raid_battle([participant()], boosted, 1).living(1)[0]
+        self.assertEqual((enemy.stats['HP'], enemy.stats['攻擊'], enemy.stats['防禦']),
+                         (1957, 241, 27))
+
     def test_group_area_targeting_deaths_and_restart(self):
         battle = raid_battle([participant()], monster('史萊姆群'), 123)
         player, *slimes = battle.fighters

@@ -236,16 +236,22 @@ class RaidService:
         requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') == 'mid' else ''
         embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
                         value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
-        v2 = raid['monster'].get('balance_version', 1) >= 2
-        scaling_text = ('；以內容階級為基準，隊伍平均等級主要調整血量並小幅調整攻擊。' if v2
-                        else '；開戰時按隊伍人數及等級決定強度。')
+        balance_version = raid['monster'].get('balance_version', 1)
+        v2 = balance_version >= 2
+        scaling_text = ('；以階級與品質的固定內容等級為基準，人數只調整血量。'
+                        if balance_version >= 3 else
+                        '；以內容階級為基準，隊伍平均等級主要調整血量並小幅調整攻擊。'
+                        if v2 else '；開戰時按隊伍人數及等級決定強度。')
         embed.add_field(name='魔物特性', value=traits + scaling_text, inline=False)
         strength = raid['monster'].get('manual_strength', raid['monster'].get('strength', 1))
         embed.add_field(name='強度倍率', value=f'{strength:g} 倍（管理員設定）' if v2
                         else f'{strength:g} 倍（血量、攻擊、防禦）')
         if raid.get('difficulty'):
             d = raid['difficulty']
-            if v2:
+            if balance_version >= 3:
+                difficulty_text = (f'{d["current"]:.3f}（HP／攻擊／防禦套用 100%／40%／10% 幅度）\n'
+                                   '勝利緩升，平手／戰敗大幅下降；普通／精英／首領／傳說調整權重為 100%／50%／25%／10%；範圍 1–2.5。')
+            elif v2:
                 difficulty_text = (f'{d["current"]:.3f}（HP 完整套用、攻擊套用 40% 幅度、防禦不變）\n'
                                    '依完成回合與削減 HP 微調；精英半額，首領／傳說不調整；範圍 0.9–1.1。')
             else:

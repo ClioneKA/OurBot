@@ -245,7 +245,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         finally:
             reopened.close()
 
-    async def test_v3_difficulty_targets_seven_to_thirteen_rounds_and_ignores_rare_quality(self):
+    async def test_v3_difficulty_climbs_slowly_drops_fast_and_downweights_rare_quality(self):
         from core.rpg_monsters import prepare_monster
 
         participant = self.participant()
@@ -268,20 +268,29 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                 'VALUES (1,8,2.5,1)')
         first = finish('勝利', 12)
         self.assertEqual(first['difficulty']['current'], 1)
-        self.assertEqual(self.repo.difficulty(1, 8), 1)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.01)
         finish('勝利', 25)
-        self.assertEqual(self.repo.difficulty(1, 8), 0.99)
-        finish('戰敗', 12, remaining_percent=80)
-        self.assertEqual(self.repo.difficulty(1, 8), 0.9603)
-        finish('勝利', 10, quality='首領')
-        self.assertEqual(self.repo.difficulty(1, 8), 0.9603)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.01505)
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=1.1,balance_version=3 '
+                'UPDATE rpg_raid_difficulty SET multiplier=2,balance_version=3 '
+                'WHERE guild_id=1 AND channel_id=8')
+        finish('平手（達回合上限）', 30, remaining_percent=80)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.7)
+        finish('戰敗', 12, remaining_percent=80)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.275)
+        finish('勝利', 10, quality='首領')
+        self.assertEqual(self.repo.difficulty(1, 8), 1.278187)
+        finish('戰敗', 10, remaining_percent=80, quality='傳說')
+        self.assertEqual(self.repo.difficulty(1, 8), 1.246232)
+
+        with self.store.db:
+            self.store.db.execute(
+                'UPDATE rpg_raid_difficulty SET multiplier=2.5,balance_version=3 '
                 'WHERE guild_id=1 AND channel_id=8')
         finish('勝利', 5)
-        self.assertEqual(self.repo.difficulty(1, 8), 1.1)
+        self.assertEqual(self.repo.difficulty(1, 8), 2.5)
 
     async def test_dynamic_difficulty_cancellation_and_atomic_rollback(self):
         raid = self.lobby()

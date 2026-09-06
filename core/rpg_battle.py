@@ -987,7 +987,8 @@ def raid_battle(participants, monster, seed):
             stats['攻擊'] = max(1, int(stats['攻擊'] * level_attack))
         manual = monster.get('manual_strength', monster.get('strength', 1))
         difficulty = monster.get('difficulty_multiplier', 1)
-        dynamic = {'HP': difficulty, '攻擊': 1 + (difficulty - 1) * 0.4, '防禦': 1}
+        dynamic = {'HP': difficulty, '攻擊': 1 + (difficulty - 1) * 0.4,
+                   '防禦': 1 + (difficulty - 1) * 0.1}
         for stat in ('HP', '攻擊', '防禦'):
             stats[stat] = max(1, int(stats[stat] * manual * dynamic[stat]))
     else:
