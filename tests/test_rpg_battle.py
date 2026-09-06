@@ -695,6 +695,20 @@ class BattleTests(unittest.TestCase):
         self.assertTrue(any('普通攻擊' in line for line in battle.log))
         self.assertFalse(any('B 使用' in line for line in battle.log))
 
+    def test_monster_targets_randomly_and_taunt_limits_candidates(self):
+        from unittest.mock import patch
+        tank, ally, enemy = fighter(job='騎士'), fighter('C'), fighter('B', 1)
+        battle = Battle([tank, ally, enemy], seed=1)
+        battle.round = 1
+        rule = Rule(1, 1, True, 'always', 'lowest')
+        with patch.object(battle.rng, 'choice', return_value=ally) as choice:
+            self.assertIs(battle.target(enemy, [tank, ally], rule, True), ally)
+            choice.assert_called_once_with([tank, ally])
+        tank.effects['taunt'] = 2
+        with patch.object(battle.rng, 'choice', return_value=tank) as choice:
+            self.assertIs(battle.target(enemy, [tank, ally], rule, True), tank)
+            choice.assert_called_once_with([tank])
+
     def test_taunt_cleanse_expiration_and_hp_cap(self):
         tank, ally, enemy = fighter(job='騎士'), fighter('C'), fighter('B', 1)
         battle = Battle([tank, ally, enemy], seed=1)
@@ -704,7 +718,7 @@ class BattleTests(unittest.TestCase):
         rule = Rule(1, 1, True, 'always', 'lowest')
         self.assertIs(battle.target(enemy, [tank, ally], rule, True), tank)
         battle.round = 3
-        self.assertIs(battle.target(enemy, [tank, ally], rule, True), ally)
+        self.assertIn(battle.target(enemy, [tank, ally], rule, True), (tank, ally))
         cleric = fighter(job='僧侶', rules=[Rule(3, 1, True, 'always', 'lowest')])
         battle.fighters.append(cleric)
         ally.effects.update(poison=5, **{'break': 5})

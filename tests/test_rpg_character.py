@@ -190,6 +190,21 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(reloaded.claim(1, 1), ['starter:club'])
         self.assertEqual(reloaded.inventory_counts(1, 1)['starter:club'], 1)
 
+    def test_public_showcase_must_be_owned_and_persists(self):
+        self.assertFalse(self.characters.has_character(1, 1))
+        self.characters.snapshot(1, 1)
+        self.assertTrue(self.characters.has_character(1, 1))
+        self.assertIsNone(self.characters.showcase(1, 1))
+        with self.assertRaises(CharacterError):
+            self.characters.set_showcase(1, 1, 'clock:archer')
+        self.characters.grant_item(1, 1, 'paint:red')
+        self.characters.set_showcase(1, 1, 'paint:red')
+        self.assertEqual(self.characters.showcase(1, 1), 'paint:red')
+        reloaded = Characters(self.store, self.settings)
+        self.assertEqual(reloaded.showcase(1, 1), 'paint:red')
+        self.characters.set_showcase(1, 1, None)
+        self.assertIsNone(self.characters.showcase(1, 1))
+
     def test_weapons_and_suits_only_grant_direct_stats_and_stability(self):
         self.level(10)
         for job in JOBS:

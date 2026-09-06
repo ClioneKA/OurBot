@@ -105,7 +105,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'冒險', '排行榜', '生成討伐', '開始總力戰', '討伐通知', '戰鬥統計'})
+                                 {'冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰', '討伐通知', '戰鬥統計'})
                 admin = SimpleNamespace(guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2),
                     permissions=SimpleNamespace(administrator=False),
                     response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
@@ -135,7 +135,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     await cog.on_message(message())
                     await cog.on_message(message())
                 self.assertEqual(store.xp(1, 10), 15)
-                user = SimpleNamespace(id=10, display_name='測試冒險者',
+                user = SimpleNamespace(id=10, bot=False, display_name='測試冒險者',
                                        display_avatar=SimpleNamespace(url='https://example.com/avatar.png'))
                 interaction = SimpleNamespace(user=user, guild_id=1,
                                               response=SimpleNamespace(send_message=AsyncMock()))
@@ -147,6 +147,15 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('15 / 83 XP', embed.fields[0].value)
                 self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
                 home = interaction.response.send_message.call_args.kwargs['view']
+                interaction.response.send_message.reset_mock()
+                await cog.adventurer.callback(cog, interaction, user)
+                card = interaction.response.send_message.call_args.kwargs['embed']
+                self.assertEqual(card.title, '安安大冒險｜冒險者名片')
+                self.assertIn('木棒', card.fields[0].value)
+                self.assertEqual(card.fields[1].name, '已裝備技能')
+                self.assertNotIn('金幣', [field.name for field in card.fields])
+                self.assertFalse(any('今日' in field.name for field in card.fields))
+                self.assertNotIn('ephemeral', interaction.response.send_message.call_args.kwargs)
                 await home.handle(interaction, 'jobs')
                 jobs = interaction.response.edit_message.call_args.kwargs['view']
                 self.assertTrue(home.is_finished())

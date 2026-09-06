@@ -84,6 +84,10 @@ class RPGStore:
                               (guild_id, user_id)).fetchone()
         return row[0] if row else 0
 
+    def has_player(self, guild_id, user_id):
+        return self.db.execute('SELECT 1 FROM players WHERE guild_id=? AND user_id=?',
+                               (guild_id, user_id)).fetchone() is not None
+
     @staticmethod
     def day_key(now):
         return datetime.fromtimestamp(now, timezone(timedelta(hours=8))).date().isoformat()

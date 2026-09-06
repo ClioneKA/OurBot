@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, level_floor, level_for
 from core.settings import get_settings
 from core.rpg_menu import AdventureView
-from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, stage_level
+from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, item_text, stage_level
 from core.rpg_battle import Tactics, TARGETS, FIXED_TARGETS, condition_text, rule_skill, skill_description
 from core.rpg_raids import RaidService
 from core.rpg_total_raids import TotalRaidService, TOTAL_RAID_BOSSES
@@ -228,6 +228,71 @@ class RPG(commands.Cog):
             embed.description = f'下次晉升：Lv.{stage_level(state["stage"] + 1, self.settings)}；進階裝備可從 `/冒險 → 商店` 購買取得。'
         embed.set_footer(text='透過文字聊天與語音參與累積經驗' if self.settings.enabled else '目前暫停取得經驗值')
         return embed
+
+    @staticmethod
+    def adventurer_comment(state, showcase=None):
+        """A deterministic Anan-flavoured line. This never calls an AI model."""
+        if '武器' not in state['equipped']:
+            return '安安：「連武器都忘了帶……吾輩先站遠一點。」'
+        if showcase and showcase.startswith('noah:'):
+            return '安安：「這上面都是顏料……諾亞看到一定會很高興吧。」'
+        if showcase and showcase.startswith(('clock:', 'puppet:', 'plague:')):
+            return '安安：「居然把這種戰利品帶回來了……有點厲害。」'
+        comments = {
+            '民兵': '安安：「還在摸索也沒關係，木棒拿穩就好了。」',
+            '裝甲步兵': '安安：「站在最前面揮武器……光看就覺得很累。」',
+            '騎士': '安安：「這個人應該會擋在大家前面……很可靠。」',
+            '弓兵': '安安：「最好別亂跑，箭已經瞄準那邊了。」',
+            '僧侶': '安安：「受傷的話就靠近一點……應該會被照顧吧。」',
+        }
+        return comments[state['job']]
+
+    def adventurer_embed(self, guild_id, member):
+        state = self.characters.snapshot(guild_id, member.id)
+        showcase = self.characters.showcase(guild_id, member.id)
+        roles = {
+            '民兵': '初出茅廬的萬用冒險者',
+            '裝甲步兵': '攻守兼備的前線鬥士',
+            '騎士': '承受攻擊、守護隊友的前衛',
+            '弓兵': '高速而靈巧的遠程輸出',
+            '僧侶': '治療與強化隊伍的支援者',
+        }
+        embed = discord.Embed(title='安安大冒險｜冒險者名片', color=0x8B5CF6,
+                              description=(f'**Lv.{state["level"]}・{state["title"]}**\n'
+                                           f'{roles[state["job"]]}\n\n'
+                                           f'{self.adventurer_comment(state, showcase)}'))
+        embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+        equipment = [f'{slot}：{ITEMS[key].name}' for slot, key in state['equipped'].items()]
+        embed.add_field(name='目前裝備', value='\n'.join(equipment) or '沒有裝備', inline=False)
+        rules = sorted(self.tactics.rules(guild_id, member.id, state['job']), key=lambda rule: rule.slot)
+        embed.add_field(name='已裝備技能', value='｜'.join(rule_skill(state['job'], rule).name for rule in rules),
+                        inline=False)
+        if showcase:
+            item = ITEMS[showcase]
+            detail = item.description or item_text(item)
+            embed.add_field(name='展示品', value=f'**{item.name}**\n{detail}'[:1024], inline=False)
+        else:
+            embed.add_field(name='展示品', value='尚未設定', inline=False)
+        embed.set_footer(text='不公開金幣、背包內容、每日活動量與自動戰鬥規則。')
+        return embed
+
+    @app_commands.command(name='冒險者', description='查看自己或其他成員的公開冒險者名片')
+    @app_commands.guild_only()
+    @app_commands.rename(member='成員')
+    @app_commands.describe(member='要查看的成員；不填則查看自己')
+    async def adventurer(self, interaction: discord.Interaction, member: discord.Member = None):
+        member = member or interaction.user
+        if member.bot:
+            await interaction.response.send_message('機器人沒有冒險者名片。', ephemeral=True)
+            return
+        if (member.id != interaction.user.id
+                and not self.store.has_player(interaction.guild_id, member.id)
+                and not self.characters.has_character(interaction.guild_id, member.id)):
+            await interaction.response.send_message(f'{member.display_name} 還沒有開始安安大冒險。', ephemeral=True,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+            return
+        await interaction.response.send_message(embed=self.adventurer_embed(interaction.guild_id, member),
+                                                allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name='排行榜', description='查看本伺服器經驗值前十名')
     @app_commands.guild_only()

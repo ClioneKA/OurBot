@@ -454,6 +454,8 @@ class Battle:
                                                    -f.hp / f.stats['HP']))
         if rule.target == 'strongest':
             return max(candidates, key=lambda f: f.stats['攻擊'])
+        if offensive and actor.team == 1:
+            return self.rng.choice(candidates)
         return min(candidates, key=lambda f: f.hp / f.stats['HP'])
 
     def select(self, actor):

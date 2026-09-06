@@ -51,6 +51,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'tavern':
         from core.rpg_tavern import TavernView
         next_view = TavernView(view.cog, view.origin)
+    elif page == 'profile':
+        from core.rpg_profile_view import ProfileView
+        next_view = ProfileView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -87,7 +90,7 @@ class AdventureView(discord.ui.View):
         if self.page == 'home':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
                 ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('生活', 'life'),
-                ('移動', 'travel'), ('說明', 'help'))):
+                ('移動', 'travel'), ('展示名片', 'profile'), ('說明', 'help'))):
                 self.button(label, action, i // 3)
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
@@ -212,7 +215,7 @@ class AdventureView(discord.ui.View):
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'travel',
-                          'divination', 'tavern', 'fishing', 'farming', 'provisions', 'help', 'give', 'use_items'):
+                          'divination', 'tavern', 'profile', 'fishing', 'farming', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

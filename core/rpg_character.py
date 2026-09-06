@@ -419,6 +419,10 @@ class Characters:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_starter_claims (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 PRIMARY KEY (guild_id, user_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_character_profiles (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                showcase_item_id TEXT,
+                PRIMARY KEY (guild_id, user_id))''')
             self.db.execute('''INSERT OR IGNORE INTO rpg_starter_claims
                 SELECT guild_id,user_id FROM rpg_inventory WHERE item_id='starter:club' ''')
 
@@ -426,6 +430,10 @@ class Characters:
         row = self.db.execute('SELECT job FROM rpg_characters WHERE guild_id=? AND user_id=?',
                               (guild_id, user_id)).fetchone()
         return row[0] if row else '民兵'
+
+    def has_character(self, guild_id, user_id):
+        return self.db.execute('SELECT 1 FROM rpg_starter_claims WHERE guild_id=? AND user_id=?',
+                               (guild_id, user_id)).fetchone() is not None
 
     def inventory(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
@@ -498,6 +506,32 @@ class Characters:
         self.ensure_starter(guild_id, user_id)
         return dict(self.db.execute('SELECT item_id, quantity FROM rpg_inventory WHERE guild_id=? AND user_id=?',
                                     (guild_id, user_id)))
+
+    def showcase(self, guild_id, user_id):
+        row = self.db.execute('SELECT showcase_item_id FROM rpg_character_profiles '
+                              'WHERE guild_id=? AND user_id=?', (guild_id, user_id)).fetchone()
+        if not row or not row[0] or row[0] not in ITEMS:
+            return None
+        owned = self.db.execute('SELECT 1 FROM rpg_inventory '
+                                'WHERE guild_id=? AND user_id=? AND item_id=?',
+                                (guild_id, user_id, row[0])).fetchone()
+        return row[0] if owned else None
+
+    def set_showcase(self, guild_id, user_id, item_id):
+        if item_id is not None and item_id not in ITEMS:
+            raise CharacterError('找不到這件展示品。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self.ensure_starter(guild_id, user_id)
+            if item_id is not None and not self.db.execute(
+                    'SELECT 1 FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=?',
+                    (guild_id, user_id, item_id)).fetchone():
+                raise CharacterError('背包中沒有這件物品。')
+            self.db.execute('INSERT INTO rpg_character_profiles VALUES (?, ?, ?) '
+                            'ON CONFLICT(guild_id, user_id) DO UPDATE SET '
+                            'showcase_item_id=excluded.showcase_item_id',
+                            (guild_id, user_id, item_id))
+        return item_id
 
     def _grant(self, guild_id, user_id, job):
         candidates = [key for key, item in ITEMS.items()

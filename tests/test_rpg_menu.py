@@ -24,7 +24,8 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.divinations = Divinations(self.store)
         self.cog = SimpleNamespace(characters=self.characters, settings=settings, menu_views=WeakSet(),
                                    divinations=self.divinations,
-                                   character_embed=lambda *args: discord.Embed(title='角色'))
+                                   character_embed=lambda *args: discord.Embed(title='角色'),
+                                   adventurer_embed=lambda *args: discord.Embed(title='冒險者名片'))
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
             response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
             edit_original_response=AsyncMock())
@@ -95,6 +96,17 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         notice = self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value
         self.assertIn('尚未開放', notice)
         self.assertIn('沒有消耗', notice)
+
+    async def test_profile_page_sets_and_clears_showcase(self):
+        self.characters.grant_item(1, 1, 'paint:red')
+        await self.view.handle(self.interaction, 'profile')
+        profile = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(profile.stop)
+        await profile.handle(self.interaction, 'showcase', 'paint:red')
+        self.assertEqual(self.characters.showcase(1, 1), 'paint:red')
+        self.assertIn('現在展示', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+        await profile.handle(self.interaction, 'clear')
+        self.assertIsNone(self.characters.showcase(1, 1))
 
     async def test_movement_page_opens_mag_divination_room(self):
         labels = [child.label for child in self.view.children if isinstance(child, discord.ui.Button)]
