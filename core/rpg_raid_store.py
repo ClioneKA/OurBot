@@ -91,7 +91,7 @@ class RaidStore:
         return row[0]
 
     def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None,
-               pool='regular', use_dynamic=True):
+               pool='regular', use_dynamic=True, payment_user=None, payment_gold=0):
         if 'quality' in monster:
             from dataclasses import asdict
             from core.settings import RaidSettings
@@ -118,8 +118,16 @@ class RaidStore:
                     fixed_drop=FIXED_DROPS.get(monster['kind']),
                     fixed_drop_mode='single_random', chance_drop=CHANCE_DROPS.get(monster['kind']),
                     pool=pool, no_dynamic=not use_dynamic)
+        if payment_user is not None and payment_gold:
+            raid['payment'] = dict(user_id=payment_user, gold=payment_gold, refunded=False)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
+            if payment_user is not None and payment_gold:
+                paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
+                    WHERE guild_id=? AND user_id=? AND gold>=?''',
+                                       (payment_gold, guild, payment_user, payment_gold))
+                if not paid.rowcount:
+                    raise CharacterError(f'金幣不足，張貼懸賞需要 {payment_gold:,} 金幣。')
             balance_version = monster.get('balance_version', 1)
             dynamic = self.difficulty(guild, channel, balance_version) if use_dynamic else 1.0
             if reward_policy is not None:
@@ -143,6 +151,24 @@ class RaidStore:
             self.db.execute('INSERT INTO rpg_raids(id,guild_id,channel_id,status,data) VALUES (?,?,?,?,?)',
                             (raid['id'], guild, channel, raid['status'], json.dumps(raid, ensure_ascii=False)))
         return raid
+
+    def refund_payment(self, raid_id):
+        """Refund a paid raid that never reached a usable announcement, once."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            raid = self.get(raid_id)
+            if not raid:
+                return None
+            payment = raid.get('payment')
+            if not payment or payment.get('refunded'):
+                return raid
+            self.db.execute('''INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?)
+                ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold''',
+                            (raid['guild_id'], payment['user_id'], payment['gold']))
+            payment['refunded'] = True
+            raid['payment'] = payment
+            self._save(raid)
+            return raid
 
     def get(self, raid_id):
         row = self.db.execute('SELECT data FROM rpg_raids WHERE id=?', (raid_id,)).fetchone()
@@ -258,7 +284,9 @@ class RaidStore:
             rewards = []
             for p in raid['participants']:
                 fortune = p.get('fortune') or {}
-                personal_xp = xp * (100 + fortune.get('xp_percent', 0)) // 100
+                tavern = p.get('tavern') or {}
+                personal_xp = xp * (100 + fortune.get('xp_percent', 0)
+                                    + tavern.get('xp_percent', 0)) // 100
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 drop_chance = min(1.0, settings.drop_chance

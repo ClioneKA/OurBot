@@ -20,6 +20,7 @@ from core.rpg_fishing import Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_provisions import Provisions
 from core.rpg_divination import Divinations
+from core.rpg_tavern import TavernService
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 
 
@@ -39,6 +40,7 @@ class RPG(commands.Cog):
         self.tactics = Tactics(self.store)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)
+        self.tavern = TavernService(self)
         self.total_raids = TotalRaidService(self)
 
     async def cog_load(self):
@@ -54,6 +56,7 @@ class RPG(commands.Cog):
         self.fishing_notification_tick.start()
         self.farming_notification_tick.start()
         self.raids.start()
+        self.tavern.start()
         self.total_raids.start()
 
     async def cog_unload(self):
@@ -61,6 +64,7 @@ class RPG(commands.Cog):
         self.fishing_notification_tick.cancel()
         self.farming_notification_tick.cancel()
         await self.raids.close()
+        self.tavern.close()
         await self.total_raids.close()
         for view in tuple(self.menu_views):
             view.closed = True

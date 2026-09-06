@@ -102,6 +102,7 @@ class RaidService:
                 # A crash during send can leave an orphan message; its buttons stay closed.
                 raid.update(status='cancelled', delivered=True)
                 self.repo.save(raid)
+                self.repo.refund_payment(raid['id'])
                 if raid.get('pool') == 'mid' and raid.get('bag_draw'):
                     self.repo.return_mid_kind(raid['channel_id'], raid['monster']['kind'])
             elif raid['status'] == 'lobby' and raid['message_id']:
@@ -236,6 +237,9 @@ class RaidService:
                       '城崎諾亞': '70% HP 前固定使用公告抽中的單色顏料；70% 以下從紅色開始依序調色，完成紅黃藍構圖後蓄力全體未完成稿；盾擊可打斷'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
+        if raid.get('source') == 'bounty':
+            embed.title = '酒館懸賞｜' + safe_text(monster_name(raid['monster']), 32)
+            embed.description += '\n\n本場不發金幣、不調整頻道動態難度，也不重排正常討伐時間。'
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
         requirement = f'｜需 Lv.{MID_RAID_MIN_LEVEL}' if raid.get('pool') in ('mid', 'special') else ''
         embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
@@ -368,6 +372,13 @@ class RaidService:
                 for participant in participants:
                     if participant['id'] in fortunes:
                         participant['fortune'] = fortunes[participant['id']]
+                tavern = getattr(self.cog, 'tavern', None)
+                drinks = (tavern.store.prepare_for_raid(
+                    raid['id'], raid['guild_id'], [participant['id'] for participant in participants])
+                    if participants and tavern is not None else {})
+                for participant in participants:
+                    if participant['id'] in drinks:
+                        participant['tavern'] = drinks[participant['id']]
                 provisions = getattr(self.cog, 'provisions', None)
                 if participants and provisions is not None:
                     prepared = provisions.prepare_for_raid(
@@ -418,11 +429,14 @@ class RaidService:
         raid['delivered'] = True
         self.repo.save(raid)
         self.rosters.pop(raid['id'], None)
-        self.next_spawn(raid['channel_id'], now)
+        if not raid.get('preserve_schedule'):
+            self.next_spawn(raid['channel_id'], now)
 
     async def spawn(self, channel, *, kind=None, name=None, strength=1.0,
                     victory_xp=None, victory_gold=None, drop_percent=None,
-                    initial_member=None, return_raid=False):
+                    initial_member=None, return_raid=False, preserve_schedule=False,
+                    use_dynamic=True, source=None, payment_user=None, payment_gold=0,
+                    use_mid_bag=True):
         if kind is not None and kind not in REGULAR_KINDS + MID_KINDS:
             raise CharacterError('無效的怪物類型。')
         if not 0.1 <= strength <= 10:
@@ -453,20 +467,26 @@ class RaidService:
         self.spawning.add(channel.id)
         task = asyncio.current_task()
         self.spawn_tasks.add(task)
-        self.next_spawn(channel.id, time.time())
+        if not preserve_schedule:
+            self.next_spawn(channel.id, time.time())
         raid = None
         bag_draw = False
         try:
-            if kind is None and pool == 'mid':
+            if kind is None and pool == 'mid' and use_mid_bag:
                 kind = self.repo.next_mid_kind(channel.id, MID_KINDS)
                 bag_draw = True
+            elif kind is None and pool == 'mid':
+                kind = random.choice(MID_KINDS)
             monster = dict(await self.imagine(kind) if kind is not None else await self.imagine())
             monster['strength'] = strength
             if name is not None:
                 monster['name'] = name.strip()
             monster = prepare_monster(monster)
             raid = self.repo.create(channel.guild.id, channel.id, monster, time.time(), asdict(settings), overrides,
-                                    pool=pool)
+                                    pool=pool, use_dynamic=use_dynamic,
+                                    payment_user=payment_user, payment_gold=payment_gold)
+            raid['source'] = source
+            raid['preserve_schedule'] = preserve_schedule
             if initial_member is not None:
                 raid['members'] = [initial_member]
             raid['bag_draw'] = bag_draw
@@ -487,6 +507,7 @@ class RaidService:
             if raid is not None:
                 raid.update(status='cancelled', delivered=True)
                 self.repo.save(raid)
+                self.repo.refund_payment(raid['id'])
                 view = self.views.pop(raid['id'], None)
                 if view:
                     view.stop()
@@ -496,6 +517,39 @@ class RaidService:
         finally:
             self.spawning.discard(channel.id)
             self.spawn_tasks.discard(task)
+
+    async def summon_bounty(self, guild, user, pool, price):
+        """Publish an extra paid raid without moving the normal channel schedule."""
+        if user.bot:
+            raise CharacterError('機器人不能張貼懸賞。')
+        state = self.cog.characters.snapshot(guild.id, user.id)
+        if pool == 'mid' and state['level'] < MID_RAID_MIN_LEVEL:
+            raise CharacterError(f'張貼中階懸賞需達 Lv.{MID_RAID_MIN_LEVEL}。')
+        channel_ids = self.mid_channels if pool == 'mid' else self.channels
+        channels = sorted((self.bot.get_channel(channel_id) for channel_id in channel_ids),
+                          key=lambda channel: channel.id if channel else 0)
+        channels = [channel for channel in channels if isinstance(channel, discord.TextChannel)
+                    and channel.guild.id == guild.id and self.settings_for_channel(channel.id).enabled]
+        if not channels:
+            label = '中階' if pool == 'mid' else '一般'
+            raise CharacterError(f'這個伺服器尚未設定已啟用的{label}討伐文字頻道。')
+        if guild.unavailable:
+            raise CharacterError('伺服器暫時無法使用，請稍後再試。')
+        if any(raid['status'] in ('lobby', 'running') and user.id in raid.get('members', ())
+               for raid in self.repo.pending()):
+            raise CharacterError('你已參與另一場討伐，請先完成或退出。')
+        occupied = {raid['channel_id'] for raid in self.repo.pending()
+                    if raid['status'] in ('posting', 'lobby', 'running')}
+        channel = next((item for item in channels
+                        if item.id not in occupied and item.id not in self.spawning), None)
+        if channel is None:
+            label = '中階' if pool == 'mid' else '一般'
+            raise CharacterError(f'目前所有可用的{label}討伐頻道都有活動，請稍後再試。')
+        message, raid = await self.spawn(
+            channel, victory_gold=0, initial_member=user.id, return_raid=True,
+            preserve_schedule=True, use_dynamic=False, source='bounty',
+            payment_user=user.id, payment_gold=price, use_mid_bag=False)
+        return channel, message, raid
 
     async def summon_divination(self, guild, user):
         """Use the High Priestess to publish and join the highest eligible raid pool."""
@@ -625,7 +679,8 @@ class RaidService:
                         divinations.clear_raid(raid['id'])
                 raid['delivered'] = True
                 self.repo.save(raid)
-                self.next_spawn(raid['channel_id'], now)
+                if not raid.get('preserve_schedule'):
+                    self.next_spawn(raid['channel_id'], now)
                 view = self.views.pop(raid['id'], None)
                 if view:
                     view.stop()
