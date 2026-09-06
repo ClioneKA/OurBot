@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 
 from core.rpg import level_for
-from core.rpg_character import CharacterError, NOAH_EQUIPMENT
+from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -28,6 +28,9 @@ DROP_TABLES = {
     '荊棘妖樹': ('tree:infantry', 'tree:knight', 'tree:archer', 'tree:monk'),
 }
 FIXED_DROPS = {'深淵鐘龍': 'paint:red', '王城傀儡師': 'paint:yellow', '瘟疫縫合獸': 'paint:blue'}
+CHANCE_DROPS = {
+    '城崎諾亞': dict(chance=0.5, rolls=3, pool=tuple(PAINT_ITEMS.values()), mode='single_random'),
+}
 
 
 class RaidStore:
@@ -111,9 +114,10 @@ class RaidStore:
         raid = dict(id=uuid.uuid4().hex, guild_id=guild, channel_id=channel, status='posting',
                     monster=monster, members=[], deadline=now + 300, message_id=None,
                     seed=random.randrange(2**31), participants=[], delivered=False, reward_policy=reward_policy,
-                    drop_version=6, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
+                    drop_version=7, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
                     fixed_drop=FIXED_DROPS.get(monster['kind']),
-                    fixed_drop_mode='single_random', pool=pool, no_dynamic=not use_dynamic)
+                    fixed_drop_mode='single_random', chance_drop=CHANCE_DROPS.get(monster['kind']),
+                    pool=pool, no_dynamic=not use_dynamic)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             balance_version = monster.get('balance_version', 1)
@@ -240,6 +244,17 @@ class RaidStore:
             fixed_drop_winner = None
             if victory and fixed_drop and fixed_drop_mode == 'single_random' and raid['participants']:
                 fixed_drop_winner = rng.choice(raid['participants'])['id']
+            chance_drop = raid.get('chance_drop')
+            chance_drop_results = []
+            if victory and chance_drop and raid['participants']:
+                for _ in range(chance_drop.get('rolls', 1)):
+                    if rng.random() >= chance_drop['chance']:
+                        continue
+                    item = rng.choice(chance_drop['pool'])
+                    winner = None
+                    if chance_drop.get('mode') == 'single_random':
+                        winner = rng.choice(raid['participants'])['id']
+                    chance_drop_results.append((winner, item))
             rewards = []
             for p in raid['participants']:
                 drop = None
@@ -260,6 +275,12 @@ class RaidStore:
                     self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
                                     (raid['guild_id'], p['id'], fixed_drop))
+                chance_items = [item for winner, item in chance_drop_results
+                                if winner is None or p['id'] == winner]
+                for chance_item in chance_items:
+                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
+                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
+                                    (raid['guild_id'], p['id'], chance_item))
                 self.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?) '
                                 'ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp',
                                 (raid['guild_id'], p['id'], xp))
@@ -276,6 +297,8 @@ class RaidStore:
                 reward = dict(id=p['id'], xp=xp, gold=gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
+                if chance_items:
+                    reward['chance_items'] = chance_items
                 if extra_item:
                     reward['extra_item'] = extra_item
                 rewards.append(reward)

@@ -34,13 +34,16 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                                 pool='special', use_dynamic=False)
         self.assertNotIn('difficulty', raid)
         self.assertEqual(raid['monster']['difficulty_multiplier'], 1.0)
+        reward_text = next(field.value for field in self.service.lobby_embed(raid).fields
+                           if field.name == '獎勵')
+        self.assertIn('全隊抽 3 次噴漆罐，每次有 50% 機率掉落 1 個隨機顏色', reward_text)
         raid.update(status='running', participants=[participant], members=[1])
         self.repo.save(raid)
         battle = raid_battle([participant], raid['monster'], 1)
         battle.result = '勝利'
 
         class FixedRng:
-            values = iter((0.0, 0.0, 1.0))
+            values = iter((0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
             def random(self):
                 return next(self.values)
             @staticmethod
@@ -50,6 +53,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_raid_store.random.Random', return_value=FixedRng()):
             result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.mid_raid)
         self.assertIn(result['rewards'][0]['item'], ('noah:archer:weapon', 'noah:archer:suit'))
+        self.assertEqual(result['rewards'][0]['chance_items'], ['paint:red'] * 3)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['paint:red'], 3)
         self.assertNotIn('difficulty_change', result)
         self.assertEqual(self.repo.difficulty(1, 2, 3), 2.0)
 

@@ -273,7 +273,13 @@ class RaidService:
         loot_text = ('不掉落飾品或其他裝備' if not pool or raid['monster']['kind'] == '史萊姆群'
                      else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
         if raid['monster']['kind'] == SPECIAL_KIND:
-            loot_text += '；裝備有 50% 機率符合自身職業，皆帶一個顏料鑲嵌格；另有 2% 機率取得未完成的魔女畫作'
+            chance_drop = raid.get('chance_drop')
+            loot_text += '；裝備有 50% 機率符合自身職業，皆帶一個顏料鑲嵌格'
+            if chance_drop:
+                loot_text += (f'；勝利時全隊抽 {chance_drop.get("rolls", 1)} 次噴漆罐，'
+                              f'每次有 {chance_drop["chance"] * 100:g}% 機率掉落 1 個隨機顏色，'
+                              '每罐隨機給一名參戰者')
+            loot_text += '；另有 2% 機率取得未完成的魔女畫作'
         if raid.get('fixed_drop'):
             if raid.get('fixed_drop_mode', 'per_participant') == 'single_random':
                 loot_text += f'；勝利時全隊固定掉落 1 個 {ITEMS[raid["fixed_drop"]].name}，隨機給一名參戰者'
@@ -311,6 +317,8 @@ class RaidService:
             lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣'
                      + (f'、{ITEMS[r["item"]].name}' if r['item'] else '')
                      + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '')
+                     + (f'、{ITEMS[r["chance_item"]].name}' if r.get('chance_item') else '')
+                     + ''.join(f'、{ITEMS[item].name}' for item in r.get('chance_items', ()))
                      + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
             players = [fighter for fighter in battle.fighters if fighter.team == 0]
@@ -390,6 +398,8 @@ class RaidService:
                 f'{r["id"]}: {r["xp"]} XP, {r.get("gold", 0)} 金幣, '
                 f'{ITEMS[r["item"]].name if r["item"] else "無隨機掉落"}'
                 f'{", " + ITEMS[r["fixed_item"]].name if r.get("fixed_item") else ""}'
+                f'{", " + ITEMS[r["chance_item"]].name if r.get("chance_item") else ""}'
+                f'{"".join(", " + ITEMS[item].name for item in r.get("chance_items", ()))}'
                 f'{", " + ITEMS[r["extra_item"]].name if r.get("extra_item") else ""}' for r in raid['rewards'])
             await message.edit(embed=self.battle_embed(raid, battle), view=None,
                                attachments=[discord.File(io.BytesIO(report.encode('utf-8')), filename='討伐戰報.txt')],
