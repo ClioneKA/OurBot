@@ -182,14 +182,14 @@ for key, name, description in (
     ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得；可組成套組，或鑲嵌於諾亞裝備。'),
     ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得；可組成套組，或鑲嵌於諾亞裝備。'),
 ):
-    ITEMS[key] = Item(name, '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    ITEMS[key] = Item(name, '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
                       description=description)
 
 ITEMS['paint:set'] = Item(
-    '噴漆罐套組', '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    '噴漆罐套組', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='由紅、黃、藍色噴漆罐各一罐組合；可在背包中使用，召喚特殊四階討伐「城崎諾亞」。')
 ITEMS['noah:unfinished'] = Item(
-    '未完成的魔女畫作', '製作材料', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    '未完成的魔女畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='城崎諾亞留下的未完成畫作，未來可用於召喚繪畫魔女．城崎諾亞。')
 
 PAINT_ITEMS = {'red': 'paint:red', 'yellow': 'paint:yellow', 'blue': 'paint:blue'}

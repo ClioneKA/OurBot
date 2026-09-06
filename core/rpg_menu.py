@@ -42,6 +42,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'provision_loadout':
         from core.rpg_provision_view import ProvisionLoadoutView
         next_view = ProvisionLoadoutView(view.cog, view.origin)
+    elif page == 'use_items':
+        from core.rpg_item_use_view import ItemUseView
+        next_view = ItemUseView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page)
     try:
@@ -103,10 +106,7 @@ class AdventureView(discord.ui.View):
             self.button('上一頁', 'previous', 1, self.index == 0)
             self.button('下一頁', 'next', 1, self.index == self.pages - 1)
             self.button('給予物品', 'give', 1)
-            counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
-            self.button('組合噴漆罐', 'combine_paint', 1,
-                        any(counts.get(key, 0) < 1 for key in ('paint:red', 'paint:yellow', 'paint:blue')))
-            self.button('使用噴漆罐套組', 'use_paint_set', 1, counts.get('paint:set', 0) < 1)
+            self.button('使用道具', 'use_items', 1)
         if self.page != 'home':
             add_back(self, 2)
         self.button('重新整理', 'refresh', 2)
@@ -194,26 +194,13 @@ class AdventureView(discord.ui.View):
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             if action in ('home', 'equipment', 'skills', 'backpack', 'shop', 'jobs', 'life', 'fishing',
-                          'farming', 'provisions', 'help', 'give'):
+                          'farming', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':
                 await interaction.response.edit_message(content='安安大冒險已關閉。', embed=None, view=None)
                 self.closed = True
                 self.stop()
-                return
-            if action == 'use_paint_set' and self.page == 'backpack':
-                await interaction.response.defer()
-                try:
-                    channel, _, raid = await self.cog.raids.summon_noah(interaction.guild, self.owner)
-                    color = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}[raid['monster']['primary_color']]
-                    notice = f'已消耗噴漆罐套組，在 {channel.mention} 召喚四階城崎諾亞；起始顏料為{color}，你已自動報名。'
-                except CharacterError as exc:
-                    notice = str(exc)
-                except discord.HTTPException:
-                    notice = '特殊討伐發布失敗，噴漆罐套組已退回背包，請稍後再試。'
-                self.rebuild()
-                await interaction.edit_original_response(embed=self.embed(notice), view=self)
                 return
             notice = None
             try:
@@ -226,9 +213,6 @@ class AdventureView(discord.ui.View):
                     granted = self.cog.characters.claim(self.guild_id, self.owner.id)
                     notice = ('已補發：' + '、'.join(ITEMS[key].name for key in granted)
                               if granted else '目前職業的免費補給都已在背包中。')
-                elif action == 'combine_paint' and self.page == 'backpack':
-                    item = self.cog.characters.combine_paint_set(self.guild_id, self.owner.id)
-                    notice = f'已消耗三色噴漆罐各 1，組合成 {item.name}。'
                 elif action == 'previous' and self.page == 'backpack':
                     self.index = max(0, self.index - 1)
                 elif action == 'next' and self.page == 'backpack':

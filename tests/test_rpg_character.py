@@ -12,6 +12,8 @@ from core.settings import RPGSettings, SettingsError
 
 class CharacterTests(unittest.TestCase):
     def test_noah_paint_set_and_socket_variants(self):
+        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'paint:set', 'noah:unfinished'):
+            self.assertEqual((ITEMS[key].slot, ITEMS[key].category), ('', '製作材料'))
         self.level(45)
         self.characters.change_job(1, 1, '弓兵')
         for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:archer:weapon', 'clock:archer'):

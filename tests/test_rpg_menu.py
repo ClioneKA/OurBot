@@ -67,3 +67,28 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         await bag.handle(self.interaction, 'previous')
         self.assertEqual(bag.index, 0)
         self.assertLessEqual(len(bag.to_components()), 5)
+
+    async def test_backpack_uses_single_extensible_item_action_panel(self):
+        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:unfinished'):
+            self.characters.grant_item(1, 1, key)
+        await self.view.handle(self.interaction, 'backpack')
+        bag = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(bag.stop)
+        labels = [child.label for child in bag.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('使用道具', labels)
+        self.assertNotIn('組合噴漆罐', labels)
+        self.assertNotIn('使用噴漆罐套組', labels)
+
+        self.interaction.response.edit_message.reset_mock()
+        await bag.handle(self.interaction, 'use_items')
+        panel = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(panel.stop)
+        self.assertEqual(panel.catalog, ['recipe:paint_set', 'noah:unfinished'])
+        await panel.handle(self.interaction, 'use')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['paint:set'], 1)
+        await panel.handle(self.interaction, 'select', 'noah:unfinished')
+        await panel.handle(self.interaction, 'use')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['noah:unfinished'], 1)
+        notice = self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value
+        self.assertIn('尚未開放', notice)
+        self.assertIn('沒有消耗', notice)
