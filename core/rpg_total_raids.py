@@ -16,16 +16,21 @@ from core.rpg_character import CharacterError
 from core.rpg_raids import channel_ids
 from core.rpg_total_battle import (
     ACTION_ATTACK,
+    ACTION_CANVAS,
     ACTION_SKILL,
+    NOAH_JOB,
+    PAINT_EFFECTS,
+    PAINT_NAMES,
     TotalRaidError,
     dump_total_battle,
     load_total_battle,
+    noah_total_battle_from_participants,
     training_dummy_battle_from_participants,
 )
 
 
 logger = logging.getLogger(__name__)
-TOTAL_RAID_BOSSES = ('訓練用假人',)
+TOTAL_RAID_BOSSES = ('訓練用假人', NOAH_JOB)
 PRIVATE_CONFIRMATION_SECONDS = 8
 
 
@@ -93,6 +98,15 @@ def effect_status(fighter, battle):
     corruption = fighter.status_stacks.get('corruption', 0)
     if corruption:
         debuffs.append(f'腐敗({corruption}/3層)')
+    paint = fighter.status_stacks.get('paint_mask', 0)
+    if paint:
+        buffs.append(f'顏料・{PAINT_NAMES.get(paint, "未知")}({PAINT_EFFECTS.get(paint, "")})')
+    if fighter.status_stacks.get('source_erosion'):
+        debuffs.append('源色侵蝕(本回合命中即抹除)')
+    if fighter.job == NOAH_JOB:
+        source = battle.mechanics.get('noah_source_stacks', 0)
+        if source:
+            buffs.append(f'源色({source}層・攻擊+{source * 10}%)')
     return '、'.join(buffs) or '無', '、'.join(debuffs) or '無'
 
 
@@ -251,7 +265,12 @@ class TotalRaidActionSelect(discord.ui.Select):
             remaining = action.get('cooldown_remaining', 0)
             if remaining:
                 continue
-            value = ACTION_ATTACK if action['action'] == ACTION_ATTACK else f'{ACTION_SKILL}:{action["skill_slot"]}'
+            if action['action'] == ACTION_ATTACK:
+                value = ACTION_ATTACK
+            elif action['action'] == ACTION_CANVAS:
+                value = f'{ACTION_CANVAS}:{action["canvas_color"]}'
+            else:
+                value = f'{ACTION_SKILL}:{action["skill_slot"]}'
             options.append(discord.SelectOption(
                 label=action['name'][:100], value=value,
                 description=action['description'][:100],
@@ -262,16 +281,21 @@ class TotalRaidActionSelect(discord.ui.Select):
 
     async def callback(self, interaction):
         raw = self.values[0]
-        action, slot = (raw.split(':', 1) + [None])[:2] if ':' in raw else (raw, None)
-        slot = int(slot) if slot is not None else None
+        action, detail = (raw.split(':', 1) + [None])[:2] if ':' in raw else (raw, None)
+        slot = int(detail) if action == ACTION_SKILL else None
+        special_target = detail if action == ACTION_CANVAS else None
         try:
             _room, battle = self.parent_view.service.running_battle(
                 self.parent_view.room_id, interaction.user.id)
             targets = battle.valid_targets(interaction.user.id, action, slot)
             if not targets:
                 await interaction.response.defer()
-                await self.parent_view.service.submit_action(
-                    self.parent_view.room_id, interaction.user.id, action, None, slot)
+                if action == ACTION_CANVAS:
+                    await self.parent_view.service.submit_action(
+                        self.parent_view.room_id, interaction.user.id, action, special_target, slot)
+                else:
+                    await self.parent_view.service.submit_action(
+                        self.parent_view.room_id, interaction.user.id, action, None, slot)
                 await interaction.edit_original_response(
                     content='本回合行動已登記；結算前仍可重新選擇。', view=None)
                 self.parent_view.service.schedule_private_cleanup(interaction)
@@ -291,12 +315,39 @@ class TotalRaidActionChoiceView(discord.ui.View):
         super().__init__(timeout=120)
         self.service, self.room_id, self.user_id = service, room_id, user_id
         self.add_item(TotalRaidActionSelect(self, battle))
+        actor = next(fighter for fighter in battle.living(0) if fighter.user_id == user_id)
+        if battle.noah_phase() == 2 and battle.paint_mask(actor) and len(battle.living(0)) > 1:
+            self.add_item(TotalRaidPaintGiftSelect(self, battle))
 
     async def interaction_check(self, interaction):
         if interaction.user.id == self.user_id:
             return True
         await interaction.response.send_message('這不是你的行動面板。', ephemeral=True)
         return False
+
+
+class TotalRaidPaintGiftSelect(discord.ui.Select):
+    def __init__(self, parent, battle):
+        actor = next(fighter for fighter in battle.living(0) if fighter.user_id == parent.user_id)
+        options = [discord.SelectOption(
+            label=fighter.name[:100], value=battle.key(fighter),
+            description=f'將你的{PAINT_NAMES[battle.paint_mask(actor)]}顏料給予此隊友'[:100],
+        ) for fighter in battle.living(0) if fighter is not actor]
+        super().__init__(placeholder='額外操作：給予顏料', options=options,
+                         custom_id='total_raid:private:paint_gift', row=1)
+        self.parent_view = parent
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        try:
+            await self.parent_view.service.submit_paint_gift(
+                self.parent_view.room_id, interaction.user.id, self.values[0])
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+            return
+        await interaction.edit_original_response(
+            content='顏料給予已登記；這不會消耗本回合的普通攻擊或技能行動。', view=None)
+        self.parent_view.service.schedule_private_cleanup(interaction)
 
 
 class TotalRaidTargetSelect(discord.ui.Select):
@@ -499,8 +550,11 @@ class TotalRaidService:
                 for participant in participants:
                     participant['provisions'] = prepared.get(participant['id'], {})
             seed = random.randrange(2**31)
-            battle = training_dummy_battle_from_participants(
-                participants, seed=seed, max_rounds=self.settings.max_rounds)
+            if room['boss'] == NOAH_JOB:
+                battle = noah_total_battle_from_participants(participants, seed=seed, max_rounds=30)
+            else:
+                battle = training_dummy_battle_from_participants(
+                    participants, seed=seed, max_rounds=self.settings.max_rounds)
             room.update(
                 status='running', members=[item['id'] for item in participants],
                 participants=participants, seed=seed, battle=dump_total_battle(battle),
@@ -543,7 +597,7 @@ class TotalRaidService:
                      if fighter.team == 0 and fighter.user_id == user_id)
         lines = [f'第 {battle.planning_round} 回合｜{actor.name}｜HP {actor.hp:,}/{actor.stats["HP"]:,}',
                  '', '技能冷卻：']
-        for action in battle.available_actions(user_id)[1:]:
+        for action in (item for item in battle.available_actions(user_id) if item['action'] == ACTION_SKILL):
             cooldown = action['cooldown_remaining']
             state = '可使用' if cooldown == 0 else f'CD {cooldown} 回合'
             lines.append(f'• 槽 {action["skill_slot"]}【{action["name"]}】：{state}')
@@ -552,9 +606,20 @@ class TotalRaidService:
             if choice.action == ACTION_ATTACK:
                 selected = '普通攻擊'
             else:
-                rule = next(rule for rule in actor.rules if rule.slot == choice.skill_slot)
-                selected = f'【{rule_skill(actor.job, rule).name}】'
+                if choice.action == ACTION_CANVAS:
+                    selected = f'踏入畫布・{PAINT_NAMES[{"red": 1, "yellow": 2, "blue": 4}[choice.target]]}'
+                else:
+                    rule = next(rule for rule in actor.rules if rule.slot == choice.skill_slot)
+                    selected = f'【{rule_skill(actor.job, rule).name}】'
             lines.extend(('', f'目前已登記：{selected}（可在結算前修改）'))
+        paint = battle.paint_mask(actor)
+        if battle.noah_phase() == 2:
+            effect = f'（{PAINT_EFFECTS[paint]}）' if paint else ''
+            lines.extend(('', f'目前顏料：{PAINT_NAMES[paint]}{effect}'))
+            gift = battle.paint_gifts.get(user_id)
+            receiver = battle.fighter_for_key(gift) if gift else None
+            if receiver is not None:
+                lines.append(f'已登記給予：{receiver.name}')
         lines.extend(('', '請選擇本回合行動。'))
         return '\n'.join(lines)
 
@@ -568,6 +633,14 @@ class TotalRaidService:
                 await self._resolve(room, battle)
             else:
                 await self._edit_public(room, battle)
+
+    async def submit_paint_gift(self, room_id, user_id, target):
+        async with self.lock(room_id):
+            room, battle = self.running_battle(room_id, user_id)
+            battle.submit_paint_gift(user_id, target)
+            room['battle'] = dump_total_battle(battle)
+            self.repo.save(room)
+            await self._edit_public(room, battle)
 
     async def _resolve(self, room, battle, timeout=False):
         battle.resolve(use_defaults=timeout)

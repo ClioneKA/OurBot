@@ -4,12 +4,14 @@ import unittest
 from core.rpg_battle import Fighter, Rule, default_rules
 from core.rpg_total_battle import (
     ACTION_ATTACK,
+    ACTION_CANVAS,
     ACTION_SKILL,
     MAX_TOTAL_RAID_PLAYERS,
     TotalRaidBattle,
     TotalRaidError,
     dump_total_battle,
     load_total_battle,
+    noah_total_battle,
     training_dummy_battle,
 )
 
@@ -25,6 +27,118 @@ def player(user_id, name=None, job='民兵', hp=300, attack=80, dex=30, rules=No
 
 
 class TotalRaidBattleTests(unittest.TestCase):
+    def test_noah_uses_fixed_stats_scaled_hp_and_thirty_round_limit(self):
+        battle = noah_total_battle([player(index, hp=5000) for index in range(1, 7)], seed=1)
+        noah = battle.noah()
+        self.assertEqual((noah.stats['HP'], noah.stats['攻擊'], noah.stats['防禦']),
+                         (84_000, 550, 340))
+        self.assertEqual((noah.speed, noah.stats['命中率'], noah.stats['閃避率'], battle.max_rounds),
+                         (65, 110, 10, 30))
+
+    def test_noah_phase_one_canvas_contrast_reduces_announced_attack(self):
+        first, second = player(1, hp=5000), player(2, hp=5000)
+        battle = noah_total_battle([first, second], seed=2)
+        battle.mechanics['noah_intent_color'] = 'red'
+        battle.submit(1, ACTION_CANVAS, 'yellow')
+        battle.submit(2, ACTION_CANVAS, 'blue')
+        battle.resolve()
+        self.assertGreater(first.hp, 4700)
+        self.assertIn('畫布混色：玩家1(黃色)、玩家2(藍色) → 綠色。', battle.log)
+        self.assertTrue(any('對比色成立' in line for line in battle.log))
+
+    def test_noah_phase_two_simultaneous_gifts_make_black_and_pause(self):
+        players = [player(index, hp=5000, attack=1) for index in range(1, 4)]
+        battle = noah_total_battle(players, seed=3)
+        battle.noah().hp = battle.noah().stats['HP'] * 70 // 100
+        self.assertTrue(battle._sync_noah_phase())
+        battle._prepare_noah_intent()
+        players[0].status_stacks['paint_mask'] = 1
+        players[1].status_stacks['paint_mask'] = 2
+        players[2].status_stacks['paint_mask'] = 4
+        battle.submit_paint_gift(1, battle.key(players[2]))
+        battle.submit_paint_gift(2, battle.key(players[2]))
+        target = battle.key(battle.noah())
+        for fighter in players:
+            battle.submit(fighter.user_id, ACTION_ATTACK, target)
+        hp = [fighter.hp for fighter in players]
+        battle.resolve()
+        self.assertEqual([fighter.hp for fighter in players], hp)
+        self.assertEqual(battle.mechanics['noah_phase_round'], 0)
+        self.assertTrue(all(not battle.paint_mask(fighter) for fighter in players))
+        self.assertTrue(any('本回合停止行動' in line for line in battle.log))
+
+    def test_noah_phase_two_liberation_stacks_and_clears_paint(self):
+        adventurer = player(1, hp=5000, attack=1)
+        battle = noah_total_battle([adventurer], seed=4)
+        battle.noah().hp = battle.noah().stats['HP'] * 70 // 100
+        battle._sync_noah_phase()
+        battle.mechanics['noah_phase_round'] = 2
+        battle.mechanics['noah_intent_color'] = 'red'
+        battle.mechanics['noah_intent_target'] = battle.key(adventurer)
+        battle.submit(1, ACTION_ATTACK, battle.key(battle.noah()))
+        battle.resolve()
+        self.assertEqual(battle.mechanics['noah_source_stacks'], 1)
+        self.assertEqual(battle.paint_mask(adventurer), 0)
+        self.assertTrue(any('同回合施放【源色解放】' in line for line in battle.log))
+
+    def test_green_held_before_source_hit_prevents_stun(self):
+        adventurer = player(1, hp=5000, attack=1)
+        battle = noah_total_battle([adventurer], seed=4)
+        battle.noah().hp = battle.noah().stats['HP'] * 70 // 100
+        battle._sync_noah_phase()
+        adventurer.status_stacks['paint_mask'] = 6
+        battle.mechanics.update(noah_phase_round=0, noah_intent_color='red',
+                                noah_intent_target=battle.key(adventurer))
+        battle.rng.random = lambda: 0
+        battle.submit(1, ACTION_ATTACK, battle.key(battle.noah()))
+        battle.resolve()
+        self.assertNotIn('stun', adventurer.effects)
+
+    def test_phase_three_hits_use_normal_defense_and_no_source_stun(self):
+        tank = player(1, hp=5000, attack=1)
+        tank.stats['防禦'] = 1000
+        battle = noah_total_battle([tank], seed=7)
+        noah = battle.noah()
+        noah.stats.update(命中率=150, 暴擊率=0)
+        noah.hp = noah.stats['HP'] * 35 // 100
+        battle._sync_noah_phase()
+        battle._prepare_noah_intent()
+        before = tank.hp
+        battle.submit(1, ACTION_ATTACK, battle.key(noah))
+        battle.resolve()
+        self.assertGreater(tank.hp, before - 250)
+        self.assertNotIn('stun', tank.effects)
+
+    def test_noah_phase_three_erosion_can_be_cleansed_at_source_cost(self):
+        monk = player(1, name='僧侶', job='僧侶', hp=5000,
+                      rules=[Rule(1, 1, True, 'always', 'debuffed', skill_id=3)])
+        ally = player(2, hp=5000, attack=1)
+        battle = noah_total_battle([monk, ally], seed=5)
+        battle.noah().hp = battle.noah().stats['HP'] * 35 // 100
+        battle._sync_noah_phase()
+        battle.mechanics['noah_phase_round'] = 2
+        battle._prepare_noah_intent()
+        marked = next(fighter for fighter in battle.living(0)
+                      if fighter.status_stacks.get('source_erosion'))
+        battle.submit(1, ACTION_SKILL, battle.key(marked), 1)
+        battle.submit(2, ACTION_ATTACK, battle.key(battle.noah()))
+        battle.resolve()
+        self.assertGreater(marked.hp, 0)
+        self.assertEqual(battle.mechanics['noah_source_stacks'], 1)
+        self.assertTrue(any('源色侵蝕】被淨化' in line for line in battle.log))
+
+    def test_noah_snapshot_preserves_paint_gift_and_intent(self):
+        first, second = player(1, hp=5000), player(2, hp=5000)
+        battle = noah_total_battle([first, second], seed=6)
+        battle.noah().hp = battle.noah().stats['HP'] * 70 // 100
+        battle._sync_noah_phase()
+        battle._prepare_noah_intent()
+        first.status_stacks['paint_mask'] = 1
+        battle.submit_paint_gift(1, battle.key(second))
+        restored = load_total_battle(json.loads(json.dumps(dump_total_battle(battle))))
+        self.assertEqual(restored.paint_gifts, battle.paint_gifts)
+        self.assertEqual(restored.intent(), battle.intent())
+
     def test_supports_one_to_six_unique_players(self):
         for count in range(1, MAX_TOTAL_RAID_PLAYERS + 1):
             battle = training_dummy_battle([player(index) for index in range(1, count + 1)])

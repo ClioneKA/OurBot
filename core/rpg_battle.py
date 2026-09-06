@@ -299,8 +299,27 @@ class Battle:
         used = actor.combat_stats['skills_used']
         used[name] = used.get(name, 0) + 1
 
+    def accuracy_bonus(self, actor):
+        return 0
+
+    def critical_bonus(self, actor):
+        return 0
+
+    def damage_dealt_multiplier(self, actor):
+        return 1.0
+
+    def damage_taken_multiplier(self, target):
+        return 1.0
+
+    def healing_done_multiplier(self, actor):
+        return 1.0
+
+    def healing_received_multiplier(self, target):
+        return 1.0
+
     def heal(self, actor, target, requested, trigger_share=True):
-        requested = max(0, int(requested))
+        requested = max(0, int(requested * self.healing_done_multiplier(actor)
+                               * self.healing_received_multiplier(target)))
         amount = min(target.stats['HP'] - target.hp, requested)
         target.hp += amount
         actor.combat_stats['healing_done'] += amount
@@ -448,7 +467,7 @@ class Battle:
             return False
         actor.combat_stats['attacks'] += 1
         evasion = target.stats['閃避率'] + (15 if target.has('moon_shadow', self.round) else 0)
-        chance = max(10, min(99, actor.stats['命中率'] - evasion))
+        chance = max(10, min(99, actor.stats['命中率'] + self.accuracy_bonus(actor) - evasion))
         if not precise and self.rng.random() * 100 >= chance:
             actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
@@ -456,7 +475,8 @@ class Battle:
         base_attack = actor.stats['攻擊']
         base_attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
         blessed = actor.has('bless', self.round)
-        attack = base_attack * (1.25 if blessed else 1)
+        paint_attack = base_attack * self.damage_dealt_multiplier(actor)
+        attack = paint_attack * (1.25 if blessed else 1)
         base_defense = target.stats['防禦']
         if target.has('guard', self.round):
             base_defense += target.guard_bonus
@@ -464,7 +484,7 @@ class Battle:
         defense = 0 if broken else base_defense
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
-        critical = self.rng.random() * 100 < actor.stats['暴擊率']
+        critical = self.rng.random() * 100 < actor.stats['暴擊率'] + self.critical_bonus(actor)
         guarded = bool(target.damage_guard_chance and self.rng.random() * 100 < target.damage_guard_chance)
         puppet_shield = (target.job == '王城傀儡師'
                          and any(f.job == '咒傀儡' for f in self.living(target.team))
@@ -487,11 +507,12 @@ class Battle:
                 value = max(1, value // 2)
             if guarded:
                 value = max(1, value // 2)
+            value = max(1, int(value * self.damage_taken_multiplier(target)))
             return value
 
         damage = final_damage(attack, defense)
-        base_damage = final_damage(base_attack, base_defense)
-        broken_damage = final_damage(base_attack, defense)
+        base_damage = final_damage(paint_attack, base_defense)
+        broken_damage = final_damage(paint_attack, defense)
         vulnerable = target.has('vulnerable', self.round)
         pre_vulnerable_damage = damage
         if vulnerable:

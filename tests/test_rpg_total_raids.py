@@ -144,6 +144,22 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embed.fields[1].value, '1/6')
         self.assertIn('不發放獎勵', embed.description)
 
+    async def test_noah_room_starts_fixed_total_raid_instead_of_dummy(self):
+        host = HashableMember(1, '房主')
+        guild = SimpleNamespace(id=1, get_member=lambda uid: host if uid == 1 else None)
+        channel = FakeChannel(70, guild)
+        self.bot.channels[70] = channel
+        room = self.service.repo.create(1, 50, 70, 1, '繪畫魔女．城崎諾亞', 1)
+        room['message_id'] = 999
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            room = await self.service.begin(room['id'], host)
+        battle = load_total_battle(room['battle'])
+        self.assertEqual((battle.noah().stats['HP'], battle.noah().stats['攻擊'],
+                          battle.noah().stats['防禦'], battle.max_rounds),
+                         (14_000, 550, 340, 30))
+        self.assertIn('需混出', self.service.battle_embed(room, battle).fields[1].value)
+
     async def test_only_host_can_close_abandoned_lobby(self):
         room = self.service.repo.create(1, 50, 70, 1, '訓練用假人', 1)
         with self.assertRaisesRegex(TotalRaidError, '只有開房'):
