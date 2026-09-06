@@ -262,7 +262,8 @@ class RPG(commands.Cog):
                                            f'{roles[state["job"]]}\n\n'
                                            f'{self.adventurer_comment(state, showcase)}'))
         embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-        equipment = [f'{slot}：{ITEMS[key].name}' for slot, key in state['equipped'].items()]
+        equipment = [f'{slot}：{ITEMS[state["equipped"][slot]].name}'
+                     for slot in state['slots'] if slot in state['equipped']]
         embed.add_field(name='目前裝備', value='\n'.join(equipment) or '沒有裝備', inline=False)
         rules = sorted(self.tactics.rules(guild_id, member.id, state['job']), key=lambda rule: rule.slot)
         embed.add_field(name='已裝備技能', value='｜'.join(rule_skill(state['job'], rule).name for rule in rules),
