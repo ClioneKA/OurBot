@@ -68,7 +68,7 @@ class FarmingView(discord.ui.View):
         xp_text = (f'已達最高等級 Lv.{MAX_LEVEL}｜累積 {state["xp"]:,} XP' if required is None
                    else f'{progress:,}／{required:,} XP｜累積 {state["xp"]:,} XP')
         embed = discord.Embed(title='安安大冒險｜農耕', color=0x65A30D,
-                              description=f'農耕 Lv.**{level}**｜{xp_text}\n兩塊田地可同時耕作，且都能種植任何已解鎖植物。')
+                              description=f'農耕 Lv.**{level}**｜{xp_text}\n已解鎖的田地可同時耕作，且都能種植任何已解鎖植物。')
         for location_id, location_name in LOCATIONS.items():
             session = state['sessions'].get(location_id)
             if state['level'] < LOCATION_LEVELS[location_id]:
@@ -126,6 +126,12 @@ class FarmingView(discord.ui.View):
                     plant = PLANTS[result['plant_id']]
                     notice = (f'收成 {plant.name} ×{result["quantity"]}（基礎 {result["base_yield"]}'
                               f'、等級加成 {result["level_bonus"]}），獲得 {result["xp"]:,} 農耕 XP。')
+                    for location_id, required_level in LOCATION_LEVELS.items():
+                        if required_level > 1 and result['old_level'] < required_level <= result['new_level']:
+                            notice += f'\n解鎖新農地：{LOCATIONS[location_id]}！'
+                    for unlocked in PLANTS.values():
+                        if unlocked.level > 1 and result['old_level'] < unlocked.level <= result['new_level']:
+                            notice += f'\n解鎖新植物：{unlocked.name}！'
                     if result['new_level'] > result['old_level']:
                         notice += f'\n農耕等級提升至 Lv.{result["new_level"]}！'
                 elif action == 'cancel':

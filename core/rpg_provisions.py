@@ -14,6 +14,10 @@ FOODS = {
                              heal_permille=250, regen_permille=0, regen_rounds=0),
     'food:lake:rare': dict(ingredients=('fishing:lake:rare', 'farming:chili'),
                            heal_permille=250, regen_permille=75, regen_rounds=2),
+    'food:waterway:common': dict(ingredients=('fishing:waterway:common', 'farming:night_pumpkin'),
+                                 heal_permille=350, regen_permille=0, regen_rounds=0),
+    'food:waterway:rare': dict(ingredients=('fishing:waterway:rare', 'farming:moonwhite_rice'),
+                               heal_permille=350, regen_permille=100, regen_rounds=2),
 }
 
 POTION_KINDS = {
@@ -29,6 +33,8 @@ for tier, ingredients, percent, points in (
      {'hit': 3, 'evasion': 2, 'critical': 3}),
     (2, ('fishing:lake:weed', 'farming:moonbell'), 8,
      {'hit': 5, 'evasion': 3, 'critical': 5}),
+    (3, ('fishing:waterway:weed', 'farming:dreammist_herb'), 11,
+     {'hit': 7, 'evasion': 4, 'critical': 7}),
 ):
     for kind, (stat, mode) in POTION_KINDS.items():
         POTIONS[f'potion:{tier}:{kind}'] = dict(

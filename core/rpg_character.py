@@ -251,6 +251,13 @@ for key, name, category, description, sell_price in (
     ('fishing:lake:rod', '魔力漂流木', '製作材料', '帶有微弱魔力、適合製作竿身的木材。', 40),
     ('fishing:lake:line', '魔力釣線', '製作材料', '能承受魔力魚掙扎的堅韌釣線。', 40),
     ('fishing:lake:hook', '魔力魚鉤', '製作材料', '刻有簡單魔法紋路的魚鉤。', 40),
+    ('fishing:waterway:common', '幽光盲魚', '料理素材', '棲息在監獄地下水路、會發出微光的盲魚。', 100),
+    ('fishing:waterway:rare', '鏡蝶魚', '料理素材', '鱗片如鏡面、尾鰭似蝶翼的稀有魚。', 200),
+    ('fishing:waterway:weed', '夜露水草', '煉金素材', '在地下水路吸收魔力露水生長的水草。', 120),
+    ('fishing:waterway:coin', '褪色金幣', '換金道具', '被地下水流沖刷得看不清圖案的舊金幣。', 400),
+    ('fishing:waterway:rod', '黑檀漂流木', '製作材料', '質地堅硬、沉著黑亮的高級竿身材料。', 80),
+    ('fishing:waterway:line', '月蠶釣線', '製作材料', '由月蠶絲製成、幾乎透明的堅韌釣線。', 80),
+    ('fishing:waterway:hook', '黯銀魚鉤', '製作材料', '在黑暗中仍泛著銀光的銳利魚鉤。', 80),
 ):
     ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
                       description=description, sell_price=sell_price)
@@ -259,6 +266,7 @@ for key, name, description in (
     ('fishing:rod:old', '老舊釣竿', '初次釣魚時由安安贈送，沒有額外效果。'),
     ('fishing:rod:simple', '簡易釣竿', '收竿時有 20% 機率追加一次捕獲。'),
     ('fishing:rod:magic', '魔力釣竿', '收竿時有 30% 機率追加一次捕獲，稀有魚權重提高 10%。'),
+    ('fishing:rod:glow', '幽光釣竿', '收竿時有 40% 機率追加一次捕獲，稀有魚權重提高 20%。'),
 ):
     ITEMS[key] = Item(name, '釣竿', '', 0, (0, 0, 0, 0, 0), category='釣竿',
                       description=description, transferable=False)
@@ -270,6 +278,9 @@ for key, name, category, description, sell_price in (
     ('farming:witch_tomato', '魔女番茄', '料理素材', '農耕 Lv.20 解鎖，可搭配魔女湖鱒。', 50),
     ('farming:moonbell', '月鈴草', '煉金素材', '農耕 Lv.25 解鎖，可搭配月光水草。', 60),
     ('farming:chili', '火紅辣椒', '料理素材', '農耕 Lv.30 解鎖，可搭配星紋魔女鰻。', 100),
+    ('farming:night_pumpkin', '夜色南瓜', '料理素材', '農耕 Lv.40 解鎖，可搭配幽光盲魚。', 100),
+    ('farming:dreammist_herb', '夢霧草', '煉金素材', '農耕 Lv.45 解鎖，可搭配夜露水草。', 120),
+    ('farming:moonwhite_rice', '月白米', '料理素材', '農耕 Lv.50 解鎖，可搭配鏡蝶魚。', 200),
 ):
     ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
                       description=description, sell_price=sell_price)
@@ -279,6 +290,8 @@ for key, name, description, sell_price in (
     ('food:pond:rare', '香酥七彩錦魚', 'HP 首次降至 40% 以下時回復 15%，後續兩回合各回復 5%。', 100),
     ('food:lake:common', '番茄湖鱒燉湯', 'HP 首次降至 40% 以下時回復最大 HP 的 25%。', 100),
     ('food:lake:rare', '香辣星紋魔女鰻', 'HP 首次降至 40% 以下時回復 25%，後續兩回合各回復 7.5%。', 200),
+    ('food:waterway:common', '幽光魚南瓜濃湯', 'HP 首次降至 40% 以下時回復最大 HP 的 35%。', 200),
+    ('food:waterway:rare', '月白鏡蝶魚茶泡飯', 'HP 首次降至 40% 以下時回復 35%，後續兩回合各回復 10%。', 400),
 ):
     ITEMS[key] = Item(name, '料理', '', 0, (0, 0, 0, 0, 0), category='料理',
                       description=description, sell_price=sell_price)
@@ -291,6 +304,7 @@ _POTION_KINDS = {
 for tier, prefix, percent, chance, sell_price in (
     (1, '初級', 5, (3, 2, 3), 100),
     (2, '中級', 8, (5, 3, 5), 200),
+    (3, '高級', 11, (7, 4, 7), 400),
 ):
     for kind, (name, stat) in _POTION_KINDS.items():
         amount = {'hit': chance[0], 'evasion': chance[1], 'critical': chance[2]}.get(kind, percent)

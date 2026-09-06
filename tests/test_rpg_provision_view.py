@@ -69,6 +69,9 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'recipe_group', 'potion2')
         self.assertTrue(self.view.recipe_id.startswith('potion:2:'))
         self.assertIn('月光水草', self.view.embed().fields[0].value)
+        await self.view.handle(self.interaction, 'recipe_group', 'potion3')
+        self.assertTrue(self.view.recipe_id.startswith('potion:3:'))
+        self.assertIn('夜露水草', self.view.embed().fields[0].value)
 
 
 if __name__ == '__main__':

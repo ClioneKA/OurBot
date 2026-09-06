@@ -23,12 +23,15 @@ class ProvisionTests(unittest.TestCase):
                 VALUES (1,1,?,?) ON CONFLICT(guild_id,user_id,item_id)
                 DO UPDATE SET quantity=quantity+excluded.quantity''', (key, quantity))
 
-    def test_recipe_catalog_has_four_foods_and_seven_types_per_tier(self):
-        self.assertEqual(len(FOODS), 4)
-        self.assertEqual(len(POTIONS), 14)
+    def test_recipe_catalog_has_six_foods_and_seven_types_per_tier(self):
+        self.assertEqual(len(FOODS), 6)
+        self.assertEqual(len(POTIONS), 21)
         self.assertEqual({key.split(':')[2] for key in POTIONS},
                          {'hp', 'attack', 'defense', 'healing', 'hit', 'evasion', 'critical'})
         self.assertTrue(all(key in ITEMS for key in (*FOODS, *POTIONS)))
+        self.assertEqual(POTIONS['potion:3:attack']['amount'], 11)
+        self.assertEqual(POTIONS['potion:3:evasion']['amount'], 4)
+        self.assertEqual(FOODS['food:waterway:rare']['regen_permille'], 100)
 
     def test_crafting_is_atomic(self):
         key = 'food:pond:common'

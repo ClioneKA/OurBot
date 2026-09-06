@@ -35,20 +35,37 @@ SPOTS = {
         ('fishing:lake:weed', 20), ('fishing:lake:coin', 15),
         ('fishing:lake:rod', 3), ('fishing:lake:line', 3),
         ('fishing:lake:hook', 3)), 'fishing:lake:rare'),
+    'waterway': FishingSpot('監獄地下水路', 40, 600, (
+        ('fishing:waterway:common', 44), ('fishing:waterway:rare', 10),
+        ('fishing:waterway:weed', 22), ('fishing:waterway:coin', 15),
+        ('fishing:waterway:rod', 3), ('fishing:waterway:line', 3),
+        ('fishing:waterway:hook', 3)), 'fishing:waterway:rare'),
 }
 
 ROD_BONUS = {
     'fishing:rod:old': (0.0, 1.0),
     'fishing:rod:simple': (0.2, 1.0),
     'fishing:rod:magic': (0.3, 1.1),
+    'fishing:rod:glow': (0.4, 1.2),
 }
+
+ROD_ORDER = tuple(ROD_BONUS)
 
 RECIPES = {
     'fishing:rod:simple': ('fishing:rod:old', 'fishing:pond:rod',
                            'fishing:pond:line', 'fishing:pond:hook'),
     'fishing:rod:magic': ('fishing:rod:simple', 'fishing:lake:rod',
                           'fishing:lake:line', 'fishing:lake:hook'),
+    'fishing:rod:glow': ('fishing:rod:magic', 'fishing:waterway:rod',
+                         'fishing:waterway:line', 'fishing:waterway:hook'),
 }
+
+
+def next_rod(rod_id):
+    try:
+        return ROD_ORDER[ROD_ORDER.index(rod_id) + 1]
+    except (ValueError, IndexError):
+        return None
 
 
 def fishing_mastery(level, spot):
@@ -234,10 +251,9 @@ class Fishing:
             self._ensure_player(guild, user)
             current = self.db.execute('SELECT rod_id FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
                                       (guild, user)).fetchone()[0]
-            target = ('fishing:rod:simple' if current == 'fishing:rod:old' else
-                      'fishing:rod:magic' if current == 'fishing:rod:simple' else None)
+            target = next_rod(current)
             if not target:
-                raise CharacterError('魔力釣竿已是目前最高階釣竿。')
+                raise CharacterError(f'{ITEMS[current].name}已是目前最高階釣竿。')
             counts = dict(self.db.execute('SELECT item_id,quantity FROM rpg_inventory WHERE guild_id=? AND user_id=?',
                                           (guild, user)))
             missing = [ITEMS[key].name for key in RECIPES[target] if counts.get(key, 0) < 1]

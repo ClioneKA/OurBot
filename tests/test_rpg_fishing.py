@@ -36,7 +36,7 @@ class FishingTests(unittest.TestCase):
     def test_rules_and_first_use_grants_one_bound_old_rod(self):
         self.assertEqual([(seconds, catches) for _, seconds, catches in DURATIONS.values()],
                          [(1800, 2), (7200, 6), (28800, 20)])
-        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20])
+        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20, 40])
         self.assertEqual([fishing_mastery(level, SPOTS['pond']) for level in (1, 11, 20, 31, 120)],
                          [0, 10, 10, 30, 30])
         self.assertTrue(all(sum(weight for _, weight in spot.loot) == 100 for spot in SPOTS.values()))
@@ -115,6 +115,17 @@ class FishingTests(unittest.TestCase):
         finally:
             other.close()
 
+    def test_level_forty_waterway_xp(self):
+        self.fishing.state(1, 1)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(40),))
+        started = self.fishing.start(1, 1, 'waterway', 'short', now=0)
+        self.assertEqual((started['spot'].name, started['base_catches']), ('監獄地下水路', 2))
+        self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertEqual((result['items'], result['xp']), ({'fishing:waterway:common': 2}, 1200))
+
     def test_level_mastery_adds_items_without_xp_and_uses_dispatch_snapshot(self):
         self.fishing.state(1, 1)
         with self.store.db:
@@ -149,6 +160,13 @@ class FishingTests(unittest.TestCase):
         counts = self.characters.inventory_counts(1, 1)
         self.assertNotIn('fishing:rod:simple', counts)
         self.assertEqual(counts['fishing:rod:magic'], 1)
+        self.grant('fishing:waterway:rod', 'fishing:waterway:line', 'fishing:waterway:hook')
+        self.fishing.craft_next(1, 1)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertNotIn('fishing:rod:magic', counts)
+        self.assertEqual(counts['fishing:rod:glow'], 1)
+        with self.assertRaisesRegex(CharacterError, '最高階'):
+            self.fishing.craft_next(1, 1)
 
     def test_exact_sale_prices_transfer_and_notifications(self):
         self.grant('fishing:pond:coin', 'fishing:pond:common')

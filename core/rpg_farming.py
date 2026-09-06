@@ -22,11 +22,13 @@ class Plant:
 LOCATIONS = {
     'courtyard': '中庭花圃',
     'prison': '監獄菜園',
+    'greenhouse': '廢棄溫室',
 }
 
 LOCATION_LEVELS = {
     'courtyard': 1,
     'prison': 20,
+    'greenhouse': 40,
 }
 
 PLANTS = {
@@ -36,6 +38,12 @@ PLANTS = {
     'witch_tomato': Plant('魔女番茄', 'farming:witch_tomato', 20, 60 * 60, 2, 300, '搭配普通魚'),
     'moonbell': Plant('月鈴草', 'farming:moonbell', 25, 2 * 60 * 60, 2, 600, '製作中級藥水'),
     'chili': Plant('火紅辣椒', 'farming:chili', 30, 4 * 60 * 60, 1, 2400, '搭配稀有魚'),
+    'night_pumpkin': Plant('夜色南瓜', 'farming:night_pumpkin', 40, 60 * 60, 2, 600,
+                           '搭配幽光盲魚'),
+    'dreammist_herb': Plant('夢霧草', 'farming:dreammist_herb', 45, 2 * 60 * 60, 2, 1200,
+                            '製作高級藥水'),
+    'moonwhite_rice': Plant('月白米', 'farming:moonwhite_rice', 50, 4 * 60 * 60, 1, 4800,
+                            '搭配鏡蝶魚'),
 }
 
 

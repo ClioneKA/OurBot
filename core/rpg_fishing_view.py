@@ -7,7 +7,8 @@ import discord
 from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_fishing import DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery, fishing_progress
+from core.rpg_fishing import (DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
+                              fishing_progress, next_rod)
 from core.rpg_menu import navigate
 
 
@@ -58,8 +59,7 @@ class FishingView(discord.ui.View):
         active = session and session['status'] == 'active'
         ready = active and time.time() >= session['ready_at']
         current = state['rod_id']
-        target = ('fishing:rod:simple' if current == 'fishing:rod:old' else
-                  'fishing:rod:magic' if current == 'fishing:rod:simple' else None)
+        target = next_rod(current)
         self._button('開始釣魚', 'start', 3, bool(active), discord.ButtonStyle.success)
         self._button('收竿', 'claim', 3, not ready, discord.ButtonStyle.primary)
         self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
@@ -94,8 +94,7 @@ class FishingView(discord.ui.View):
                 f'基礎捕獲 {DURATIONS[self.duration_id][2]} 次\n'
                 f'目前熟練產量：{fishing_mastery(level, SPOTS[self.spot_id])}%', inline=False)
         current = state['rod_id']
-        target = ('fishing:rod:simple' if current == 'fishing:rod:old' else
-                  'fishing:rod:magic' if current == 'fishing:rod:simple' else None)
+        target = next_rod(current)
         if target:
             counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
             recipe = '\n'.join(f'{ITEMS[key].name}：{counts.get(key, 0)}/1' for key in RECIPES[target])
@@ -114,8 +113,11 @@ class FishingView(discord.ui.View):
         if result.get('mastery_bonus', 0):
             header += f'\n熟練產量發動：額外獲得 {result["mastery_bonus"]} 份物品！'
         text = header + '\n' + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。'
-        if result['old_level'] < 20 <= result['new_level']:
-            text += '\n解鎖新釣場：魔女島湖泊！'
+        for spot in SPOTS.values():
+            if spot.level > 1 and result['old_level'] < spot.level <= result['new_level']:
+                text += f'\n解鎖新釣場：{spot.name}！'
+        if result['old_level'] < 30 <= result['new_level']:
+            text += '\n魔女島湖泊的熟練產量提升至 10%！'
         if result['new_level'] > result['old_level']:
             text += f'\n釣魚等級提升至 Lv.{result["new_level"]}！'
         return text

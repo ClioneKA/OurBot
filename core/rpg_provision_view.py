@@ -9,11 +9,11 @@ from core.rpg_menu import navigate
 from core.rpg_provisions import FOODS, POTIONS, RECIPES
 
 
-GROUPS = {
-    'food': ('料理', list(FOODS)),
-    'potion1': ('初級藥水', [key for key in POTIONS if key.startswith('potion:1:')]),
-    'potion2': ('中級藥水', [key for key in POTIONS if key.startswith('potion:2:')]),
-}
+POTION_TIER_NAMES = {1: '初級藥水', 2: '中級藥水', 3: '高級藥水'}
+GROUPS = {'food': ('料理', list(FOODS))}
+for tier, label in POTION_TIER_NAMES.items():
+    GROUPS[f'potion{tier}'] = (
+        label, [key for key in POTIONS if key.startswith(f'potion:{tier}:')])
 
 
 class ProvisionView(discord.ui.View):
