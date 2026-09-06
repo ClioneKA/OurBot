@@ -64,3 +64,23 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'remove')
         self.assertIn('面板已關閉', self.interaction.response.send_message.call_args.args[0])
         self.assertIn('武器', self.characters.snapshot(1, 1)['equipped'])
+
+    async def test_paint_controls_only_appear_for_selected_socket_equipment(self):
+        def actions():
+            return {child.action for child in self.view.children if hasattr(child, 'action')}
+
+        def button_labels():
+            return {child.label for child in self.view.children if isinstance(child, discord.ui.Button)}
+
+        self.assertNotIn('paint', actions())
+        self.assertNotIn('鑲嵌／改色', button_labels())
+        self.store.award_voice([(1, 1, level_floor(45))])
+        self.characters.change_job(1, 1, '弓兵')
+        self.characters.grant_item(1, 1, 'noah:archer:weapon')
+        await self.view.handle(self.interaction, 'item', 'noah:archer:weapon')
+        self.assertIn('paint', actions())
+        self.assertIn('鑲嵌／改色', button_labels())
+
+        await self.view.handle(self.interaction, 'item', '弓兵:0:武器')
+        self.assertNotIn('paint', actions())
+        self.assertNotIn('鑲嵌／改色', button_labels())

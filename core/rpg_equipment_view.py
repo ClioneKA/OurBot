@@ -58,19 +58,24 @@ class EquipmentView(discord.ui.View):
         self.add_item(PanelSelect('item', placeholder='選擇要穿戴的物品' if options else '這個欄位沒有可用裝備',
                                  row=1, disabled=not options, options=options or [
                                      discord.SelectOption(label='沒有可用裝備', value='empty')]))
-        self.add_item(PanelSelect('paint', placeholder='選擇鑲嵌顏料', row=2, options=[
-            discord.SelectOption(label=f'{PAINT_NAMES[color]}噴漆', value=color,
-                                 description=('武器攻擊 +30%；套裝 HP +50%' if color == 'red' else
-                                              '武器命中 +5 個百分點；套裝速度 +15' if color == 'yellow' else
-                                              '武器 5% 機率減傷 50%；套裝閃避 +5 個百分點'),
-                                 default=color == self.paint_color)
-            for color in PAINT_ITEMS]))
-        for button in (self.wear, self.remove, self.socket, self.provisions, self.refresh, self.close_panel):
+        can_socket = self.item_id is not None and bool(ITEMS[self.item_id].socket_base)
+        if can_socket:
+            self.add_item(PanelSelect('paint', placeholder='選擇鑲嵌顏料', row=2, options=[
+                discord.SelectOption(label=f'{PAINT_NAMES[color]}噴漆', value=color,
+                                     description=('武器攻擊 +30%；套裝 HP +50%' if color == 'red' else
+                                                  '武器命中 +5 個百分點；套裝速度 +15' if color == 'yellow' else
+                                                  '武器 5% 機率減傷 50%；套裝閃避 +5 個百分點'),
+                                     default=color == self.paint_color)
+                for color in PAINT_ITEMS]))
+        buttons = [self.wear, self.remove]
+        if can_socket:
+            buttons.append(self.socket)
+        buttons.extend((self.provisions, self.refresh, self.close_panel))
+        for button in buttons:
             self.add_item(button)
         add_back(self, 4)
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']
-        self.socket.disabled = self.item_id is None or not ITEMS[self.item_id].socket_base
         return state
 
     def embed(self, notice=None):
