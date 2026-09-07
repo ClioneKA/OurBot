@@ -228,10 +228,11 @@ for job, key, name, bonuses in (
 
 
 # Tier-4 scheduled raid equipment. These T40 pieces sit between the T30 raid
-# set and the regular T50 shop set; each encounter serves two professions.
+# set and the regular T50 shop set; a complete set contributes about 25% of
+# the Lv.40 naked values and each encounter serves two professions.
 for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
-    ('裝甲步兵', 'infantry', '雷牙戰斧', (53, 66, 11, 0), '雙極戰甲', (213, 11, 46, 0)),
-    ('弓兵', 'archer', '蒼焰長弓', (0, 49, 0, 0), '炎翎獵裝', (199, 15, 37, 0)),
+    ('裝甲步兵', 'infantry', '雷牙戰斧', (64, 79, 13, 0), '雙極戰甲', (256, 13, 55, 0)),
+    ('弓兵', 'archer', '蒼焰長弓', (0, 59, 0, 0), '炎翎獵裝', (239, 18, 51, 0)),
 ):
     ITEMS[f'twin_beast:{key}:weapon'] = Item(
         weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
@@ -240,8 +241,8 @@ for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
         suit_name, '套裝', job, 2, (0, 0, 0, 0, 0), suit_combat, required_level=40)
 
 for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
-    ('騎士', 'knight', '鯨骨劍盾', (98, 52, 22, 0), '吞潮重鎧', (235, 0, 54, 0)),
-    ('僧侶', 'monk', '潮鳴權杖', (0, 52, 0, 54), '深海僧袍', (199, 0, 37, 43)),
+    ('騎士', 'knight', '鯨骨劍盾', (118, 62, 26, 0), '吞潮重鎧', (282, 0, 65, 0)),
+    ('僧侶', 'monk', '潮鳴權杖', (0, 62, 0, 65), '深海僧袍', (239, 0, 51, 52)),
 ):
     ITEMS[f'whale:{key}:weapon'] = Item(
         weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
@@ -409,6 +410,8 @@ for key, item in list(ITEMS.items()):
         ITEMS[key] = replace(item, value=300)
     elif key.startswith('noah:') and item.slot in ('武器', '套裝'):
         ITEMS[key] = replace(item, value=1200)
+    elif key.startswith(('twin_beast:', 'whale:')):
+        ITEMS[key] = replace(item, value=1000)
     elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:', 'clock:', 'puppet:', 'plague:')):
         ITEMS[key] = replace(item, value=750)
 

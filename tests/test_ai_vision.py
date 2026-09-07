@@ -22,6 +22,7 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.ai.bot = SimpleNamespace(user=SimpleNamespace(id=99))
         self.ai.allowed_channels = {10}
         self.ai.allowed_guilds = set()
+        self.ai.allowed_roles = set()
         self.ai.memory = Mock()
         self.ai.memory.get_affinity.return_value = 0
         self.ai.memory.get_preferred_name.return_value = None
@@ -55,6 +56,23 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
             channel=SimpleNamespace(id=10, fetch_message=AsyncMock()),
             guild=SimpleNamespace(id=1), author=SimpleNamespace(id=2, bot=False),
         )
+
+    def test_role_gate_is_optional_and_accepts_any_configured_role(self):
+        message = self.message()
+        self.assertTrue(self.ai._has_ai_role(message))
+
+        self.ai.allowed_roles = {20, 30}
+        message.author.roles = [SimpleNamespace(id=10), SimpleNamespace(id=30)]
+        self.assertTrue(self.ai._has_ai_role(message))
+
+    def test_role_gate_rejects_guild_member_without_role_but_keeps_dms(self):
+        self.ai.allowed_roles = {20}
+        message = self.message()
+        message.author.roles = [SimpleNamespace(id=10)]
+        self.assertFalse(self.ai._has_ai_role(message))
+
+        message.guild = None
+        self.assertTrue(self.ai._has_ai_role(message))
 
     async def test_ordinary_post_never_sends_images(self):
         message = self.message(attachments=[attachment()])

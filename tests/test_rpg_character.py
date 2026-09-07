@@ -7,7 +7,7 @@ import unittest
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import (Characters, CharacterError, DYE_PRICE, EMBROIDERY_PRICE,
                                 GROWTH, JOBS, ITEMS,
-                                combat_from_stats, item_sellable)
+                                combat_from_stats, item_sell_price, item_sellable)
 from core.settings import RPGSettings, SettingsError
 
 
@@ -404,6 +404,36 @@ class CharacterTests(unittest.TestCase):
                 stat = ('HP', '攻擊', '防禦', '治療量')[index]
                 total = sum(ITEMS[key].combat[index] for key in keys)
                 self.assertEqual(total, (naked[stat] * 30 + 50) // 100, (job, stat))
+
+    def test_t40_raid_sets_progress_past_t30_and_have_resale_value(self):
+        t30 = {
+            '裝甲步兵': ('plague:axe', 'clock:infantry'),
+            '騎士': ('plague:sword_shield', 'clock:knight'),
+            '弓兵': ('plague:bow', 'clock:archer'),
+            '僧侶': ('plague:staff', 'clock:monk'),
+        }
+        t40 = {
+            '裝甲步兵': ('twin_beast:infantry:weapon', 'twin_beast:infantry:suit'),
+            '騎士': ('whale:knight:weapon', 'whale:knight:suit'),
+            '弓兵': ('twin_beast:archer:weapon', 'twin_beast:archer:suit'),
+            '僧侶': ('whale:monk:weapon', 'whale:monk:suit'),
+        }
+        for job in JOBS:
+            for older, newer in zip(t30[job], t40[job]):
+                self.assertTrue(all(new >= old for new, old in
+                                    zip(ITEMS[newer].combat, ITEMS[older].combat)),
+                                (job, older, newer))
+            self.assertTrue(any(
+                sum(ITEMS[key].combat[index] for key in t40[job])
+                > sum(ITEMS[key].combat[index] for key in t30[job])
+                for index in range(4)))
+        for key in (
+            'twin_beast:infantry:weapon', 'twin_beast:infantry:suit',
+            'twin_beast:archer:weapon', 'twin_beast:archer:suit', 'twin_beast:charm',
+            'whale:knight:weapon', 'whale:knight:suit',
+            'whale:monk:weapon', 'whale:monk:suit', 'whale:charm',
+        ):
+            self.assertEqual((ITEMS[key].value, item_sell_price(ITEMS[key])), (1000, 200))
 
     def test_shop_payment_gates_repeat_and_rollback(self):
         self.level(90)

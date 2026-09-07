@@ -175,6 +175,7 @@ class AI(Cog_Extension):
         self.web_search_daily_limit = settings.ai.search.daily_limit
         self.allowed_guilds = _snowflake_ids("AI_GUILD_IDS")
         self.allowed_channels = _snowflake_ids("AI_CHANNEL_IDS")
+        self.allowed_roles = _snowflake_ids("AI_ROLE_IDS")
         self.reply_chance = settings.ai.reply_chance
         self.direct_reply_chance = settings.ai.direct_reply_chance
         self.user_cooldown = settings.ai.limits.user_cooldown_seconds
@@ -296,6 +297,15 @@ class AI(Cog_Extension):
             isinstance(referenced, discord.Message)
             and self.bot.user is not None
             and referenced.author.id == self.bot.user.id
+        )
+
+    def _has_ai_role(self, message: discord.Message) -> bool:
+        """Restrict guild AI access when one or more role IDs are configured."""
+        if message.guild is None or not self.allowed_roles:
+            return True
+        return any(
+            role.id in self.allowed_roles
+            for role in getattr(message.author, "roles", ())
         )
 
     async def _reply_scene(self, message: discord.Message) -> Optional[str]:
@@ -1366,6 +1376,8 @@ class AI(Cog_Extension):
     @Cog_Extension.listener()
     async def on_message(self, message: discord.Message):
         if self.client is None or message.author.bot:
+            return
+        if not self._has_ai_role(message):
             return
         if not message.content.strip():
             mentioned = self.bot.user is not None and self.bot.user in message.mentions
