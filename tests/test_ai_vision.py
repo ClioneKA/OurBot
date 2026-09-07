@@ -32,7 +32,11 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.ai.direct_reply_chance = 1.0
         self.ai.reply_chance = 1.0
         self.ai.client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(
-            return_value=SimpleNamespace(output_text='{"text":"一隻貓","output":"image"}')
+            return_value=SimpleNamespace(output_text=(
+                '{"text":"一隻貓","output":"image","emotion":"普通",'
+                '"affinity_delta":0,"preferred_name_action":"keep",'
+                '"preferred_name":null}'
+            ))
         )))
         self.ai.histories = defaultdict(lambda: deque(maxlen=20))
         self.ai.preferred_name_cache = {}
@@ -208,6 +212,68 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         await self.ai.on_message(message)
         self.ai.client.responses.create.assert_not_awaited()
         message.channel.fetch_message.assert_not_awaited()
+
+    async def test_direct_prompt_delegates_nickname_intent_to_model(self):
+        await self.ai._generate_reply(self.message("我叫你去吃飯"), "我叫你去吃飯", "direct")
+        instructions = self.ai.client.responses.create.call_args.kwargs["instructions"]
+        self.assertIn("依完整語意判斷", instructions)
+        self.assertIn("『我叫你去吃飯』是在叫你做事", instructions)
+
+    async def test_ambiguous_phrase_is_not_saved_before_model_reply(self):
+        message = self.message("我叫你去吃飯")
+        self.ai._clean_content = Mock(return_value=message.content)
+        self.ai._remember_channel_message = Mock()
+        self.ai.memory_summary_enabled = False
+        self.ai._is_rate_limit_exempt = Mock(return_value=False)
+        self.ai._reserve_request = AsyncMock(return_value=False)
+        await self.ai.on_message(message)
+        self.ai.memory.set_preferred_name.assert_not_called()
+
+    def test_structured_nickname_action_is_validated_then_applied(self):
+        self.ai.memory.set_preferred_name.return_value = True
+        reply = self.ai._parse_reply(
+            '{"text":"好。","output":"text","emotion":"普通",'
+            '"affinity_delta":0,"preferred_name_action":"set",'
+            '"preferred_name":"「小明」"}'
+        )
+        self.ai._apply_preferred_name_action(1, 2, reply)
+        self.ai.memory.set_preferred_name.assert_called_once_with(1, 2, "小明")
+
+    def test_invalid_model_nickname_is_not_applied(self):
+        reply = AI._parse_reply(
+            '{"text":"好。","output":"text","emotion":"普通",'
+            '"affinity_delta":0,"preferred_name_action":"set",'
+            '"preferred_name":"<@123>"}'
+        )
+        self.ai._apply_preferred_name_action(1, 2, reply)
+        self.ai.memory.set_preferred_name.assert_not_called()
+
+    async def test_impression_summary_uses_full_anan_persona(self):
+        self.ai.persona = "夏目安安完整人格：內向、敏感，以吾輩自稱。"
+        self.ai.memory_summary_interval = 1
+        self.ai.memory_summary_batch_size = 10
+        self.ai.memory_summary_max_tokens = 300
+        self.ai.memory_summary_model = "summary-model"
+        self.ai.guild_memory_limit = 20
+        self.ai.guild_memory_min_evidence = 2
+        self.ai.memory_summary_locks = defaultdict(asyncio.Lock)
+        self.ai.memory.increment_impression_reply_count.return_value = 1
+        self.ai.memory.list_impression_observations.return_value = [
+            SimpleNamespace(id=7, user_id=2, content="今天也一起看電影吧")
+        ]
+        self.ai.memory.list_guild_memories.return_value = []
+        self.ai.memory.get_impression.return_value = None
+        self.ai.client.responses.create.return_value = SimpleNamespace(output_text=(
+            '{"participants":[{"key":"p1","impression":"吾輩不討厭他。"}],'
+            '"guild_memories":[]}'
+        ))
+
+        await self.ai._summarize_participant_impressions(1)
+
+        instructions = self.ai.client.responses.create.call_args.kwargs["instructions"]
+        self.assertIn(self.ai.persona, instructions)
+        self.assertIn("不得寫成 GPT", instructions)
+        self.assertIn("內向、戒備、敏感", instructions)
 
 
 if __name__ == "__main__":
