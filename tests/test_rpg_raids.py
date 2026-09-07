@@ -14,6 +14,7 @@ from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_divination import Divinations
+from core.rpg_monsters import BALANCE_VERSION
 from core.rpg_raids import RaidService, RaidSignup, channel_ids
 from core.rpg_raid_store import RaidStore, DROP_TABLES
 from core.settings import RPGSettings, RaidSettings, SettingsError
@@ -420,8 +421,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=2,balance_version=5 '
-                'WHERE guild_id=1 AND channel_id=8')
+                'UPDATE rpg_raid_difficulty SET multiplier=2,balance_version=? '
+                'WHERE guild_id=1 AND channel_id=8', (BALANCE_VERSION,))
         finish('平手（達回合上限）', 30, remaining_percent=80)
         self.assertEqual(self.repo.difficulty(1, 8), 1.7)
         finish('戰敗', 12, remaining_percent=80)
@@ -433,8 +434,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=2.5,balance_version=5 '
-                'WHERE guild_id=1 AND channel_id=8')
+                'UPDATE rpg_raid_difficulty SET multiplier=2.5,balance_version=? '
+                'WHERE guild_id=1 AND channel_id=8', (BALANCE_VERSION,))
         finish('勝利', 5)
         self.assertEqual(self.repo.difficulty(1, 8), 2.5)
 

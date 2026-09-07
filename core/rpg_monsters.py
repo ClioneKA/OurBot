@@ -3,7 +3,7 @@ import random
 from decimal import Decimal
 
 
-BALANCE_VERSION = 5
+BALANCE_VERSION = 6
 # Calibrated encounter tiers are content levels. Higher-level players are
 # intentionally stronger when returning to these lower-tier encounters.
 REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40}
@@ -16,7 +16,8 @@ TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
 # tier, HP, attack, defense, speed, accuracy, evasion, critical. Speed is an
 # absolute initiative value on the same narrow scale as player speed.
 PROFILES = {
-    # V5 profiles target roughly 15 rounds for a same-tier four-role party.
+    # V6 profiles target roughly 15 rounds and an 80% ordinary win rate for a
+    # same-tier four-role party that answers the encounter mechanics.
     # Defense is deliberately material enough to separate high and low attack,
     # while multi-enemy encounters split their attack budget across the group.
     '月影妖狐': (2, 3.7392, 1.65, 0.875, 70, 95, 23, 15),
@@ -34,8 +35,8 @@ PROFILES = {
     '瘟疫縫合獸': (3, 3.91, 2.691, 1.25, 50, 93, 29, 8),
     # Scheduled tier-four encounters use a T40 reference party. The twins
     # split both their HP and action budget between two bodies.
-    '赤雷與蒼炎': (4, 2.94, 0.989, 1.15, 55, 95, 40, 10),
-    '吞城鯨': (4, 3.6, 1.45, 1.25, 35, 94, 35, 8),
+    '赤雷與蒼炎': (4, 2.94, 1.048, 1.15, 55, 95, 40, 10),
+    '吞城鯨': (4, 3.6, 1.537, 1.25, 35, 94, 35, 8),
     # Special summon calibrated around Lv.45 equipment. It is always ordinary
     # quality and is excluded from both scheduled encounter pools.
     '城崎諾亞': (4, 3.803625, 0.9148125, 1.4375, 60, 95, 45, 12),

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from core.rpg import RPGStore
 from core.rpg_battle import Rule, raid_battle, dump_battle, load_battle
 from core.rpg_character import ITEMS, combat_from_stats
-from core.rpg_monsters import prepare_monster, monster_name
+from core.rpg_monsters import BALANCE_VERSION, PROFILES, prepare_monster, monster_name
 from core.rpg_raid_store import RaidStore
 from core.rpg_raids import RaidService
 from core.settings import RaidSettings
@@ -42,6 +42,8 @@ class MonsterTests(unittest.TestCase):
         twins = monster('赤雷與蒼炎')
         twin_battle = raid_battle([participant()], twins, 17)
         enemies = twin_battle.living(1)
+        self.assertEqual(BALANCE_VERSION, 6)
+        self.assertEqual((PROFILES['赤雷與蒼炎'][2], PROFILES['吞城鯨'][2]), (1.048, 1.537))
         self.assertEqual((twins['tier'], twins['profile']['level_bonus']), (4, 0))
         self.assertEqual([fighter.job for fighter in enemies], ['赤雷', '蒼炎'])
         self.assertEqual(enemies[0].stats['HP'], enemies[1].stats['HP'])
