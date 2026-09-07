@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from core.rpg import RPGStore, level_floor
-from core.rpg_character import (Characters, CharacterError, GROWTH, JOBS, ITEMS,
+from core.rpg_character import (Characters, CharacterError, DYE_PRICE, EMBROIDERY_PRICE,
+                                GROWTH, JOBS, ITEMS,
                                 combat_from_stats, item_sellable)
 from core.settings import RPGSettings, SettingsError
 
@@ -18,6 +19,8 @@ class CharacterTests(unittest.TestCase):
         self.characters.change_job(1, 1, '弓兵')
         for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:archer:weapon', 'clock:archer'):
             self.characters.grant_item(1, 1, key)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,5000)')
         self.characters.combine_paint_set(1, 1)
         counts = self.characters.inventory_counts(1, 1)
         self.assertEqual(counts['paint:set'], 1)
@@ -25,14 +28,14 @@ class CharacterTests(unittest.TestCase):
 
         self.characters.grant_item(1, 1, 'paint:blue')
         self.characters.equip(1, 1, 'noah:archer:weapon')
-        colored = self.characters.socket_paint(1, 1, 'noah:archer:weapon', 'blue')
+        colored = self.characters.dye_equipment(1, 1, 'noah:archer:weapon', 'blue')
         self.assertEqual(colored, 'noah:archer:weapon:blue')
         self.assertEqual(self.characters.snapshot(1, 1)['equipped']['武器'], colored)
         self.characters.equip(1, 1, 'clock:archer')
         self.assertEqual(self.characters.snapshot(1, 1)['damage_guard_chance'], 10)
 
         self.characters.grant_item(1, 1, 'paint:yellow')
-        recolored = self.characters.socket_paint(1, 1, colored, 'yellow')
+        recolored = self.characters.dye_equipment(1, 1, colored, 'yellow')
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], recolored)
         self.assertEqual(ITEMS[recolored].accuracy, 5)
@@ -44,15 +47,18 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(ITEMS['noah:archer:suit:yellow'].speed, 15)
         self.assertEqual(ITEMS['noah:archer:suit:blue'].evasion, 5)
         self.assertFalse(item_sellable(ITEMS['noah:unfinished']))
+        self.assertEqual(self.store.gold(1, 1), 5000 - DYE_PRICE * 2)
 
     def test_duplicate_equipment_has_independent_socket_and_affixes(self):
         self.level(45)
         self.characters.change_job(1, 1, '弓兵')
         instance_ids = self.characters.grant_item(1, 1, 'noah:archer:weapon', 2)
         self.characters.grant_item(1, 1, 'paint:blue')
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,5000)')
         first, second = (f'instance:{instance_id}' for instance_id in instance_ids)
 
-        self.assertEqual(self.characters.socket_paint(1, 1, first, 'blue'), first)
+        self.assertEqual(self.characters.dye_equipment(1, 1, first, 'blue'), first)
         counts = self.characters.inventory_counts(1, 1)
         self.assertEqual(counts['noah:archer:weapon'], 1)
         self.assertEqual(counts['noah:archer:weapon:blue'], 1)
@@ -72,6 +78,45 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(self.characters.resolved_item(
             self.characters.get_instance(1, 1, second)).combat,
             ITEMS['noah:archer:weapon'].combat)
+
+    def test_only_raid_accessories_have_embroidery_slots_and_can_be_restitched(self):
+        self.level(30)
+        self.characters.change_job(1, 1, '弓兵')
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,2000)')
+        self.assertTrue(all(ITEMS[f'accessory:{index}'].embroidery_slots == 0 for index in range(5)))
+        for key in ('raid:0', 'goblin:badge', 'fox:pendant', 'puppet:twin_charm'):
+            self.assertEqual(ITEMS[key].embroidery_slots, 1)
+        with self.assertRaises(CharacterError):
+            self.characters.embroider_accessory(1, 1, 'accessory:0', 'heart')
+        instance_id = self.characters.grant_item(1, 1, 'raid:0')[0]
+        token = f'instance:{instance_id}'
+        self.assertEqual(self.characters.embroider_accessory(1, 1, token, 'heart'), token)
+        embroidered = self.characters.resolved_item(self.characters.get_instance(1, 1, token))
+        self.assertEqual(embroidered.stats[0], ITEMS['raid:0'].stats[0] + 2)
+        with self.assertRaises(CharacterError):
+            self.characters.embroider_accessory(1, 1, token, 'heart')
+        self.characters.embroider_accessory(1, 1, token, 'wing')
+        restitched = self.characters.resolved_item(self.characters.get_instance(1, 1, token))
+        self.assertEqual(restitched.stats[0], ITEMS['raid:0'].stats[0])
+        self.assertEqual(restitched.stats[3], ITEMS['raid:0'].stats[3] + 2)
+        self.assertEqual(self.store.gold(1, 1), 2000 - EMBROIDERY_PRICE * 2)
+
+    def test_tailor_does_not_consume_or_modify_items_when_gold_is_insufficient(self):
+        self.level(45)
+        self.characters.change_job(1, 1, '弓兵')
+        weapon_id = self.characters.grant_item(1, 1, 'noah:archer:weapon')[0]
+        accessory_id = self.characters.grant_item(1, 1, 'raid:0')[0]
+        self.characters.grant_item(1, 1, 'paint:red')
+
+        with self.assertRaises(CharacterError):
+            self.characters.dye_equipment(1, 1, f'instance:{weapon_id}', 'red')
+        with self.assertRaises(CharacterError):
+            self.characters.embroider_accessory(1, 1, f'instance:{accessory_id}', 'heart')
+
+        self.assertEqual(self.characters.inventory_counts(1, 1)['paint:red'], 1)
+        self.assertEqual(self.characters.get_instance(1, 1, weapon_id).sockets, ())
+        self.assertEqual(self.characters.get_instance(1, 1, accessory_id).affixes, ())
 
     def test_legacy_quantities_and_colored_equipment_migrate_once(self):
         directory = tempfile.TemporaryDirectory()

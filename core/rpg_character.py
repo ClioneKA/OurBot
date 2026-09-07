@@ -83,6 +83,7 @@ class Item:
     transferable: bool = True
     socket_base: str = ''
     paint_color: str = ''
+    embroidery_slots: int = 0
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ for index, name in enumerate(('生命護符', '力量指環', '堅韌徽章', '�
 # Raid-only accessories are never included in profession supplies.
 for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '風羽吊墜', '星痕念珠')):
     ITEMS[f'raid:{index}'] = Item(name, '飾品', '', 0,
-                                tuple(6 if i == index else 1 for i in range(5)))
+                                tuple(6 if i == index else 1 for i in range(5)), embroidery_slots=1)
 
 
 # Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
@@ -159,7 +160,7 @@ for job, key, name, bonuses in (
 
 
 ITEMS['goblin:badge'] = Item('戰團徽章', '飾品', '', 1, (0, 0, 0, 0, 0),
-                             required_level=20, party_bonus=True)
+                             required_level=20, party_bonus=True, embroidery_slots=1)
 for job, key, name, bonuses in (
     ('裝甲步兵', 'axe', '掠奪者戰斧', (0, 67, 0, 0)),
     ('騎士', 'sword_shield', '掠奪者劍盾', (35, 42, 8, 0)),
@@ -171,7 +172,7 @@ for job, key, name, bonuses in (
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
-                            required_level=20, evasion=5)
+                            required_level=20, evasion=5, embroidery_slots=1)
 for job, key, name, bonuses in (
     ('裝甲步兵', 'axe', '血翼戰斧', (29, 41, 8, 0)),
     ('騎士', 'sword_shield', '血翼劍盾', (60, 30, 14, 0)),
@@ -193,7 +194,7 @@ for job, key, name, bonuses in (
                                 required_level=30, damage_guard_chance=5)
 
 ITEMS['puppet:twin_charm'] = Item('雙生護符', '飾品', '', 1, (2, 2, 2, 2, 2),
-                                  required_level=30, healing_share=10)
+                                  required_level=30, healing_share=10, embroidery_slots=1)
 
 for job, key, name, bonuses in (
     ('裝甲步兵', 'axe', '疫骨戰斧', (45, 65, 12, 0)),
@@ -207,9 +208,9 @@ for job, key, name, bonuses in (
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (
-    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或鑲嵌於諾亞裝備。'),
-    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或鑲嵌於諾亞裝備。'),
-    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或鑲嵌於諾亞裝備。'),
+    ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
+    ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
+    ('paint:blue', '藍色噴漆罐', '擊敗瘟疫縫合獸時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
 ):
     ITEMS[key] = Item(name, '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
                       description=description)
@@ -223,6 +224,15 @@ ITEMS['noah:unfinished'] = Item(
 
 PAINT_ITEMS = {'red': 'paint:red', 'yellow': 'paint:yellow', 'blue': 'paint:blue'}
 PAINT_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
+DYE_PRICE = 1_000
+EMBROIDERY_PRICE = 500
+EMBROIDERIES = {
+    'heart': ('愛心刺繡', 'stat:0', 2),
+    'flame': ('火焰刺繡', 'stat:1', 2),
+    'shield': ('盾牌刺繡', 'stat:2', 2),
+    'wing': ('羽翼刺繡', 'stat:3', 2),
+    'star': ('星光刺繡', 'stat:4', 2),
+}
 NOAH_EQUIPMENT = {}
 for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
     ('裝甲步兵', 'infantry', '緋彩戰斧', (52, 86, 15, 0), '潑彩戰甲', (205, 15, 59, 0)),
@@ -235,7 +245,7 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
         base = Item(name, slot, job, 2, (0, 0, 0, 0, 0), combat,
                     STABILITY[job] if slot == '武器' else (100, 100),
                     required_level=45, socket_base=base_key,
-                    description='具有一個顏料鑲嵌格。')
+                    description='可在遠野漢娜的裁縫所使用噴漆染色。')
         ITEMS[base_key] = base
         NOAH_EQUIPMENT.setdefault(job, []).append(base_key)
         for color in ('red', 'yellow', 'blue'):
@@ -256,10 +266,10 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
             else:
                 evasion = 5
             ITEMS[f'{base_key}:{color}'] = replace(
-                base, name=f'{name}・{PAINT_NAMES[color]}鑲嵌', combat=colored_combat,
+                base, name=f'{name}・{PAINT_NAMES[color]}染色', combat=colored_combat,
                 speed=speed, accuracy=accuracy, evasion=evasion,
                 damage_guard_chance=guard, paint_color=color,
-                description=f'鑲嵌{PAINT_NAMES[color]}噴漆，可再次改色；原顏料不返還。')
+                description=f'以{PAINT_NAMES[color]}噴漆染色，可再次改色；原顏料不返還。')
 
 
 # Fishing items use the existing stackable inventory while remaining separate from
@@ -420,6 +430,8 @@ def item_text(item):
         parts.append(f'每次直接命中有 {item.vulnerable_chance}% 機率使目標易傷 +{item.vulnerable_percent}% 至下一回合結束')
     if item.healing_share:
         parts.append(f'實際受到治療時，額外治療血量比例最低的另一名隊友 {item.healing_share}%')
+    if item.embroidery_slots:
+        parts.append(f'刺繡格 {item.embroidery_slots} 格')
     if item.description:
         parts.append(item.description)
     return '、'.join(parts) or '無加成'
@@ -991,7 +1003,7 @@ class Characters:
                 DO UPDATE SET quantity=quantity+1''', (guild, user, 'paint:set'))
         return ITEMS['paint:set']
 
-    def socket_paint(self, guild, user, item_id, color):
+    def dye_equipment(self, guild, user, item_id, color):
         if color not in PAINT_ITEMS:
             raise CharacterError('請選擇紅色、黃色或藍色顏料。')
         with self.db:
@@ -999,14 +1011,18 @@ class Characters:
             instance = self._resolve_instance(guild, user, item_id)
             item = ITEMS.get(instance.item_id) if instance else None
             if not item or not item.socket_base:
-                raise CharacterError('這件裝備沒有顏料鑲嵌格。')
+                raise CharacterError('這件裝備不能染色。')
             current_socket = dict(instance.sockets).get(0)
             if current_socket == PAINT_ITEMS[color]:
-                raise CharacterError(f'這件裝備已經鑲嵌{PAINT_NAMES[color]}顏料。')
+                raise CharacterError(f'這件裝備已經是{PAINT_NAMES[color]}。')
             counts = self.inventory_counts(guild, user)
             paint_key = PAINT_ITEMS[color]
             if counts.get(paint_key, 0) < 1:
                 raise CharacterError(f'背包中沒有{ITEMS[paint_key].name}。')
+            paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
+                WHERE guild_id=? AND user_id=? AND gold>=?''', (DYE_PRICE, guild, user, DYE_PRICE))
+            if not paid.rowcount:
+                raise CharacterError(f'金幣不足，染色需要 {DYE_PRICE:,} 金幣。')
             self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
                             'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, paint_key))
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
@@ -1015,6 +1031,33 @@ class Characters:
                 VALUES (?,?,?) ON CONFLICT(instance_id,socket_index)
                 DO UPDATE SET socket_item_id=excluded.socket_item_id''',
                 (instance.instance_id, 0, paint_key))
+            updated = self._instance(guild, user, instance.instance_id)
+        return updated.token if isinstance(item_id, int) or str(item_id).startswith('instance:') else self.instance_item_id(updated)
+
+    def embroider_accessory(self, guild, user, item_id, embroidery_id):
+        embroidery = EMBROIDERIES.get(embroidery_id)
+        if embroidery is None:
+            raise CharacterError('請選擇有效的刺繡圖樣。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            instance = self._resolve_instance(guild, user, item_id)
+            item = ITEMS.get(instance.item_id) if instance else None
+            if not item or item.slot != '飾品' or item.embroidery_slots < 1:
+                raise CharacterError('這件飾品沒有刺繡格。')
+            affix_id = f'embroidery:{embroidery_id}'
+            current = next((affix for affix in instance.affixes if affix[0] == 0), None)
+            if current and current[1] == affix_id:
+                raise CharacterError(f'這件飾品已經具有{embroidery[0]}。')
+            paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
+                WHERE guild_id=? AND user_id=? AND gold>=?''',
+                                   (EMBROIDERY_PRICE, guild, user, EMBROIDERY_PRICE))
+            if not paid.rowcount:
+                raise CharacterError(f'金幣不足，刺繡需要 {EMBROIDERY_PRICE:,} 金幣。')
+            self.db.execute('''INSERT INTO rpg_instance_affixes
+                (instance_id,affix_index,affix_id,effect_key,rolled_value)
+                VALUES (?,?,?,?,?) ON CONFLICT(instance_id,affix_index) DO UPDATE SET
+                affix_id=excluded.affix_id,effect_key=excluded.effect_key,rolled_value=excluded.rolled_value''',
+                (instance.instance_id, 0, affix_id, embroidery[1], embroidery[2]))
             updated = self._instance(guild, user, instance.instance_id)
         return updated.token if isinstance(item_id, int) or str(item_id).startswith('instance:') else self.instance_item_id(updated)
 

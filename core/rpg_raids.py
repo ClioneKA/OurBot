@@ -279,7 +279,7 @@ class RaidService:
                      else f'{policy.drop_chance * 100:g}% 機率取得{category}（可能重複）')
         if raid['monster']['kind'] == SPECIAL_KIND:
             chance_drop = raid.get('chance_drop')
-            loot_text += '；裝備有 50% 機率符合自身職業，皆帶一個顏料鑲嵌格'
+            loot_text += '；裝備有 50% 機率符合自身職業，皆可使用噴漆染色'
             if chance_drop:
                 loot_text += (f'；勝利時全隊抽 {chance_drop.get("rolls", 1)} 次噴漆罐，'
                               f'每次有 {chance_drop["chance"] * 100:g}% 機率掉落 1 個隨機顏色，'
