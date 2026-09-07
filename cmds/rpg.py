@@ -212,7 +212,7 @@ class RPG(commands.Cog):
             f'{name} {value}{"%" if name.endswith("率") else ""}'
             for name, value in state['combat'].items()), inline=False)
         if 'goblin:badge' in state['equipped'].values():
-            embed.add_field(name='戰團徽章', value='開戰每人（含自己）生命力／力氣／耐力／靈巧／信仰各 +1，最多各 +10。整場固定，僅自身，上方能力尚未計入。', inline=False)
+            embed.add_field(name='戰團徽章', value='開戰每兩名參戰者（不足兩人進位）使五項能力各 +1，最多各 +5。整場固定，僅自身，上方能力尚未計入。', inline=False)
         embed.add_field(name='武器／套裝直接加成', value='、'.join(
             f'{name} +{value}' for name, value in state['combat_bonus'].items() if value) or '無', inline=False)
         if state.get('lifesteal'):

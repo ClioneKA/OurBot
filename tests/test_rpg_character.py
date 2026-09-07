@@ -12,6 +12,14 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_each_job_uses_its_distinctive_attack_formula(self):
+        stats = (40, 30, 20, 16, 12)
+        self.assertEqual(combat_from_stats(stats, '裝甲步兵')['攻擊'], 90)
+        self.assertEqual(combat_from_stats(stats, '弓兵')['攻擊'], 54)
+        self.assertEqual(combat_from_stats(stats, '騎士')['攻擊'], 80)
+        self.assertEqual(combat_from_stats(stats, '僧侶')['攻擊'], 45)
+        self.assertEqual(combat_from_stats(stats, '民兵')['攻擊'], 60)
+
     def test_noah_paint_set_and_socket_variants(self):
         for key in ('paint:red', 'paint:yellow', 'paint:blue', 'paint:set', 'noah:unfinished'):
             self.assertEqual((ITEMS[key].slot, ITEMS[key].category), ('', '製作材料'))
@@ -283,7 +291,7 @@ class CharacterTests(unittest.TestCase):
     def test_starter_club_once_and_removal_requires_supply_claim(self):
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], 'starter:club')
-        self.assertEqual(state['combat']['攻擊'], 36)
+        self.assertEqual(state['combat']['攻擊'], 24)
         self.assertEqual(state['combat']['防禦'], 36)
         self.assertEqual(state['stability'], (80, 120))
         self.characters.unequip(1, 1, '武器')
@@ -337,7 +345,7 @@ class CharacterTests(unittest.TestCase):
                 growth = GROWTH[job]
                 base_stats = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
                                    + stage * weight * 2 for weight in growth)
-                naked = combat_from_stats(base_stats)
+                naked = combat_from_stats(base_stats, job)
                 weapon = ITEMS[f'{job}:{stage}:武器'].combat
                 suit = ITEMS[f'{job}:{stage}:套裝'].combat
                 relevant = range(4) if job == '僧侶' else range(3)
@@ -356,7 +364,7 @@ class CharacterTests(unittest.TestCase):
         for job, keys in raid_items.items():
             growth = GROWTH[job]
             base_stats = tuple(10 + 18 + 10 * weight + 2 * weight for weight in growth)
-            naked = combat_from_stats(base_stats)
+            naked = combat_from_stats(base_stats, job)
             relevant = range(4) if job == '僧侶' else range(3)
             for index in relevant:
                 stat = ('HP', '攻擊', '防禦', '治療量')[index]
@@ -385,7 +393,7 @@ class CharacterTests(unittest.TestCase):
         with self.assertRaises(CharacterError):
             self.characters.buy(1, 1, '騎士:1:套裝')
 
-    def test_faith_grants_attack_and_healing_not_defense(self):
+    def test_monk_faith_grants_job_attack_and_healing_but_not_defense(self):
         self.level(10)
         self.characters.change_job(1, 1, '僧侶')
         before = self.characters.snapshot(1, 1)
@@ -395,7 +403,9 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(after['combat']['治療量'] - before['combat']['治療量'], 9)
         self.assertEqual(after['combat']['防禦'], before['combat']['防禦'])
         self.assertEqual(after['combat']['防禦'], after['total'][2] * 3 + after['combat_bonus']['防禦'])
-        self.assertEqual(after['combat']['攻擊'], after['total'][1] * 2 + after['total'][4] + after['combat_bonus']['攻擊'])
+        self.assertEqual(after['combat']['攻擊'],
+                         after['total'][1] + after['total'][4] * 5 // 4
+                         + after['combat_bonus']['攻擊'])
         self.assertFalse({'物攻', '物防', '法攻', '法防'} & set(after['combat']))
 
     def setUp(self):

@@ -12,7 +12,7 @@ STABILITY = {'裝甲步兵': (60, 140), '騎士': (80, 120), '弓兵': (75, 125)
 # Every profession gains the same total points per level, with different priorities.
 GROWTH = {
     '民兵': (2, 2, 2, 2, 2),
-    '裝甲步兵': (2, 4, 2, 1, 1),
+    '裝甲步兵': (3, 3, 2, 1, 1),
     '騎士': (4, 1, 3, 1, 1),
     '弓兵': (2, 3, 1, 3, 1),
     '僧侶': (2, 1, 1, 2, 4),
@@ -27,27 +27,27 @@ SUITS = {'裝甲步兵': '步兵甲', '騎士': '騎士鎧', '弓兵': '獵裝',
 SHOP_EQUIPMENT = {
     '裝甲步兵': (
         ((13, 15, 3, 0), (53, 2, 14, 0)),
-        ((23, 33, 6, 0), (91, 5, 25, 0)),
-        ((48, 82, 14, 0), (194, 14, 56, 0)),
-        ((82, 147, 24, 0), (328, 25, 96, 0)),
+        ((28, 33, 6, 0), (110, 5, 25, 0)),
+        ((66, 82, 14, 0), (264, 14, 56, 0)),
+        ((116, 147, 24, 0), (466, 25, 96, 0)),
     ),
     '騎士': (
-        ((19, 17, 5, 0), (47, 0, 12, 0)),
-        ((48, 24, 11, 0), (114, 0, 27, 0)),
-        ((123, 43, 28, 0), (295, 0, 68, 0)),
-        ((222, 68, 51, 0), (532, 0, 121, 0)),
+        ((19, 13, 5, 0), (47, 0, 12, 0)),
+        ((48, 27, 11, 0), (114, 0, 27, 0)),
+        ((123, 65, 28, 0), (295, 0, 68, 0)),
+        ((222, 116, 51, 0), (532, 0, 121, 0)),
     ),
     '弓兵': (
-        ((0, 13, 0, 0), (66, 4, 17, 0)),
-        ((0, 26, 0, 0), (114, 8, 24, 0)),
-        ((0, 60, 0, 0), (242, 18, 43, 0)),
-        ((0, 105, 0, 0), (410, 32, 68, 0)),
+        ((0, 11, 0, 0), (66, 3, 17, 0)),
+        ((0, 24, 0, 0), (114, 8, 24, 0)),
+        ((0, 62, 0, 0), (242, 18, 43, 0)),
+        ((0, 110, 0, 0), (410, 33, 68, 0)),
     ),
     '僧侶': (
-        ((0, 17, 0, 9), (66, 0, 17, 8)),
-        ((0, 31, 0, 26), (114, 0, 24, 20)),
-        ((0, 70, 0, 68), (242, 0, 43, 54)),
-        ((0, 120, 0, 124), (410, 0, 68, 99)),
+        ((0, 13, 0, 9), (66, 0, 17, 8)),
+        ((0, 27, 0, 26), (114, 0, 24, 20)),
+        ((0, 65, 0, 68), (242, 0, 43, 54)),
+        ((0, 116, 0, 124), (410, 0, 68, 99)),
     ),
 }
 
@@ -116,7 +116,7 @@ class InventoryEntry:
 
 ITEMS = {}
 ITEMS['starter:club'] = Item('木棒', '武器', '', 0, (0, 0, 0, 0, 0),
-                              (0, 6, 6, 0), (80, 120), sell_price=0, transferable=False)
+                              (0, 4, 6, 0), (80, 120), sell_price=0, transferable=False)
 for job in JOBS:
     for stage, prefix in enumerate(PREFIXES):
         for slot_index, (slot, names) in enumerate((('武器', WEAPONS), ('套裝', SUITS))):
@@ -141,17 +141,17 @@ for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '�
 
 # Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
 ITEMS['golem:hammer'] = Item('鐵核重鎚', '武器', '裝甲步兵', 1, (0, 0, 0, 0, 0),
-                            (34, 50, 9, 0), (50, 150))
+                            (41, 50, 9, 0), (50, 150))
 ITEMS['golem:sword_shield'] = Item('鐵核劍盾', '武器', '騎士', 1, (0, 0, 0, 0, 0),
-                                  (71, 36, 17, 0), (70, 130))
+                                  (71, 41, 17, 0), (70, 130))
 ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0),
-                         (0, 38, 0, 0), (65, 135))
+                         (0, 36, 0, 0), (65, 135))
 ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
-                           (0, 47, 0, 38), (85, 115))
+                           (0, 41, 0, 38), (85, 115))
 
 
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'infantry', '荊棘戰甲', (137, 8, 38, 0)),
+    ('裝甲步兵', 'infantry', '荊棘戰甲', (166, 8, 38, 0)),
     ('騎士', 'knight', '古木重鎧', (172, 0, 41, 0)),
     ('弓兵', 'archer', '藤葉獵裝', (171, 12, 36, 0)),
     ('僧侶', 'monk', '靈根僧袍', (171, 0, 36, 30)),
@@ -163,9 +163,9 @@ ITEMS['goblin:badge'] = Item('戰團徽章', '飾品', '', 1, (0, 0, 0, 0, 0),
                              required_level=20, party_bonus=True, embroidery_slots=1)
 for job, key, name, bonuses in (
     ('裝甲步兵', 'axe', '掠奪者戰斧', (0, 67, 0, 0)),
-    ('騎士', 'sword_shield', '掠奪者劍盾', (35, 42, 8, 0)),
-    ('弓兵', 'bow', '掠奪者長弓', (0, 59, 0, 0)),
-    ('僧侶', 'staff', '掠奪者權杖', (0, 55, 0, 26)),
+    ('騎士', 'sword_shield', '掠奪者劍盾', (35, 47, 8, 0)),
+    ('弓兵', 'bow', '掠奪者長弓', (0, 56, 0, 0)),
+    ('僧侶', 'staff', '掠奪者權杖', (0, 47, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
                                  bonuses, (60, 140), required_level=20, speed=7)
@@ -174,10 +174,10 @@ for job, key, name, bonuses in (
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
                             required_level=20, evasion=5, embroidery_slots=1)
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'axe', '血翼戰斧', (29, 41, 8, 0)),
-    ('騎士', 'sword_shield', '血翼劍盾', (60, 30, 14, 0)),
-    ('弓兵', 'bow', '血翼長弓', (0, 32, 0, 0)),
-    ('僧侶', 'staff', '血翼權杖', (0, 39, 0, 32)),
+    ('裝甲步兵', 'axe', '血翼戰斧', (35, 41, 8, 0)),
+    ('騎士', 'sword_shield', '血翼劍盾', (60, 34, 14, 0)),
+    ('弓兵', 'bow', '血翼長弓', (0, 30, 0, 0)),
+    ('僧侶', 'staff', '血翼權杖', (0, 34, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
                               bonuses, STABILITY[job], required_level=20, speed=7, lifesteal=3)
@@ -185,7 +185,7 @@ for job, key, name, bonuses in (
 
 # Tier-3 raid equipment. These pieces sit between regular T20 and veteran T50 gear.
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'infantry', '鳴鐘戰甲', (190, 12, 53, 0)),
+    ('裝甲步兵', 'infantry', '鳴鐘戰甲', (244, 12, 53, 0)),
     ('騎士', 'knight', '鎮鐘重鎧', (240, 0, 57, 0)),
     ('弓兵', 'archer', '寂響獵裝', (238, 17, 50, 0)),
     ('僧侶', 'monk', '靜鐘僧袍', (238, 0, 50, 42)),
@@ -197,10 +197,10 @@ ITEMS['puppet:twin_charm'] = Item('雙生護符', '飾品', '', 1, (2, 2, 2, 2, 
                                   required_level=30, healing_share=10, embroidery_slots=1)
 
 for job, key, name, bonuses in (
-    ('裝甲步兵', 'axe', '疫骨戰斧', (45, 65, 12, 0)),
-    ('騎士', 'sword_shield', '縫血劍盾', (90, 45, 21, 0)),
-    ('弓兵', 'bow', '腐毒長弓', (0, 48, 0, 0)),
-    ('僧侶', 'staff', '瘟心權杖', (0, 59, 0, 48)),
+    ('裝甲步兵', 'axe', '疫骨戰斧', (58, 65, 12, 0)),
+    ('騎士', 'sword_shield', '縫血劍盾', (90, 59, 21, 0)),
+    ('弓兵', 'bow', '腐毒長弓', (0, 47, 0, 0)),
+    ('僧侶', 'staff', '瘟心權杖', (0, 53, 0, 48)),
 ):
     ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
                                  STABILITY[job], required_level=30,
@@ -235,10 +235,10 @@ EMBROIDERIES = {
 }
 NOAH_EQUIPMENT = {}
 for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
-    ('裝甲步兵', 'infantry', '緋彩戰斧', (52, 86, 15, 0), '潑彩戰甲', (205, 15, 59, 0)),
-    ('騎士', 'knight', '調色劍盾', (132, 46, 30, 0), '畫框重鎧', (312, 0, 72, 0)),
-    ('弓兵', 'archer', '虹跡長弓', (0, 64, 0, 0), '顏料獵裝', (255, 19, 46, 0)),
-    ('僧侶', 'monk', '繪夢權杖', (0, 74, 0, 72), '白紙僧袍', (255, 0, 46, 57)),
+    ('裝甲步兵', 'infantry', '緋彩戰斧', (70, 86, 15, 0), '潑彩戰甲', (276, 15, 59, 0)),
+    ('騎士', 'knight', '調色劍盾', (132, 67, 30, 0), '畫框重鎧', (312, 0, 72, 0)),
+    ('弓兵', 'archer', '虹跡長弓', (0, 65, 0, 0), '顏料獵裝', (255, 19, 46, 0)),
+    ('僧侶', 'monk', '繪夢權杖', (0, 69, 0, 72), '白紙僧袍', (255, 0, 46, 57)),
 ):
     for slot, name, combat in (('武器', weapon_name, weapon_combat), ('套裝', suit_name, suit_combat)):
         base_key = f'noah:{slug}:{"weapon" if slot == "武器" else "suit"}'
@@ -393,9 +393,15 @@ def item_level(item, settings):
     return stage_level(item.stage, settings) if item.job else 1
 
 
-def combat_from_stats(total):
+def combat_from_stats(total, job='民兵'):
     vitality, strength, endurance, dexterity, faith = total
-    return {'HP': 50 + vitality * 10, '攻擊': strength * 2 + faith,
+    attack = {
+        '裝甲步兵': strength * 3,
+        '弓兵': strength + dexterity * 3 // 2,
+        '騎士': strength + vitality * 5 // 4,
+        '僧侶': strength + faith * 5 // 4,
+    }.get(job, strength * 2)
+    return {'HP': 50 + vitality * 10, '攻擊': attack,
             '防禦': endurance * 3, '治療量': faith * 3,
             '命中率': min(150, 75 + dexterity // 5),
             '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
@@ -781,7 +787,7 @@ class Characters:
                      + (stage * weight * 2 if job != '民兵' else 0) for weight in growth)
         bonus = tuple(sum(item.stats[i] for item in resolved.values()) for i in range(5))
         total = tuple(a + b for a, b in zip(base, bonus))
-        combat = combat_from_stats(total)
+        combat = combat_from_stats(total, job)
         combat_bonus = {name: sum(item.combat[i] for item in resolved.values())
                         for i, name in enumerate(COMBAT_NAMES)}
         for name, value in combat_bonus.items():

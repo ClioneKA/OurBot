@@ -25,7 +25,7 @@ def shop_fighter(job, user_id):
     total = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
                   + stage * weight * 2 for weight in growth)
     equipped = {'武器': f'{job}:{stage}:武器', '套裝': f'{job}:{stage}:套裝'}
-    combat = combat_from_stats(total)
+    combat = combat_from_stats(total, job)
     for index, stat in enumerate(('HP', '攻擊', '防禦', '治療量')):
         combat[stat] += sum(ITEMS[key].combat[index] for key in equipped.values())
     weapon = ITEMS[equipped['武器']]

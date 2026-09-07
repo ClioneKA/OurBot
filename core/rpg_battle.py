@@ -1069,8 +1069,8 @@ def raid_battle(participants, monster, seed):
         if any(ITEMS[key].party_bonus for key in participant['state'].get('equipped', {}).values() if key in ITEMS):
             count = min(5, (len(participants) + 1) // 2)
             total = participant['state']['total']
-            before = combat_from_stats(total)
-            after = combat_from_stats([value + count for value in total])
+            before = combat_from_stats(total, fighter.job)
+            after = combat_from_stats([value + count for value in total], fighter.job)
             for stat in before:
                 fighter.stats[stat] += after[stat] - before[stat]
             fighter.hp = fighter.stats['HP']

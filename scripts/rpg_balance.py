@@ -38,7 +38,7 @@ def reference_participant(job, tier, user_id, level_bonus=0):
     growth = GROWTH[job]
     base = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
                  + stage * weight * 2 for weight in growth)
-    combat = combat_from_stats(base)
+    combat = combat_from_stats(base, job)
     if tier == 4:
         weapon_key, suit_key = T45_EQUIPMENT[job]
         equipped = {'武器': weapon_key, '套裝': suit_key}

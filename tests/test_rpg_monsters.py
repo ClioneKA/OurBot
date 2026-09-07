@@ -94,10 +94,10 @@ class MonsterTests(unittest.TestCase):
         state = people[0]['state']
         state['equipped']['飾品1'] = 'goblin:badge'
         state['total'] = [50, 60, 70, 374, 80]
-        state['combat'] = combat_from_stats(state['total'])
+        state['combat'] = combat_from_stats(state['total'], state['job'])
         state['combat']['攻擊'] += ITEMS['goblin:bow'].combat[1]
         wearer = raid_battle(people, monster(), 10).fighters[0]
-        self.assertEqual(wearer.stats, {'HP': 600, '攻擊': 274, '防禦': 225,
+        self.assertEqual(wearer.stats, {'HP': 600, '攻擊': 689, '防禦': 225,
                                      '治療量': 255, '命中率': 150, '閃避率': 35, '暴擊率': 50})
         self.assertEqual(wearer.speed, 60)
 
