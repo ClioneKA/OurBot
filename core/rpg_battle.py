@@ -258,6 +258,9 @@ class Fighter:
     vulnerable_chance: int = 0
     vulnerable_percent: int = 0
     healing_share: int = 0
+    alternating_damage_percent: int = 0
+    defense_conversion: bool = False
+    stored_defense_attack: int = 0
     critical_damage_percent: int = 150
     status_stacks: dict = field(default_factory=dict)
     user_id: int | None = None
@@ -500,6 +503,20 @@ class Battle:
         if master is not None and master.hp <= 0:
             for puppet in (f for f in self.fighters if f.team == 1 and f.job in ('劍傀儡', '咒傀儡')):
                 puppet.hp = 0
+        twins = [f for f in self.fighters if f.team == 1 and f.job in ('赤雷', '蒼炎')]
+        living_twins = [f for f in twins if f.hp > 0]
+        if (len(twins) == 2 and len(living_twins) == 1
+                and not self.mechanics.get('twin_revive_job')):
+            survivor = living_twins[0]
+            fallen = next(f for f in twins if f.hp <= 0)
+            base_attacks = self.mechanics.get('twin_base_attacks', {})
+            base_speeds = self.mechanics.get('twin_base_speeds', {})
+            survivor.stats['攻擊'] = max(1, base_attacks.get(survivor.job, survivor.stats['攻擊']) * 125 // 100)
+            survivor.speed = base_speeds.get(survivor.job, survivor.speed) + 15
+            self.mechanics.update(twin_revive_job=fallen.job,
+                                  twin_revive_round=self.round + 2,
+                                  twin_revive_delayed=False)
+            self.log.append(f'{survivor.name} 進入【孤獸暴走】，兩回合後將以【再生共鳴】復活 {fallen.name}！')
         if not self.living(0) and not self.living(1):
             self.result = '平手'
         elif not self.living(1):
@@ -563,7 +580,10 @@ class Battle:
             if rule.condition == 'enemy_charging' and not any(
                     f.has('charged_punch', self.round) or
                     (f.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
-                    (f.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) for f in enemies):
+                    (f.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) or
+                    (f.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')) or
+                    (f.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging'))
+                    for f in enemies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect in ('heal', 'group_heal'):
@@ -589,17 +609,26 @@ class Battle:
         return None
 
     def hit(self, actor, target, power=1.0, precise=False, lifesteal=None, attack_override=None,
-            counterable=True):
+            counterable=True, attack_scope='single'):
         if actor.team == 0 and not actor.armed:
             self.log.append(f'{actor.name} 未裝備武器，無法造成傷害。')
             return False
         actor.combat_stats['attacks'] += 1
+        stored_attack = actor.stored_defense_attack
+        if stored_attack:
+            actor.stored_defense_attack = 0
+            self.log.append(f'{actor.name} 釋放【吞城鯨飾品】蓄積的 {stored_attack} 點攻擊力。')
         chance = self.hit_chance(actor, target)
         if not precise and self.rng.random() * 100 >= chance:
             actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
             return False
         base_attack = actor.stats['攻擊'] if attack_override is None else attack_override
+        base_attack += stored_attack
+        if (actor.alternating_damage_percent and
+                (self.round % 2 == 1 and attack_scope == 'single' or
+                 self.round % 2 == 0 and attack_scope == 'group')):
+            base_attack *= (100 + actor.alternating_damage_percent) / 100
         base_attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
         base_attack *= 0.8 if actor.has('weak', self.round) else 1
         blessed = actor.has('bless', self.round)
@@ -633,18 +662,22 @@ class Battle:
                 value = max(1, value * self.mechanics.get('noah_blue_reduction', 0) // 100)
             if puppet_shield:
                 value = max(1, value // 2)
+            if target.job == '吞城鯨' and self.mechanics.get('whale_shield', 0) > 0:
+                value = max(1, value * 65 // 100)
             if guarded:
                 value = max(1, value // 2)
             value = max(1, int(value * self.damage_taken_multiplier(target)))
             return value
 
         damage = final_damage(attack, defense)
+        undefended_damage = final_damage(attack, 0)
         base_damage = final_damage(paint_attack, base_defense)
         broken_damage = final_damage(paint_attack, defense)
         vulnerable = target.has('vulnerable', self.round)
         pre_vulnerable_damage = damage
         if vulnerable:
             damage = max(1, damage * 110 // 100)
+            undefended_damage = max(1, undefended_damage * 110 // 100)
         actual_damage = min(target.hp, damage)
         pre_vulnerable_actual = min(target.hp, pre_vulnerable_damage)
         base_actual = min(target.hp, base_damage)
@@ -676,12 +709,27 @@ class Battle:
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
                         f'{f"（穩定度 {stability}%）" if actor.stability != (100, 100) else ""}'
                         f'{"（套裝減傷）" if guarded else ""}{"，倒下" if target.hp == 0 else ""}')
+        if target.team == 0 and target.defense_conversion:
+            target.stored_defense_attack = max(0, undefended_damage - damage)
+            if target.stored_defense_attack:
+                self.log.append(f'{target.name} 的【吞城鯨飾品】蓄積 {target.stored_defense_attack} 點攻擊力。')
         if actor.team == 0 and target.job == '深淵鐘龍' and self.mechanics.get('clock_charging'):
             layers = self.mechanics.get('clock_armor', 0)
             if layers > 0:
                 removed = 2 if precise or critical else 1
                 self.mechanics['clock_armor'] = max(0, layers - removed)
                 self.log.append(f'{target.name} 的鐘甲減少 {min(layers, removed)} 層，剩餘 {self.mechanics["clock_armor"]} 層。')
+        if (actor.team == 0 and target.job == '吞城鯨'
+                and self.mechanics.get('whale_shield', 0) > 0
+                and attack_scope == 'single'
+                and (power >= 1.5 or critical or
+                     attack_override is not None and attack_override >= actor.stats['攻擊'] * 1.5)):
+            self.mechanics['whale_shield'] -= 1
+            layers = self.mechanics['whale_shield']
+            self.log.append(f'{target.name} 的城塞鯨脂減少 1 層，剩餘 {layers} 層。')
+            if layers == 0 and target.hp > 0:
+                target.effects['break'] = self.round + 2
+                self.log.append(f'{target.name} 的【城塞鯨脂】完全崩解，遭到破甲至第 {self.round + 2} 回合結束。')
         if (actor.team == 0 and target.hp > 0 and actor.vulnerable_chance
                 and self.rng.random() * 100 < actor.vulnerable_chance):
             target.effects['vulnerable'] = self.round + 1
@@ -740,6 +788,90 @@ class Battle:
         self.log.append(f'{actor.name} 使用普通攻擊')
         if target is not None:
             self.hit(actor, target)
+
+    def twin_act(self, actor):
+        """Alternate the twins' turns while preserving their shared revive race."""
+        if actor.job == '赤雷':
+            if self.round % 2 == 0:
+                return
+            self.record_skill(actor, '雷牙突襲')
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            self.log.append(f'{actor.name} 使用【雷牙突襲】')
+            if target is not None:
+                self.hit(actor, target)
+            return
+        if self.round % 2 == 1:
+            return
+        skill = '雷炎吐息' if self.round % 4 == 0 else '蒼炎吐息'
+        power = 1.2 if self.round % 4 == 0 else 0.65
+        self.record_skill(actor, skill)
+        self.log.append(f'{actor.name} 使用【{skill}】：對全體造成 {power * 100:g}% 傷害！')
+        for enemy in self.living(0):
+            if actor.hp > 0 and enemy.hp > 0:
+                self.hit(actor, enemy, power, attack_scope='group')
+
+    def process_twin_revival(self):
+        revive_job = self.mechanics.get('twin_revive_job')
+        if not revive_job or self.round < self.mechanics.get('twin_revive_round', 10**9):
+            return
+        survivor = next((f for f in self.living(1) if f.job in ('赤雷', '蒼炎')), None)
+        fallen = next((f for f in self.fighters if f.team == 1 and f.job == revive_job), None)
+        if survivor is None or fallen is None:
+            return
+        fallen.hp = max(1, fallen.stats['HP'] * 20 // 100)
+        base_attacks = self.mechanics.get('twin_base_attacks', {})
+        base_speeds = self.mechanics.get('twin_base_speeds', {})
+        survivor.stats['攻擊'] = base_attacks.get(survivor.job, survivor.stats['攻擊'])
+        survivor.speed = base_speeds.get(survivor.job, survivor.speed)
+        self.mechanics.pop('twin_revive_job', None)
+        self.mechanics.pop('twin_revive_round', None)
+        self.mechanics.pop('twin_revive_delayed', None)
+        self.log.append(f'{fallen.name} 的【再生共鳴】完成，以 {fallen.hp} HP 復活；孤獸暴走解除。')
+
+    def whale_act(self, actor):
+        old_tide = self.mechanics.get('whale_tide', 0)
+        tide = min(100, old_tide + 10)
+        self.mechanics['whale_tide'] = tide
+        if old_tide < 30 <= tide:
+            self.mechanics['whale_flooded_streets'] = True
+            self.log.append(f'{actor.name} 的水位達到 30：【淹沒街道】使全體攻擊傷害提高 15%。')
+        if old_tide < 50 <= tide:
+            for enemy in self.living(0):
+                enemy.speed = max(1, enemy.speed - 10)
+            self.log.append(f'{actor.name} 的水位達到 50：【深海壓迫】使全隊速度永久降低 10。')
+        if old_tide < 70 <= tide:
+            for enemy in self.living(0):
+                enemy.healing_received_percent -= 25
+            self.log.append(f'{actor.name} 的水位達到 70：【窒息海域】使全隊受到的治療永久降低 25%。')
+
+        if self.mechanics.get('whale_swallow_charging'):
+            self.mechanics['whale_swallow_charging'] = False
+            self.mechanics['whale_next_swallow'] = self.round + 3
+            self.record_skill(actor, '吞城')
+            self.log.append(f'{actor.name} 釋放【吞城】：對全體造成 200% 傷害！')
+            for enemy in self.living(0):
+                if actor.hp > 0 and enemy.hp > 0:
+                    self.hit(actor, enemy, 2.0, attack_scope='group')
+            return
+        if tide == 100 and self.round >= self.mechanics.get('whale_next_swallow', self.round):
+            self.mechanics['whale_swallow_charging'] = True
+            self.record_skill(actor, '吞城蓄力')
+            self.log.append(f'{actor.name} 正在蓄力【吞城】，下一次行動將對全體造成 200% 傷害！')
+            return
+
+        if self.round % 2:
+            self.record_skill(actor, '傾城撞擊')
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            self.log.append(f'{actor.name} 使用【傾城撞擊】：造成 130% 單體傷害！')
+            if target is not None:
+                self.hit(actor, target, 1.3)
+            return
+        power = 0.6 * (1.15 if self.mechanics.get('whale_flooded_streets') else 1)
+        self.record_skill(actor, '巨浪擺尾')
+        self.log.append(f'{actor.name} 使用【巨浪擺尾】：對全體造成 {power * 100:g}% 傷害！')
+        for enemy in self.living(0):
+            if actor.hp > 0 and enemy.hp > 0:
+                self.hit(actor, enemy, power, attack_scope='group')
 
     def puppeteer_act(self, actor):
         puppets = [f for f in self.fighters if f.team == 1 and f.job in ('劍傀儡', '咒傀儡')]
@@ -841,6 +973,12 @@ class Battle:
                 self.log.append(f'{actor.name} 正在替【未完成稿】收尾；下一次行動將對全隊造成 180% 傷害！')
 
     def act(self, actor):
+        if actor.team == 1 and actor.job in ('赤雷', '蒼炎'):
+            self.twin_act(actor)
+            return
+        if actor.team == 1 and actor.job == '吞城鯨':
+            self.whale_act(actor)
+            return
         if actor.team == 1 and actor.job == '城崎諾亞':
             self.noah_act(actor)
             return
@@ -985,7 +1123,7 @@ class Battle:
         elif effect == 'holy_light':
             for enemy in self.living(1 - actor.team):
                 if actor.hp > 0 and enemy.hp > 0:
-                    self.hit(actor, enemy, 0.9)
+                    self.hit(actor, enemy, 0.9, attack_scope='group')
             amount = self.heal(actor, target, actor.stats['治療量'] * 70 // 100)
             self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
@@ -1012,7 +1150,8 @@ class Battle:
                 if actor.hp > 0 and enemy.hp > 0:
                     for _ in range(1 if effect == 'cleave' else 3):
                         if actor.hp > 0 and enemy.hp > 0:
-                            self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.4)
+                            self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.4,
+                                     attack_scope='group')
         elif effect in ('double', 'triple'):
             for _ in range(3 if effect == 'triple' else 2):
                 if actor.hp > 0 and target.hp > 0:
@@ -1042,6 +1181,18 @@ class Battle:
                     self.log.append(f'{target.name} 遭毒箭侵蝕，後續兩回合將受到無視防禦傷害。')
             if hit and target.hp > 0 and effect == 'shield_bash':
                 status = 'stun'
+                if (target.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')
+                        and not self.mechanics.get('twin_revive_delayed')):
+                    self.mechanics['twin_revive_round'] += 1
+                    self.mechanics['twin_revive_delayed'] = True
+                    self.log.append(f'{target.name} 的【再生共鳴】受到干擾，復活延後一回合。')
+                    return
+                if target.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging'):
+                    self.mechanics['whale_swallow_charging'] = False
+                    self.mechanics['whale_next_swallow'] = self.round + 3
+                    target.effects['break'] = self.round + 1
+                    self.log.append(f'{target.name} 的【吞城】被打斷，遭到破甲至第 {self.round + 1} 回合結束。')
+                    return
                 if status == 'stun' and target.job == '深淵鐘龍':
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
                     return
@@ -1069,6 +1220,7 @@ class Battle:
             return
         self.round += 1
         self.log.append(f'── 第 {self.round} 回合 ──')
+        self.process_twin_revival()
         order = [f for f in self.fighters if f.hp > 0]
         self.rng.shuffle(order)  # Equal speed uses seeded random tie-breaking.
         order.sort(key=lambda f: (self.action_priority(f), f.speed), reverse=True)
@@ -1166,6 +1318,8 @@ def raid_battle(participants, monster, seed):
                         vulnerable_chance=p['state'].get('vulnerable_chance', 0),
                         vulnerable_percent=p['state'].get('vulnerable_percent', 0),
                         healing_share=p['state'].get('healing_share', 0),
+                        alternating_damage_percent=p['state'].get('alternating_damage_percent', 0),
+                        defense_conversion=p['state'].get('defense_conversion', False),
                         critical_damage_percent=p['state'].get('critical_damage_percent', 150),
                         armed=bool(p['state'].get('equipped', {}).get('武器')),
                         user_id=p.get('id')) for p in participants]
@@ -1368,6 +1522,9 @@ def raid_battle(participants, monster, seed):
             name = monster_name(monster) if i == 0 else f'{monster_name(monster)}・{job}'
             individual['攻擊'] = max(1, individual['攻擊'] * (100, 60, 40)[i] // 100)
             individual['防禦'] = max(1, individual['防禦'] * (100, 120, 80)[i] // 100)
+        if monster['kind'] == '赤雷與蒼炎':
+            job = ('赤雷', '蒼炎')[i]
+            name = f'{monster_name(monster)}・{job}'
         fighters.append(Fighter(name, 1, job, individual, speed, []))
     battle = Battle(fighters, seed=seed)
     if monster['kind'] == '深淵鐘龍':
@@ -1380,6 +1537,14 @@ def raid_battle(participants, monster, seed):
         color = monster.get('primary_color') or colors[random.Random(seed).randrange(3)]
         battle.mechanics.update(noah_primary_color=color, noah_color_index=0,
                                 noah_composition=0, noah_draft_charging=False)
+    if monster['kind'] == '赤雷與蒼炎':
+        twins = fighters[-2:]
+        battle.mechanics.update(
+            twin_base_attacks={fighter.job: fighter.stats['攻擊'] for fighter in twins},
+            twin_base_speeds={fighter.job: fighter.speed for fighter in twins})
+    if monster['kind'] == '吞城鯨':
+        battle.mechanics.update(whale_shield=min(10, 3 + len(participants) // 3),
+                                whale_tide=0, whale_next_swallow=10)
     battle.log.extend(badge_logs)
     battle.log.extend(provision_logs)
     battle.log.extend(fortune_logs)
@@ -1413,6 +1578,9 @@ def load_battle(data):
         f.vulnerable_chance = data_f.get('vulnerable_chance', 0)
         f.vulnerable_percent = data_f.get('vulnerable_percent', 0)
         f.healing_share = data_f.get('healing_share', 0)
+        f.alternating_damage_percent = data_f.get('alternating_damage_percent', 0)
+        f.defense_conversion = data_f.get('defense_conversion', False)
+        f.stored_defense_attack = data_f.get('stored_defense_attack', 0)
         # Battles saved before critical damage became a fighter stat used 150%.
         f.critical_damage_percent = data_f.get('critical_damage_percent', 150)
         f.status_stacks = data_f.get('status_stacks', {})

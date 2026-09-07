@@ -38,6 +38,26 @@ class MonsterTests(unittest.TestCase):
         self.assertEqual((battle.fighters[-1].stats['HP'], battle.fighters[-1].stats['攻擊'],
                           battle.fighters[-1].stats['防禦']), (7991, 397, 172))
 
+    def test_scheduled_tier_four_uses_t40_and_builds_encounter_state(self):
+        twins = monster('赤雷與蒼炎')
+        twin_battle = raid_battle([participant()], twins, 17)
+        enemies = twin_battle.living(1)
+        self.assertEqual((twins['tier'], twins['profile']['level_bonus']), (4, 0))
+        self.assertEqual([fighter.job for fighter in enemies], ['赤雷', '蒼炎'])
+        self.assertEqual(enemies[0].stats['HP'], enemies[1].stats['HP'])
+        self.assertEqual(twin_battle.mechanics['twin_base_attacks'],
+                         {'赤雷': enemies[0].stats['攻擊'], '蒼炎': enemies[1].stats['攻擊']})
+
+        whale = monster('吞城鯨')
+        whale_battle = raid_battle([participant()], whale, 17)
+        self.assertEqual((whale['tier'], whale['profile']['level_bonus']), (4, 0))
+        self.assertEqual(whale_battle.living(1)[0].job, '吞城鯨')
+        self.assertEqual((whale_battle.mechanics['whale_shield'],
+                          whale_battle.mechanics['whale_tide']), (3, 0))
+
+        noah = monster('城崎諾亞')
+        self.assertEqual(noah['profile']['level_bonus'], 5)
+
     def test_goblin_group_buffs_death_and_restart(self):
         battle = raid_battle([participant()], monster('哥布林戰團'), 42)
         player, captain, *grunts = battle.fighters

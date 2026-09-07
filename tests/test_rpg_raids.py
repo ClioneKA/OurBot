@@ -12,7 +12,7 @@ import discord
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
-from core.rpg_character import Characters, CharacterError
+from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_divination import Divinations
 from core.rpg_raids import RaidService, RaidSignup, channel_ids
 from core.rpg_raid_store import RaidStore, DROP_TABLES
@@ -140,7 +140,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_mid_tier_channel_pool_rewards_and_fixed_paint_drop(self):
         from cmds.rpg import RPG
         choices = next(p.choices for p in RPG.spawn_raid.parameters if p.name == 'kind')
-        self.assertTrue({'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸'} <= {choice.value for choice in choices})
+        self.assertTrue({'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨'}
+                        <= {choice.value for choice in choices})
 
         class FakeChannel:
             id = 3
@@ -184,11 +185,31 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('全隊固定掉落 1 個 紅色噴漆罐', self.service.lobby_embed(team_raid).fields[-1].value)
 
     async def test_mid_tier_shuffle_bag_contains_each_monster_once(self):
-        kinds = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
-        first = [self.repo.next_mid_kind(99, kinds) for _ in range(3)]
-        second = [self.repo.next_mid_kind(99, kinds) for _ in range(3)]
+        kinds = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨')
+        first = [self.repo.next_mid_kind(99, kinds) for _ in range(5)]
+        second = [self.repo.next_mid_kind(99, kinds) for _ in range(5)]
         self.assertEqual(set(first), set(kinds))
         self.assertEqual(set(second), set(kinds))
+
+    async def test_tier_four_generation_and_two_job_loot_tables(self):
+        from core.rpg_monsters import prepare_monster
+        cases = {
+            '赤雷與蒼炎': {'裝甲步兵', '弓兵'},
+            '吞城鯨': {'騎士', '僧侶'},
+        }
+        for channel, (kind, jobs) in enumerate(cases.items(), 30):
+            with self.subTest(kind=kind), patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+                monster = prepare_monster(await self.service.imagine(kind), quality='普通')
+            raid = self.repo.create(1, channel, monster, 100, asdict(self.settings.mid_raid),
+                                    {'drop_chance': 1})
+            self.assertEqual(monster['tier'], 4)
+            self.assertEqual(raid['drop_pool'], list(DROP_TABLES[kind]))
+            equipment = [ITEMS[key] for key in raid['drop_pool']]
+            self.assertEqual({item.job for item in equipment if item.job}, jobs)
+            self.assertEqual(sum(item.slot == '飾品' for item in equipment), 1)
+            self.assertTrue(all(item.required_level == 40 for item in equipment))
+            marker = '復活' if kind == '赤雷與蒼炎' else '城塞鯨脂'
+            self.assertIn(marker, self.service.lobby_embed(raid).fields[2].value)
 
     async def test_fox_bat_generation_loot_and_command_choices(self):
         from core.rpg_monsters import prepare_monster
@@ -698,7 +719,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.characters.inventory(1, 1), ['starter:club'])
 
     async def test_skill_priority_and_job_isolation(self):
-        self.tactics.configure(1, 1, '騎士', 3, 1, False, 'self40', 'self')
+        self.tactics.configure(1, 1, '騎士', 3, 1, False, 'always', 'lowest')
         rules = Tactics(self.store).rules(1, 1, '騎士')
         self.assertEqual([r.priority for r in rules], [1, 2, 3])
         self.assertEqual((rules[0].slot, rules[0].enabled), (3, False))

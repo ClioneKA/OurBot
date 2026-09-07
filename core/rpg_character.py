@@ -85,6 +85,8 @@ class Item:
     vulnerable_chance: int = 0
     vulnerable_percent: int = 0
     healing_share: int = 0
+    alternating_damage_percent: int = 0
+    defense_conversion: bool = False
     category: str = '裝備'
     description: str = ''
     sell_price: int | None = None
@@ -216,6 +218,36 @@ for job, key, name, bonuses in (
                                  STABILITY[job], required_level=30,
                                  speed=8, accuracy=30,
                                  vulnerable_chance=5, vulnerable_percent=10)
+
+
+# Tier-4 scheduled raid equipment. These T40 pieces sit between the T30 raid
+# set and the regular T50 shop set; each encounter serves two professions.
+for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
+    ('裝甲步兵', 'infantry', '雷牙戰斧', (53, 66, 11, 0), '雙極戰甲', (213, 11, 46, 0)),
+    ('弓兵', 'archer', '蒼焰長弓', (0, 49, 0, 0), '炎翎獵裝', (199, 15, 37, 0)),
+):
+    ITEMS[f'twin_beast:{key}:weapon'] = Item(
+        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
+        required_level=40, speed=9, accuracy=40)
+    ITEMS[f'twin_beast:{key}:suit'] = Item(
+        suit_name, '套裝', job, 2, (0, 0, 0, 0, 0), suit_combat, required_level=40)
+
+for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
+    ('騎士', 'knight', '鯨骨劍盾', (98, 52, 22, 0), '吞潮重鎧', (235, 0, 54, 0)),
+    ('僧侶', 'monk', '潮鳴權杖', (0, 52, 0, 54), '深海僧袍', (199, 0, 37, 43)),
+):
+    ITEMS[f'whale:{key}:weapon'] = Item(
+        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
+        required_level=40, speed=9, accuracy=40)
+    ITEMS[f'whale:{key}:suit'] = Item(
+        suit_name, '套裝', job, 2, (0, 0, 0, 0, 0), suit_combat, required_level=40)
+
+ITEMS['twin_beast:charm'] = Item(
+    '雙生獸飾品', '飾品', '', 2, (0, 0, 0, 0, 0), required_level=40,
+    alternating_damage_percent=10, embroidery_slots=1)
+ITEMS['whale:charm'] = Item(
+    '吞城鯨飾品', '飾品', '', 2, (0, 0, 0, 0, 0), required_level=40,
+    defense_conversion=True, embroidery_slots=1)
 
 for key, name, description in (
     ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
@@ -450,6 +482,11 @@ def item_text(item):
         parts.append(f'每次直接命中有 {item.vulnerable_chance}% 機率使目標易傷 +{item.vulnerable_percent}% 至下一回合結束')
     if item.healing_share:
         parts.append(f'實際受到治療時，額外治療血量比例最低的另一名隊友 {item.healing_share}%')
+    if item.alternating_damage_percent:
+        parts.append(f'奇數回合單體直接攻擊 +{item.alternating_damage_percent}%；'
+                     f'偶數回合群體直接攻擊 +{item.alternating_damage_percent}%')
+    if item.defense_conversion:
+        parts.append('受到直接攻擊時，將最近一次由防禦擋下的傷害轉為下一次攻擊的額外攻擊力')
     if item.embroidery_slots:
         parts.append(f'刺繡格 {item.embroidery_slots} 格')
     if item.description:
@@ -670,7 +707,8 @@ class Characters:
                 combat[index] += value
             elif effect_key in ('speed', 'accuracy', 'evasion', 'lifesteal',
                                 'damage_guard_chance', 'vulnerable_chance',
-                                'vulnerable_percent', 'healing_share'):
+                                'vulnerable_percent', 'healing_share',
+                                'alternating_damage_percent', 'defense_conversion'):
                 changes[effect_key] = changes.get(effect_key, getattr(item, effect_key)) + value
         return replace(item, stats=tuple(stats), combat=tuple(combat), **changes)
 
@@ -708,7 +746,8 @@ class Characters:
         """
         allowed_fields = {'speed', 'accuracy', 'evasion', 'lifesteal',
                           'damage_guard_chance', 'vulnerable_chance',
-                          'vulnerable_percent', 'healing_share'}
+                          'vulnerable_percent', 'healing_share',
+                          'alternating_damage_percent', 'defense_conversion'}
         normalized = []
         for index, entry in enumerate(affixes):
             if len(entry) != 3:
@@ -821,6 +860,9 @@ class Characters:
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
                     vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
                     healing_share=max((item.healing_share for item in resolved.values()), default=0),
+                    alternating_damage_percent=max(
+                        (item.alternating_damage_percent for item in resolved.values()), default=0),
+                    defense_conversion=any(item.defense_conversion for item in resolved.values()),
                     critical_damage_percent=150)
 
     def inventory_counts(self, guild_id, user_id):

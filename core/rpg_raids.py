@@ -24,7 +24,7 @@ from core.settings import daily_periods
 
 logger = logging.getLogger(__name__)
 REGULAR_KINDS = ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王')
-MID_KINDS = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')
+MID_KINDS = ('深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨')
 SPECIAL_KIND = '城崎諾亞'
 PAINT_COLOR_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
 
@@ -175,6 +175,10 @@ class RaidService:
             monster.update(name='王城傀儡師', description='安安：「廢棄王城的絲線動起來了！先拆掉護主的兩具傀儡！」')
         if kind == '瘟疫縫合獸':
             monster.update(name='瘟疫縫合獸', description='安安：「那頭縫合怪物正在散播腐敗！記得先淨化再治療！」')
+        if kind == '赤雷與蒼炎':
+            monster.update(name='赤雷與蒼炎', description='安安：「兩頭雙生獸同時現身了！必須在再生共鳴完成前一起擊倒！」')
+        if kind == '吞城鯨':
+            monster.update(name='吞城鯨', description='安安：「遮住天空的巨鯨正在引發漲潮！快用強力的單體攻擊擊破鯨脂！」')
         ai_settings = self.mid_settings if kind in MID_KINDS else self.settings
         if not ai_settings.ai_monsters or not os.getenv('OPENAI_API_KEY'):
             return monster
@@ -199,7 +203,9 @@ class RaidService:
                                      '史萊姆群': '一群史萊姆共用血量，每回合連續三次彈跳撞擊。名稱須包含史萊姆群。',
                                      '深淵鐘龍': '以可被多次直接命中擊碎的鐘甲蓄力全體終末鐘聲，免疫暈眩。名稱須包含鐘龍。',
                                      '王城傀儡師': '與劍傀儡、咒傀儡共同作戰，會修復或吸收傀儡。名稱須包含傀儡師。',
-                                     '瘟疫縫合獸': '疊加可淨化的腐敗，三層會爆裂；治療腐敗者會使怪物回血。名稱須包含縫合獸。'}[kind],
+                                     '瘟疫縫合獸': '疊加可淨化的腐敗，三層會爆裂；治療腐敗者會使怪物回血。名稱須包含縫合獸。',
+                                     '赤雷與蒼炎': '赤雷與蒼炎輪流攻擊，任一倒下時另一隻會嘗試將牠復活。名稱須包含赤雷與蒼炎。',
+                                     '吞城鯨': '擁有需以高傷單體攻擊擊破的鯨脂護盾，水位會永久上升。名稱須包含吞城鯨。'}[kind],
                 text={'format': schema}, max_output_tokens=800, store=False)
             data = json.loads(response.output_text)
             if not all(isinstance(data.get(k), str) and data[k].strip() for k in ('name', 'description')):
@@ -222,6 +228,8 @@ class RaidService:
                   '深淵鐘龍': '蓄力時獲得鐘甲，直接命中可削減層數；鐘甲未破將釋放最高 300% 全體傷害；免疫暈眩',
                   '王城傀儡師': '劍傀儡護主、咒傀儡替本體減傷；每三回合修復，半血後吸收存活傀儡',
                   '瘟疫縫合獸': '攻擊疊加腐敗，三層在行動前爆裂；腐敗者受到技能治療會使怪物回血，可淨化',
+                  '赤雷與蒼炎': '赤雷在奇數回合單體攻擊，蒼炎在偶數回合全體攻擊；第 4、8、12…回合改用雷炎吐息；倒下一隻後須在再生共鳴完成前擊倒另一隻',
+                  '吞城鯨': '城塞鯨脂提供 35% 減傷，需高傷單體攻擊逐層擊破；水位每回合永久上升，100 時蓄力吞城',
                   '城崎諾亞': '免疫暈眩但可中毒；70% HP 前固定使用公告抽中的單色顏料；之後依紅 → 黃 → 藍輪替並累積未完成構圖，三色完成後蓄力未完成稿，可用盾擊打斷'}[raid['monster']['kind']]
         if raid['monster'].get('profile'):
             traits = {'巨獸': '血厚、攻擊高、防禦偏低、速度慢；每三回合對全隊橫掃',
@@ -235,6 +243,8 @@ class RaidService:
                       '深淵鐘龍': '免疫暈眩；蓄力鐘甲須靠全隊直接命中擊碎，失敗將承受最高 300% 全體傷害',
                       '王城傀儡師': '本體與兩具傀儡各自獨立血量；善用群攻製造兩具傀儡同時倒下的破綻',
                       '瘟疫縫合獸': '腐敗三層在行動前爆裂並波及全隊；淨化優先於治療可阻止共享血肉回血',
+                      '赤雷與蒼炎': '兩隻各持一半總 HP；赤雷奇數回合單體攻擊，蒼炎偶數回合全體攻擊且每四回合改用雷炎吐息；任一倒下兩回合後復活，可用盾擊延後一次',
+                      '吞城鯨': '城塞鯨脂使所受傷害降低 35%，高傷單體攻擊才能削減層數；水位不會清空，達 100 後週期性蓄力 200% 全體吞城，可用盾擊打斷',
                       '城崎諾亞': '免疫暈眩但可中毒；70% HP 前固定使用公告抽中的單色顏料；70% 以下從紅色開始依序調色，完成紅黃藍構圖後蓄力全體未完成稿；盾擊可打斷'}[raid['monster']['kind']]
         embed = discord.Embed(title='魔物出現｜' + safe_text(monster_name(raid['monster']), 32),
                               description=safe_text(raid['monster']['description'], 120), color=0xB565D9)
@@ -307,6 +317,18 @@ class RaidService:
                               description='\n'.join(battle.log[-12:])[-3000:] or '戰鬥即將開始', color=0xE09B37)
         enemies = [f for f in battle.fighters if f.team == 1]
         embed.add_field(name='魔物 HP', value='\n'.join(f'{f.name}：{f.hp:,}/{f.stats["HP"]:,}' for f in enemies)[:1024])
+        if raid['monster']['kind'] == '赤雷與蒼炎':
+            revive_job = battle.mechanics.get('twin_revive_job')
+            state = ('共鳴穩定' if not revive_job else
+                     f'{revive_job} 將在 {max(0, battle.mechanics.get("twin_revive_round", battle.round) - battle.round)} 回合後復活'
+                     + ('（已延後）' if battle.mechanics.get('twin_revive_delayed') else ''))
+            embed.add_field(name='雙生共鳴', value=state, inline=False)
+        elif raid['monster']['kind'] == '吞城鯨':
+            state = (f'城塞鯨脂 {battle.mechanics.get("whale_shield", 0)} 層｜'
+                     f'水位 {battle.mechanics.get("whale_tide", 0)}/100')
+            if battle.mechanics.get('whale_swallow_charging'):
+                state += '｜正在蓄力吞城'
+            embed.add_field(name='潮汐狀態', value=state, inline=False)
         roster = '\n'.join(f'{f.name}：{f.hp}/{f.stats["HP"]}' for f in battle.fighters if f.team == 0)
         embed.add_field(name='討伐隊伍', value=roster[:1024], inline=False)
         if raid.get('difficulty_change'):

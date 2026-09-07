@@ -347,7 +347,7 @@ class RPG(commands.Cog):
         victory_gold='勝利每人最終金幣，覆蓋類型預設獎勵', drop_percent='專屬物品掉落百分比，0–100；史萊姆群固定不掉落')
     @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in
         ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王',
-         '深淵鐘龍', '王城傀儡師', '瘟疫縫合獸')])
+         '深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨')])
     async def spawn_raid(self, interaction: discord.Interaction, kind: str = None,
                          name: app_commands.Range[str, 1, 20] = None,
                          strength: app_commands.Range[float, 0.1, 10.0] = 1.0,

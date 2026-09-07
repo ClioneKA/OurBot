@@ -186,6 +186,25 @@ class CharacterTests(unittest.TestCase):
         self.assertFalse(item_sellable(ITEMS['paint:red']))
         self.assertTrue(ITEMS['paint:red'].transferable)
 
+    def test_tier_four_raid_items_require_level_forty_and_snapshot_effects(self):
+        from core.rpg_character import item_text
+        self.level(30)
+        self.characters.change_job(1, 1, '弓兵')
+        for key in ('twin_beast:archer:weapon', 'twin_beast:archer:suit', 'twin_beast:charm'):
+            self.characters.grant_item(1, 1, key)
+            with self.assertRaises(CharacterError):
+                self.characters.equip(1, 1, key)
+        self.level(40)
+        self.characters.equip(1, 1, 'twin_beast:archer:weapon')
+        self.characters.equip(1, 1, 'twin_beast:archer:suit')
+        self.characters.equip(1, 1, 'twin_beast:charm')
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual(state['alternating_damage_percent'], 10)
+        self.assertFalse(state['defense_conversion'])
+        self.assertEqual(ITEMS['twin_beast:archer:weapon'].accuracy, 40)
+        self.assertIn('奇數回合單體直接攻擊 +10%', item_text(ITEMS['twin_beast:charm']))
+        self.assertIn('防禦擋下', item_text(ITEMS['whale:charm']))
+
     def test_fox_pendant_and_bat_weapons(self):
         from core.rpg_character import item_text
         from core.rpg_battle import raid_battle, dump_battle, load_battle

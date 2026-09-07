@@ -13,6 +13,105 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_twin_turn_schedule_revival_delay_and_restart(self):
+        knight = fighter('騎士', job='騎士', hp=10000, dex=100, attack=100, rules=[])
+        ally = fighter('隊友', hp=10000, dex=50, attack=100, rules=[])
+        red = fighter('赤雷', 1, job='赤雷', hp=1000, dex=55, attack=80, rules=[])
+        blue = fighter('蒼炎', 1, job='蒼炎', hp=1000, dex=55, attack=80, rules=[])
+        battle = Battle([knight, ally, red, blue], seed=1)
+        battle.mechanics.update(twin_base_attacks={'赤雷': 80, '蒼炎': 80},
+                                twin_base_speeds={'赤雷': 55, '蒼炎': 55})
+
+        battle.round = 1
+        with patch.object(battle, 'hit') as hit:
+            battle.act(red)
+            battle.act(blue)
+            self.assertEqual(len(hit.call_args_list), 1)
+            self.assertIs(hit.call_args.args[0], red)
+        battle.round = 2
+        with patch.object(battle, 'hit') as hit:
+            battle.act(red)
+            battle.act(blue)
+            self.assertEqual(len(hit.call_args_list), 2)
+            self.assertTrue(all(call.args[0] is blue and call.args[2] == 0.65
+                                for call in hit.call_args_list))
+        battle.round = 4
+        with patch.object(battle, 'hit') as hit:
+            battle.act(blue)
+            self.assertTrue(all(call.args[2] == 1.2 for call in hit.call_args_list))
+
+        red.hp = 0
+        battle.check_end()
+        self.assertEqual((battle.mechanics['twin_revive_job'], battle.mechanics['twin_revive_round']),
+                         ('赤雷', 6))
+        self.assertEqual((blue.stats['攻擊'], blue.speed), (100, 70))
+        battle.use_skill(knight, Rule(1, 1, True, 'always', 'lowest'), SKILLS['騎士'][3], blue)
+        self.assertEqual(battle.mechanics['twin_revive_round'], 7)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        restored.round = 7
+        restored.process_twin_revival()
+        restored_red = next(f for f in restored.fighters if f.job == '赤雷')
+        restored_blue = next(f for f in restored.fighters if f.job == '蒼炎')
+        self.assertEqual(restored_red.hp, 200)
+        self.assertEqual((restored_blue.stats['攻擊'], restored_blue.speed), (80, 55))
+
+    def test_whale_shield_tide_and_interrupt(self):
+        knight = fighter('騎士', job='騎士', hp=20000, dex=100, attack=200, rules=[])
+        ally = fighter('隊友', hp=20000, dex=50, attack=100, rules=[])
+        whale = fighter('吞城鯨', 1, job='吞城鯨', hp=20000, dex=35, attack=100, rules=[])
+        whale.stats['防禦'] = 0
+        battle = Battle([knight, ally, whale], seed=1)
+        battle.mechanics.update(whale_shield=2, whale_tide=0, whale_next_swallow=10)
+        battle.round = 1
+        battle.hit(knight, whale, 1.0)
+        self.assertEqual(battle.mechanics['whale_shield'], 2)
+        battle.hit(knight, whale, 1.6)
+        self.assertEqual(battle.mechanics['whale_shield'], 1)
+        battle.hit(knight, whale, 1.6)
+        self.assertEqual(battle.mechanics['whale_shield'], 0)
+        self.assertTrue(whale.has('break', 3))
+
+        for turn in range(1, 11):
+            battle.round = turn
+            battle.whale_act(whale)
+        self.assertEqual(battle.mechanics['whale_tide'], 100)
+        self.assertTrue(battle.mechanics['whale_swallow_charging'])
+        self.assertEqual((knight.speed, ally.speed), (90, 40))
+        self.assertEqual((knight.healing_received_percent, ally.healing_received_percent), (-25, -25))
+        battle.use_skill(knight, Rule(1, 1, True, 'always', 'lowest'), SKILLS['騎士'][3], whale)
+        self.assertFalse(battle.mechanics['whale_swallow_charging'])
+        self.assertEqual(battle.mechanics['whale_next_swallow'], 13)
+
+    def test_tier_four_accessory_combat_effects(self):
+        attacker = fighter('佩戴者', hp=1000, dex=100, attack=100, rules=[])
+        attacker.alternating_damage_percent = 10
+        enemy = fighter('敵人', 1, hp=1000, dex=10, attack=100, rules=[])
+        enemy.stats['防禦'] = 0
+        battle = Battle([attacker, enemy], seed=1)
+        battle.round = 1
+        battle.hit(attacker, enemy)
+        self.assertEqual(enemy.hp, 890)
+        enemy.hp = 1000
+        battle.round = 2
+        battle.hit(attacker, enemy, attack_scope='group')
+        self.assertEqual(enemy.hp, 890)
+
+        wearer = fighter('鯨飾佩戴者', hp=1000, dex=100, attack=40, rules=[])
+        wearer.defense_conversion = True
+        wearer.stats['防禦'] = 20
+        monster = fighter('怪物', 1, hp=1000, dex=10, attack=100, rules=[])
+        target = fighter('目標', 1, hp=1000, dex=10, attack=10, rules=[])
+        target.stats['防禦'] = 0
+        conversion = Battle([wearer, monster, target], seed=1)
+        conversion.hit(monster, wearer)
+        self.assertEqual(wearer.stored_defense_attack, 7)
+        conversion = load_battle(json.loads(json.dumps(dump_battle(conversion))))
+        wearer, monster, target = conversion.fighters
+        self.assertTrue(wearer.defense_conversion)
+        self.assertEqual(wearer.stored_defense_attack, 7)
+        conversion.hit(wearer, target)
+        self.assertEqual((wearer.stored_defense_attack, target.hp), (0, 953))
+
     def test_noah_colour_transition_composition_and_shield_interrupt(self):
         knight = fighter('騎士', job='騎士', hp=5000, attack=80, rules=[])
         ally = fighter('隊友', hp=5000, attack=80, rules=[])

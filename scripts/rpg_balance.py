@@ -20,6 +20,12 @@ T45_EQUIPMENT = {
     '弓兵': ('noah:archer:weapon', 'noah:archer:suit'),
     '僧侶': ('noah:monk:weapon', 'noah:monk:suit'),
 }
+T40_EQUIPMENT = {
+    '裝甲步兵': ('twin_beast:infantry:weapon', 'twin_beast:infantry:suit'),
+    '騎士': ('whale:knight:weapon', 'whale:knight:suit'),
+    '弓兵': ('twin_beast:archer:weapon', 'twin_beast:archer:suit'),
+    '僧侶': ('whale:monk:weapon', 'whale:monk:suit'),
+}
 COMPOSITIONS = {
     'balanced': ('裝甲步兵', '騎士', '弓兵', '僧侶'),
     'no_healer': ('裝甲步兵', '騎士', '弓兵', '弓兵'),
@@ -34,7 +40,7 @@ COMBAT_STATS = ('HP', '攻擊', '防禦', '治療量')
 
 def mechanism_rules(job, kind):
     """Canonical three-skill loadouts that intentionally answer encounter mechanics."""
-    if job == '騎士' and kind in ('鐵殼魔像', '城崎諾亞'):
+    if job == '騎士' and kind in ('鐵殼魔像', '城崎諾亞', '赤雷與蒼炎', '吞城鯨'):
         return [Rule(1, 1, True, 'enemy_charging', 'lowest', skill_id=4),
                 Rule(2, 2, True, 'always', 'self', skill_id=1),
                 Rule(3, 3, True, 'ally50', 'lowest', skill_id=2, condition_value=50)]
@@ -42,12 +48,14 @@ def mechanism_rules(job, kind):
         return [Rule(1, 1, True, 'ally_debuff', 'debuffed', skill_id=3),
                 Rule(2, 2, True, 'ally50', 'lowest', skill_id=1, condition_value=50),
                 Rule(3, 3, True, 'always', 'strongest', skill_id=2)]
-    if job == '裝甲步兵' and kind in ('哥布林戰團', '王城傀儡師'):
-        return [Rule(1, 1, True, 'enemies3', 'lowest', skill_id=4, condition_value=3),
+    if job == '裝甲步兵' and kind in ('哥布林戰團', '王城傀儡師', '赤雷與蒼炎'):
+        threshold = 2 if kind == '赤雷與蒼炎' else 3
+        return [Rule(1, 1, True, 'enemies3', 'lowest', skill_id=4, condition_value=threshold),
                 Rule(2, 2, True, 'always', 'lowest', skill_id=2),
                 Rule(3, 3, True, 'always', 'lowest', skill_id=1)]
-    if job == '弓兵' and kind in ('哥布林戰團', '王城傀儡師'):
-        return [Rule(1, 1, True, 'enemies3', 'lowest', skill_id=3, condition_value=3),
+    if job == '弓兵' and kind in ('哥布林戰團', '王城傀儡師', '赤雷與蒼炎'):
+        threshold = 2 if kind == '赤雷與蒼炎' else 3
+        return [Rule(1, 1, True, 'enemies3', 'lowest', skill_id=3, condition_value=threshold),
                 Rule(2, 2, True, 'always', 'lowest', skill_id=1),
                 Rule(3, 3, True, 'always', 'lowest', skill_id=2)]
     if job == '弓兵' and kind == '深淵鐘龍':
@@ -55,6 +63,10 @@ def mechanism_rules(job, kind):
                 Rule(2, 2, True, 'always', 'lowest', skill_id=2),
                 Rule(3, 3, True, 'always', 'lowest', skill_id=1)]
     if job == '弓兵' and kind == '城崎諾亞':
+        return [Rule(1, 1, True, 'always', 'lowest', skill_id=5),
+                Rule(2, 2, True, 'always', 'lowest', skill_id=1),
+                Rule(3, 3, True, 'always', 'lowest', skill_id=2)]
+    if job == '裝甲步兵' and kind == '吞城鯨':
         return [Rule(1, 1, True, 'always', 'lowest', skill_id=5),
                 Rule(2, 2, True, 'always', 'lowest', skill_id=1),
                 Rule(3, 3, True, 'always', 'lowest', skill_id=2)]
@@ -69,7 +81,7 @@ def reference_participant(job, tier, user_id, level_bonus=0, kind=None, strategy
                  + stage * weight * 2 for weight in growth)
     combat = combat_from_stats(base, job)
     if tier == 4:
-        weapon_key, suit_key = T45_EQUIPMENT[job]
+        weapon_key, suit_key = (T45_EQUIPMENT if kind == '城崎諾亞' else T40_EQUIPMENT)[job]
         equipped = {'武器': weapon_key, '套裝': suit_key}
     elif tier == 3:
         weapon_key, suit_key = T30_EQUIPMENT[job]
@@ -104,7 +116,7 @@ def simulate(kind, seeds, quality='普通', composition='balanced', profile_scal
         monster['profile'] = dict(monster['profile'])
         for stat, scale in profile_scales.items():
             monster['profile'][stat] *= scale
-    level_bonus = QUALITIES[quality][1]
+    level_bonus = QUALITIES[quality][1] + (5 if kind == '城崎諾亞' else 0)
     party = reference_party(tier, composition, level_bonus, kind, strategy)
     wins = timeouts = total_rounds = winning_rounds = remaining_hp = 0
     for seed in range(seeds):

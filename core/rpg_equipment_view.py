@@ -92,7 +92,7 @@ class EquipmentView(discord.ui.View):
         embed.add_field(name='目前選擇', value=f'{self.slot}：{selected.name if selected else "請選擇物品"}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='先選欄位與物品；裝備染色與飾品刺繡請前往漢娜的裁縫所。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
+        embed.set_footer(text='先選欄位與物品；裝備染色與飾品刺繡請前往遠野漢娜的裁縫所。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
         return embed
 
     async def handle(self, interaction, action, value=None):

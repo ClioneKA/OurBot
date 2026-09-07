@@ -6,7 +6,7 @@ from decimal import Decimal
 BALANCE_VERSION = 5
 # Calibrated encounter tiers are content levels. Higher-level players are
 # intentionally stronger when returning to these lower-tier encounters.
-REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 45}
+REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40}
 # HP, attack, defense. Tiers are internal and never part of display names.
 TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
          4: (2.2, 1.25, 1.2)}
@@ -29,6 +29,10 @@ PROFILES = {
     '深淵鐘龍': (3, 4.7696, 1.57, 1.4375, 45, 92, 30, 10),
     '王城傀儡師': (3, 3.8538, 2.089, 1.125, 55, 94, 31, 10),
     '瘟疫縫合獸': (3, 3.91, 2.691, 1.25, 50, 93, 29, 8),
+    # Scheduled tier-four encounters use a T40 reference party. The twins
+    # split both their HP and action budget between two bodies.
+    '赤雷與蒼炎': (4, 2.94, 0.989, 1.15, 55, 95, 40, 10),
+    '吞城鯨': (4, 3.6, 1.45, 1.25, 35, 94, 35, 8),
     # Special summon calibrated around Lv.45 equipment. It is always ordinary
     # quality and is excluded from both scheduled encounter pools.
     '城崎諾亞': (4, 3.803625, 0.9148125, 1.4375, 60, 95, 45, 12),
@@ -58,9 +62,13 @@ def prepare_monster(monster, quality=None):
     base = TIERS[tier]
     return dict(monster, balance_version=BALANCE_VERSION, quality=quality, tier=tier, profile=dict(
         hp=product(base[0], thp), attack=product(base[1], tatk),
-        defense=product(base[2], tdef), speed=speed, level_bonus=level_bonus,
+        defense=product(base[2], tdef), speed=speed,
+        # Noah remains a fixed T45 special summon while scheduled tier-four
+        # encounters use the normal T40 anchor.
+        level_bonus=level_bonus + (5 if monster['kind'] == '城崎諾亞' else 0),
         hit=hit, dodge=dodge, crit=crit,
-        count=3 if monster['kind'] in ('史萊姆群', '哥布林戰團', '王城傀儡師') else 1),
+        count=(3 if monster['kind'] in ('史萊姆群', '哥布林戰團', '王城傀儡師') else
+               2 if monster['kind'] == '赤雷與蒼炎' else 1)),
         quality_reward=reward, quality_drop=drop)
 
 
