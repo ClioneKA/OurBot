@@ -222,6 +222,8 @@ class TotalRaidLobbyView(discord.ui.View):
 
     async def _change(self, interaction, leave=False):
         try:
+            if not self.service.cog.store.has_player(interaction.guild_id, interaction.user.id):
+                raise TotalRaidError('請先接受邀請函，正式成為冒險者。')
             room = await self.service.change_member(self.room_id, interaction.user, leave)
         except (CharacterError, TotalRaidError) as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)

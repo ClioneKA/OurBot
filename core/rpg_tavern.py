@@ -202,6 +202,8 @@ class DrinkOfferView(discord.ui.View):
             await interaction.response.send_message('只有伺服器成員可以入席。', ephemeral=True)
             return
         try:
+            if not self.tavern.cog.store.has_player(interaction.guild_id, interaction.user.id):
+                raise CharacterError('請先接受邀請函，正式成為冒險者。')
             self.tavern.store.claim(self.offer_id, interaction.guild_id, interaction.user.id)
             await interaction.response.edit_message(embed=self.embed(), view=self,
                                                     allowed_mentions=discord.AllowedMentions.none())

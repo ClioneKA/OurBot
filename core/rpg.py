@@ -88,6 +88,17 @@ class RPGStore:
         return self.db.execute('SELECT 1 FROM players WHERE guild_id=? AND user_id=?',
                                (guild_id, user_id)).fetchone() is not None
 
+    def create_player(self, guild_id, user_id):
+        """Create a formally invited player, returning whether it was new."""
+        if not self.db.in_transaction:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                return self.create_player(guild_id, user_id)
+        created = self.db.execute(
+            'INSERT OR IGNORE INTO players (guild_id,user_id,xp) VALUES (?,?,0)',
+            (guild_id, user_id))
+        return bool(created.rowcount)
+
     @staticmethod
     def day_key(now):
         return datetime.fromtimestamp(now, timezone(timedelta(hours=8))).date().isoformat()

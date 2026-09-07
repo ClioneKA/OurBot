@@ -824,6 +824,16 @@ class Characters:
             self.db.execute('INSERT OR IGNORE INTO rpg_equipment VALUES (?,?,?,?)',
                             (guild_id, user_id, '武器', instance_id))
 
+    def create(self, guild_id, user_id):
+        """Atomically create a formal player and grant their starter equipment."""
+        if not self.db.in_transaction:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                return self.create(guild_id, user_id)
+        created = self.store.create_player(guild_id, user_id)
+        self.ensure_starter(guild_id, user_id)
+        return created
+
     def snapshot(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
         level = level_for(self.store.xp(guild_id, user_id))

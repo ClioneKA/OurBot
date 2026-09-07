@@ -22,6 +22,7 @@ from core.rpg_provisions import Provisions
 from core.rpg_divination import Divinations
 from core.rpg_tavern import TavernService
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
+from core.rpg_invites import AdventurerInvitations, AdventurerInvitationView
 
 
 class RPG(commands.Cog):
@@ -30,6 +31,7 @@ class RPG(commands.Cog):
         self.settings = get_settings().rpg
         self.store = RPGStore(Path(__file__).resolve().parent.parent / 'data/rpg.db')
         self.characters = Characters(self.store, self.settings)
+        self.invitations = AdventurerInvitations(self)
         self.fishing = Fishing(self.store)
         self.farming = Farming(self.store)
         self.provisions = Provisions(self.store)
@@ -44,6 +46,7 @@ class RPG(commands.Cog):
         self.total_raids = TotalRaidService(self)
 
     async def cog_load(self):
+        self.invitations.restore_views()
         for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notified_active():
             view = FishingNotificationView(self, guild_id, user_id, spot_id, duration_id, started_at)
             self.bot.add_view(view)
@@ -77,7 +80,8 @@ class RPG(commands.Cog):
     async def on_message(self, message):
         if (not self.settings.enabled or message.guild is None or message.author.bot
                 or message.webhook_id is not None or message.is_system()
-                or len(''.join(message.content.split())) < self.settings.text_min_chars):
+                or len(''.join(message.content.split())) < self.settings.text_min_chars
+                or not self.store.has_player(message.guild.id, message.author.id)):
             return
         self.store.award_text(message.guild.id, message.author.id, time.time(),
                               self.settings.text_xp, self.settings.text_cooldown_seconds,
@@ -88,6 +92,7 @@ class RPG(commands.Cog):
             self.tracker.clear(guild.id)
             return
         eligible = eligible_voice_members(guild, self.settings.voice_min_members)
+        eligible = {user_id for user_id in eligible if self.store.has_player(guild.id, user_id)}
         awards = self.tracker.update(guild.id, eligible, time.monotonic(),
                                      self.settings.voice_xp_per_minute)
         if awards:
@@ -179,6 +184,10 @@ class RPG(commands.Cog):
     @app_commands.command(name='冒險', description='開啟安安大冒險：角色、戰鬥、背包、商店、生活與移動')
     @app_commands.guild_only()
     async def adventure(self, interaction: discord.Interaction):
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message(
+                '你還沒有正式加入安安大冒險。請先接受一封邀請函！', ephemeral=True)
+            return
         view = AdventureView(self, interaction)
         self.menu_views.add(view)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
@@ -292,14 +301,65 @@ class RPG(commands.Cog):
         if member.bot:
             await interaction.response.send_message('機器人沒有冒險者名片。', ephemeral=True)
             return
-        if (member.id != interaction.user.id
-                and not self.store.has_player(interaction.guild_id, member.id)
-                and not self.characters.has_character(interaction.guild_id, member.id)):
+        if not self.store.has_player(interaction.guild_id, member.id):
             await interaction.response.send_message(f'{member.display_name} 還沒有開始安安大冒險。', ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())
             return
         await interaction.response.send_message(embed=self.adventurer_embed(interaction.guild_id, member),
                                                 allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name='邀請', description='張貼安安大冒險邀請函，或私訊指定成員')
+    @app_commands.guild_only()
+    @app_commands.rename(member='成員')
+    @app_commands.describe(member='指定時只私訊該成員；不填則在目前頻道張貼公開邀請函')
+    async def invite(self, interaction: discord.Interaction, member: discord.Member = None):
+        if member is not None and member.bot:
+            await interaction.response.send_message('不能邀請機器人成為冒險者。', ephemeral=True)
+            return
+        try:
+            role = await self.invitations.role_for(interaction.guild)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        target = member.id if member is not None else None
+        token = self.invitations.repo.create(interaction.guild_id, interaction.user.id, target)
+        view = AdventurerInvitationView(self.invitations, token)
+        if member is None:
+            embed = discord.Embed(
+                title='安安大冒險｜來自夏目安安的邀請函', color=0x8B5CF6,
+                description=('夏目安安：「喂，吾輩手上正好有一封多出來的邀請函……才、才不是特地留給你的！\n\n'
+                             '如果你願意踏進這場冒險，就按下 **接受邀請**。吾輩會替你準備冒險者身分與第一把木棒。」'))
+            embed.add_field(name='邀請人', value=interaction.user.mention)
+            embed.add_field(name='加入後取得', value=f'{role.mention}・Lv.1 民兵・T1 木棒', inline=False)
+            embed.set_footer(text='接受後才會建立角色；加入前的聊天與語音不會累積冒險 XP。')
+            try:
+                await interaction.response.send_message(
+                    embed=embed, view=view,
+                    allowed_mentions=discord.AllowedMentions.none())
+                message = await interaction.original_response()
+                self.invitations.repo.bind_message(token, message.id)
+            except Exception:
+                self.invitations.repo.delete(token)
+                raise
+            return
+
+        embed = discord.Embed(
+            title='安安大冒險｜夏目安安寄來的邀請函', color=0x8B5CF6,
+            description=(f'夏目安安：「{member.display_name}，有人覺得你有成為冒險者的資質，所以拜託吾輩把這封信交給你。\n\n'
+                         '哼哼，按下 **接受邀請** 的話，吾輩就准你加入隊伍，還會送你一把新手木棒。可別讓吾輩失望喔！」'))
+        embed.add_field(name='邀請人', value=interaction.user.display_name)
+        embed.add_field(name='加入後取得', value=f'{role.name}・Lv.1 民兵・T1 木棒', inline=False)
+        embed.set_footer(text=f'這封邀請只限 {member.display_name} 接受。')
+        await interaction.response.defer(ephemeral=True)
+        try:
+            message = await member.send(embed=embed, view=view,
+                                        allowed_mentions=discord.AllowedMentions.none())
+            self.invitations.repo.bind_message(token, message.id)
+        except (discord.Forbidden, discord.HTTPException):
+            self.invitations.repo.delete(token)
+            await interaction.followup.send('無法私訊這位成員；請請對方開啟伺服器成員私訊後再試。', ephemeral=True)
+            return
+        await interaction.followup.send(f'已將安安的邀請函私訊給 {member.display_name}。', ephemeral=True)
 
     @app_commands.command(name='排行榜', description='查看本伺服器經驗值前十名')
     @app_commands.guild_only()
@@ -319,6 +379,9 @@ class RPG(commands.Cog):
                                app_commands.Choice(name='中階討伐', value='mid'),
                                app_commands.Choice(name='全部', value='all')])
     async def raid_notifications(self, interaction: discord.Interaction, action: str = 'subscribe', kind: str = 'regular'):
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message('請先接受邀請函，正式成為冒險者。', ephemeral=True)
+            return
         if action not in ('subscribe', 'unsubscribe'):
             await interaction.response.send_message('請選擇領取或取消。', ephemeral=True)
             return
@@ -381,6 +444,9 @@ class RPG(commands.Cog):
     async def create_total_raid(self, interaction: discord.Interaction, boss: str = '訓練用假人'):
         if interaction.guild is None or not interaction.permissions.administrator:
             await interaction.response.send_message('只有伺服器管理員可以建立總力戰房間。', ephemeral=True)
+            return
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message('請先接受邀請函，正式成為冒險者。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:

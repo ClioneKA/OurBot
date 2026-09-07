@@ -20,6 +20,7 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.store.close)
         self.characters = Characters(self.store, RPGSettings())
         self.characters.snapshot(1, 1)
+        self.store.create_player(1, 2)
         with self.store.db:
             self.store.db.execute("INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity) VALUES (1,1,'raid:0',3)")
         self.cog = SimpleNamespace(characters=self.characters, store=self.store, menu_views=WeakSet())

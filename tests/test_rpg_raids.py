@@ -878,6 +878,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_signup_button_and_no_cross_raid_registration(self):
         raid = self.lobby()
+        self.store.create_player(1, 1)
         interaction = SimpleNamespace(guild_id=1, channel_id=2, user=SimpleNamespace(id=1, bot=False),
                                       response=SimpleNamespace(send_message=AsyncMock()))
         view = self.service.signup(raid)

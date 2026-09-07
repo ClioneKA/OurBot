@@ -165,6 +165,8 @@ class TradeView(discord.ui.View):
                         raise CharacterError('無法確認收件人仍在伺服器，請重新選擇。')
                     if member.bot:
                         raise CharacterError('不能給予機器人。')
+                    if not self.cog.store.has_player(self.guild_id, recipient):
+                        raise CharacterError('對方尚未接受邀請，不能接收冒險道具。')
                 item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, key)
                 gold = self.cog.characters.dispose(self.guild_id, self.owner.id, key, amount,
                                                   recipient if self.mode == 'give' else None)

@@ -55,6 +55,8 @@ class RaidSignup(discord.ui.View):
             await interaction.response.send_message('只有伺服器成員可參加。', ephemeral=True)
             return
         try:
+            if not self.service.cog.store.has_player(interaction.guild_id, interaction.user.id):
+                raise CharacterError('請先接受邀請函，正式成為冒險者。')
             settings = self.service.settings_for_channel(interaction.channel_id)
             if not settings.enabled or interaction.channel_id not in self.service.all_channels:
                 raise CharacterError('本頻道的討伐活動已停用。')

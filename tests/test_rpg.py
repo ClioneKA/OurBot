@@ -105,7 +105,19 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰', '討伐通知', '戰鬥統計'})
+                                 {'邀請', '冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰', '討伐通知', '戰鬥統計'})
+                invitation_role = SimpleNamespace(mention='<@&99>')
+                cog.invitations.role_for = AsyncMock(return_value=invitation_role)
+                invitation = SimpleNamespace(
+                    guild=SimpleNamespace(id=1), guild_id=1,
+                    user=SimpleNamespace(id=7, mention='<@7>'),
+                    response=SimpleNamespace(send_message=AsyncMock()),
+                    original_response=AsyncMock(return_value=SimpleNamespace(id=123)))
+                await cog.invite.callback(cog, invitation)
+                invitation_embed = invitation.response.send_message.call_args.kwargs['embed']
+                self.assertIn('夏目安安', invitation_embed.title)
+                self.assertIn('吾輩', invitation_embed.description)
+                self.assertIn('接受邀請', invitation_embed.description)
                 admin = SimpleNamespace(guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2),
                     permissions=SimpleNamespace(administrator=False),
                     response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
@@ -131,6 +143,11 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                 message(content=''), message(is_system=lambda: True)):
                     await cog.on_message(invalid)
                 self.assertEqual(store.xp(1, 10), 0)
+                with patch('cmds.rpg.time.time', return_value=1000):
+                    await cog.on_message(message())
+                    await cog.on_message(message())
+                self.assertEqual(store.xp(1, 10), 0)
+                store.create_player(1, 10)
                 with patch('cmds.rpg.time.time', return_value=1000):
                     await cog.on_message(message())
                     await cog.on_message(message())
