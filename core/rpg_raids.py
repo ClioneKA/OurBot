@@ -638,7 +638,6 @@ class RaidService:
         self.spawning_guilds.add(guild.id)
         task = asyncio.current_task()
         self.spawn_tasks.add(task)
-        self.next_spawn(channel.id, time.time())
         raid = None
         consumed = False
         try:
@@ -649,6 +648,7 @@ class RaidService:
             settings = self.settings_for_channel(channel.id)
             raid = self.repo.create(guild.id, channel.id, monster, time.time(), asdict(settings),
                                     pool='special', use_dynamic=False)
+            raid['preserve_schedule'] = True
             raid['members'] = [user.id]
             self.repo.save(raid)
             self.cog.characters.consume_item(guild.id, user.id, 'paint:set')

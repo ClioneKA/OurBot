@@ -100,6 +100,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
             service = RaidService(self.cog)
         service.notifications.ensure = AsyncMock(return_value=None)
+        service.repo.schedule(3, 12345)
         user = SimpleNamespace(id=1, bot=False)
         with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
                 patch('core.rpg_raids.random.choice', return_value='blue'):
@@ -108,6 +109,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((raid['status'], raid['members']), ('lobby', [1]))
             self.assertEqual((raid['monster']['tier'], raid['monster']['primary_color']), (4, 'blue'))
             self.assertNotIn('difficulty', raid)
+            self.assertTrue(raid['preserve_schedule'])
+            self.assertEqual(service.repo.next_at(3), 12345)
             self.assertEqual(self.characters.inventory_counts(1, 1).get('paint:set', 0), 0)
             self.characters.grant_item(1, 1, 'paint:set')
             with self.assertRaises(CharacterError):
