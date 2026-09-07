@@ -67,27 +67,26 @@ SKILLS = {
                        timing=PREPARATION_TIMING),
                  Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
                  Skill('重裝猛擊', 'crush', 4, '對單一敵人造成 220% 傷害')),
-    '騎士': (Skill('嘲諷', 'taunt', 3, '吸引敵方單體攻擊並使自身減傷 15%，持續至下一回合結束',
+    '騎士': (Skill('挑釁反擊', 'taunt', 3, '吸引敵方單體攻擊；受到直接攻擊後對攻擊者造成 100% 傷害，持續至下一回合結束',
                    timing=PREPARATION_TIMING),
-             Skill('護衛', 'guard', 3, '全隊防禦增加施放者最大 HP 的 5%，同效果取較強值，持續至下一回合結束', 'ally50',
+             Skill('護衛', 'guard', 3, '全隊防禦增加施放者自身防禦的 100%，並免疫可淨化負面狀態，持續至下一回合結束', 'ally50',
                    timing=PREPARATION_TIMING),
-             Skill('堅守', 'stance', 3, '自身減傷 50%，持續至下一回合結束', 'self40',
-                   timing=PREPARATION_TIMING),
+             Skill('騎士衝鋒', 'knight_charge', 3, '以自身最大 HP 造成 50% 單體傷害'),
              Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後打斷蓄力並暈眩至下一回合結束（跳過一次行動）'),
-             Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 25%', 'self40')),
-    '弓兵': (Skill('連射', 'double', 2, '兩次 85% 傷害，各自判定命中'),
-             Skill('精準射擊', 'precise', 3, '必中，造成 150% 傷害'),
-             Skill('箭雨', 'area', 4, '對所有敵人造成 80% 傷害', 'enemies3'),
-             Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 75% 傷害，分別判定命中'),
-             Skill('毒箭', 'poison_arrow', 3, '造成 120% 傷害，命中後中毒至後兩回合結束；行動前損失最大 HP 的 2%（無條件捨去，最低 1）')),
+             Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 50%', 'self40')),
+    '弓兵': (Skill('連射', 'double', 2, '兩次 90% 傷害，各自判定命中'),
+             Skill('妨害射擊', 'hindering_shot', 3, '造成 120% 傷害，命中後使敵方攻擊降低 20%，持續至下一回合結束'),
+             Skill('箭雨', 'area', 4, '對所有敵人各造成三次 40% 傷害', 'enemies3'),
+             Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 85% 傷害，分別判定命中'),
+             Skill('毒箭', 'poison_arrow', 3, '造成 110% 傷害；命中後於後續兩回合各造成 70% 攻擊的無視防禦傷害，每支毒箭分開計算')),
     '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
              Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%，持續至下一回合結束',
                    timing=PREPARATION_TIMING),
-             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、破甲與暈眩', 'ally_debuff'),
+             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、毒箭侵蝕、破甲、暈眩、虛弱與腐敗', 'ally_debuff'),
              Skill('群體治療', 'group_heal', 4, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
-             Skill('強效治療', 'greater_heal', 4, '恢復一名隊友 180% 治療量的 HP', 'ally50')),
+             Skill('聖光', 'holy_light', 4, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50')),
 }
-ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'greater_heal'}
+ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
 # Defense is a role property of the target. Monsters and non-tank professions
@@ -179,6 +178,16 @@ class Tactics:
                               condition_value(row[3], row[6])) for row in self.db.execute(
             'SELECT slot, priority, enabled, condition, target, skill_id, condition_value FROM rpg_tactics '
             'WHERE guild_id=? AND user_id=? AND job=?', (guild, user, job))}
+        # Skill ID 3 used to be the self-targeted low-HP stance 堅守. Convert only
+        # that exact legacy default, in whichever slot it was equipped, so custom
+        # conditions on the new attack remain intact.
+        if job == '騎士':
+            for slot, legacy in list(saved.items()):
+                skill_id = legacy.skill_id or legacy.slot
+                if (skill_id == 3 and legacy.condition == 'self40'
+                        and legacy.target == 'self'):
+                    saved[slot] = Rule(legacy.slot, legacy.priority, legacy.enabled,
+                                       'always', 'lowest', legacy.skill_id, None)
         return sorted([saved.get(rule.slot, rule) for rule in default_rules(job)], key=lambda rule: rule.priority)
 
     def configure(self, guild, user, job, slot, priority, enabled, condition, target, threshold=None):
@@ -434,6 +443,58 @@ class Battle:
             return None
         return next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
 
+    def clear_negative_effects(self, target):
+        """Remove every player-cleansable debuff, including stacked poison arrows."""
+        for effect in ('poison', 'break', 'stun', 'weak'):
+            target.effects.pop(effect, None)
+            target.effect_sources.pop(effect, None)
+        target.status_stacks.pop('corruption', None)
+        target.status_stacks.pop('poison_arrows', None)
+
+    def apply_debuff(self, target, effect, until, source=None):
+        """Apply a cleansable debuff unless Guard currently grants immunity."""
+        if target.has('immunity', self.round):
+            self.log.append(f'{target.name} 受到【護衛】保護，免疫負面狀態。')
+            return False
+        target.effects[effect] = max(target.effects.get(effect, 0), until)
+        if source is not None and source.user_id is not None:
+            target.effect_sources[effect] = source.user_id
+        return True
+
+    def tick_poison_arrows(self, target):
+        """Resolve every independently tracked poison-arrow payload once per turn."""
+        stacks = target.status_stacks.get('poison_arrows', [])
+        remaining = []
+        for stack in stacks:
+            if self.round < stack['next_round']:
+                remaining.append(stack)
+                continue
+            source_id = stack.get('source_id')
+            source = (None if source_id is None else
+                      next((f for f in self.fighters if f.user_id == source_id), None))
+            damage = max(1, int(stack['damage']))
+            actual, partner, partner_actual = self.apply_damage(target, damage)
+            total = actual + partner_actual
+            if source is not None and source is not target:
+                source.combat_stats['damage_dealt'] += total
+                source.combat_stats['support_damage'] += total
+                source.combat_stats['knockouts'] += int(actual and target.hp == 0)
+                if partner is not None:
+                    source.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
+            stack['remaining'] -= 1
+            stack['next_round'] += 1
+            self.log.append(f'{target.name} 受到毒箭侵蝕，損失 {total} HP。')
+            if stack['remaining'] > 0:
+                remaining.append(stack)
+            if target.hp <= 0:
+                remaining.clear()
+                break
+        if remaining:
+            target.status_stacks['poison_arrows'] = remaining
+        else:
+            target.status_stacks.pop('poison_arrows', None)
+        return target.hp > 0
+
     def check_end(self):
         master = next((f for f in self.fighters if f.team == 1 and f.job == '王城傀儡師'), None)
         if master is not None and master.hp <= 0:
@@ -449,8 +510,8 @@ class Battle:
 
     def target(self, actor, candidates, rule, offensive=False):
         if rule.target == 'debuffed':
-            candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))
-                          or f.status_stacks.get('corruption', 0)]
+            candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
+                          or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows')]
         if offensive:
             taunters = [f for f in candidates if f.has('taunt', self.round)]
             candidates = taunters or candidates
@@ -471,6 +532,11 @@ class Battle:
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
         for rule in sorted(actor.rules, key=lambda r: r.priority):
             skill = rule_skill(actor.job, rule)
+            if skill.effect == 'knight_charge' and rule.target == 'self':
+                # Existing knight slot-3 tactics targeted self when this skill was 堅守.
+                condition = 'always' if rule.condition == 'self40' else rule.condition
+                rule = Rule(rule.slot, rule.priority, rule.enabled, condition, 'lowest',
+                            rule.skill_id, condition_value(condition, rule.condition_value))
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
             threshold = condition_value(rule.condition, rule.condition_value)
@@ -491,8 +557,8 @@ class Battle:
             if rule.condition == 'round_gte' and self.round < threshold:
                 continue
             if rule.condition == 'ally_debuff' and not any(
-                    any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))
-                    or f.status_stacks.get('corruption', 0) for f in allies):
+                    any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
+                    or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows') for f in allies):
                 continue
             if rule.condition == 'enemy_charging' and not any(
                     f.has('charged_punch', self.round) or
@@ -500,10 +566,11 @@ class Battle:
                     (f.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) for f in enemies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
-            if skill.effect in ('heal', 'greater_heal', 'group_heal'):
+            if skill.effect in ('heal', 'group_heal'):
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
-                candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun'))]
+                candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
+                              or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows')]
             elif skill.effect == 'bless':
                 candidates = [f for f in candidates if not f.has(skill.effect, self.round)]
             if skill.effect == 'group_heal':
@@ -511,7 +578,7 @@ class Battle:
             elif skill.effect == 'rally':
                 target = actor if actor.hp < actor.stats['HP'] else None
             elif skill.effect == 'guard':
-                bonus = max(1, actor.stats['HP'] // 20)
+                bonus = max(1, actor.stats['防禦'])
                 target = actor if any(not f.has('guard', self.round) or f.guard_bonus < bonus for f in allies) else None
             elif skill.effect in ('stance', 'taunt'):
                 target = actor if not actor.has(skill.effect, self.round) else None
@@ -521,7 +588,8 @@ class Battle:
                 return rule, skill, target
         return None
 
-    def hit(self, actor, target, power=1.0, precise=False, lifesteal=None):
+    def hit(self, actor, target, power=1.0, precise=False, lifesteal=None, attack_override=None,
+            counterable=True):
         if actor.team == 0 and not actor.armed:
             self.log.append(f'{actor.name} 未裝備武器，無法造成傷害。')
             return False
@@ -531,8 +599,9 @@ class Battle:
             actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
             return False
-        base_attack = actor.stats['攻擊']
+        base_attack = actor.stats['攻擊'] if attack_override is None else attack_override
         base_attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
+        base_attack *= 0.8 if actor.has('weak', self.round) else 1
         blessed = actor.has('bless', self.round)
         paint_attack = base_attack * self.damage_dealt_multiplier(actor)
         attack = paint_attack * (1.25 if blessed else 1)
@@ -556,9 +625,9 @@ class Battle:
             if critical:
                 value = max(1, value * actor.critical_damage_percent // 100)
             if target.has('stance', self.round):
-                multiplier = {'民兵': 0.8, '騎士': 0.5}.get(target.job, 0.65)
+                multiplier = {'民兵': 0.8}.get(target.job, 0.65)
                 value = max(1, int(value * multiplier))
-            if target.has('taunt', self.round):
+            if target.has('taunt', self.round) and target.job != '騎士':
                 value = max(1, int(value * 0.85))
             if target.has('noah_blue_guard', self.round):
                 value = max(1, value * self.mechanics.get('noah_blue_reduction', 0) // 100)
@@ -625,9 +694,17 @@ class Battle:
         healing = self.heal(actor, actor, actual_damage * drain // 100)
         if healing > 0 and actor.hp > 0:
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
+        if (counterable and target.job == '騎士' and target.hp > 0 and actor.hp > 0
+                and target.has('taunt', self.round)
+                and target.team != actor.team):
+            self.log.append(f'{target.name} 發動【挑釁反擊】！')
+            self.hit(target, actor, 1.0, counterable=False)
         return True
 
     def add_corruption(self, target, amount=1):
+        if target.has('immunity', self.round):
+            self.log.append(f'{target.name} 受到【護衛】保護，免疫腐敗。')
+            return
         before = target.status_stacks.get('corruption', 0)
         target.status_stacks['corruption'] = min(3, before + amount)
         self.log.append(f'{target.name} 的腐敗變為 {target.status_stacks["corruption"]} 層（3 層將在行動前爆裂）。')
@@ -745,8 +822,8 @@ class Battle:
             if target is not None:
                 self.hit(actor, target, power)
                 if color == 'red' and target.hp > 0:
-                    target.effects['break'] = self.round + 1
-                    self.log.append(f'{target.name} 遭紅色顏料破甲至第 {self.round + 1} 回合結束。')
+                    if self.apply_debuff(target, 'break', self.round + 1, actor):
+                        self.log.append(f'{target.name} 遭紅色顏料破甲至第 {self.round + 1} 回合結束。')
             if color == 'blue' and actor.hp > 0:
                 healing = self.restore(actor, actor.stats['HP'] * (5 if phase_two else 3) // 100)
                 reduction = 30 if phase_two else 20
@@ -785,8 +862,8 @@ class Battle:
             target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'strongest'))
             self.log.append(f'{actor.name} 使用【斷線咒】')
             if target is not None and self.hit(actor, target, 0.8) and target.hp > 0:
-                target.effects['break'] = self.round + 1
-                self.log.append(f'{target.name} 遭到破甲，可用淨化解除。')
+                if self.apply_debuff(target, 'break', self.round + 1, actor):
+                    self.log.append(f'{target.name} 遭到破甲，可用淨化解除。')
             return
         if actor.team == 1 and actor.job == '瘟疫縫合獸':
             if actor.hp * 2 <= actor.stats['HP'] and not self.mechanics.get('plague_phase_two'):
@@ -835,8 +912,8 @@ class Battle:
             targets = self.rng.sample(candidates, len(candidates) * 33 // 100)
             self.log.append(f'{actor.name} 使用【荊棘再生】：恢復 {healing} HP，纏繞暈眩 {len(targets)} 人。')
             for target in targets:
-                target.effects['stun'] = self.round + 1
-                self.log.append(f'{target.name} 暈眩，將跳過下一次行動（可淨化）。')
+                if self.apply_debuff(target, 'stun', self.round + 1, actor):
+                    self.log.append(f'{target.name} 暈眩，將跳過下一次行動（可淨化）。')
             return
         if actor.team == 1 and actor.job == '鐵殼魔像':
             if actor.has('charged_punch', self.round):
@@ -856,6 +933,8 @@ class Battle:
             self.record_skill(actor, '群體彈跳')
             self.log.append(f'{actor.name} 使用【群體彈跳】')
             for _ in range(3):
+                if actor.hp <= 0:
+                    break
                 target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
                 if target is None:
                     break
@@ -875,8 +954,7 @@ class Battle:
             self.log.append(f'{actor.name} 使用普通攻擊')
             hit = self.hit(actor, target)
             if hit and actor.job == '毒蛛' and target.hp > 0:
-                target.effects['poison'] = self.round + 2
-                target.effect_sources['poison'] = actor.user_id
+                self.apply_debuff(target, 'poison', self.round + 2, actor)
             if hit and actor.job == '瘟疫縫合獸' and target.hp > 0:
                 self.add_corruption(target)
             return
@@ -896,53 +974,76 @@ class Battle:
         effect = skill.effect
         if effect in ('group_heal', 'rally'):
             targets = self.living(actor.team) if effect == 'group_heal' else [actor]
-            healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 4
+            healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 2
             for ally in targets:
                 amount = self.heal(actor, ally, healing)
                 self.log.append(f'{ally.name} 恢復 {amount} HP')
-        elif effect in ('heal', 'greater_heal'):
+        elif effect == 'heal':
             healing = actor.stats['治療量'] // 2 if actor.job == '民兵' else actor.stats['治療量']
-            if effect == 'greater_heal':
-                healing = healing * 180 // 100
             amount = self.heal(actor, target, healing)
             self.log.append(f'{target.name} 恢復 {amount} HP')
+        elif effect == 'holy_light':
+            for enemy in self.living(1 - actor.team):
+                if actor.hp > 0 and enemy.hp > 0:
+                    self.hit(actor, enemy, 0.9)
+            amount = self.heal(actor, target, actor.stats['治療量'] * 70 // 100)
+            self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
-            target.effects.pop('stun', None)
-            target.effects.pop('poison', None)
-            target.effects.pop('break', None)
-            target.status_stacks.pop('corruption', None)
-            target.effect_sources.pop('poison', None)
-            target.effect_sources.pop('break', None)
+            self.clear_negative_effects(target)
             self.log.append(f'移除 {target.name} 的負面狀態')
         elif effect == 'guard':
-            bonus = max(1, actor.stats['HP'] // 20)
+            bonus = max(1, actor.stats['防禦'])
             for ally in self.living(actor.team):
                 if not ally.has('guard', self.round) or ally.guard_bonus < bonus:
                     ally.guard_bonus = bonus
                     ally.effects['guard'] = self.round + 1
-                    self.log.append(f'{ally.name} 防禦 +{bonus}，持續至第 {self.round + 1} 回合結束')
+                    ally.effects['immunity'] = self.round + 1
+                    self.clear_negative_effects(ally)
+                    self.log.append(f'{ally.name} 防禦 +{bonus} 並免疫負面狀態至第 {self.round + 1} 回合結束')
         elif effect in ('bless', 'stance', 'taunt'):
             target.effects[effect] = self.round + 1
             if effect == 'bless':
                 target.effect_sources['bless'] = actor.user_id
             self.log.append(f'{target.name} 獲得效果，持續至第 {self.round + 1} 回合結束')
+        elif effect == 'knight_charge':
+            self.hit(actor, target, 0.5, attack_override=actor.stats['HP'])
         elif effect in ('area', 'cleave'):
             for enemy in self.living(1 - actor.team):
-                if enemy.hp > 0:
-                    self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.8)
+                if actor.hp > 0 and enemy.hp > 0:
+                    for _ in range(1 if effect == 'cleave' else 3):
+                        if actor.hp > 0 and enemy.hp > 0:
+                            self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.4)
         elif effect in ('double', 'triple'):
             for _ in range(3 if effect == 'triple' else 2):
-                if target.hp > 0:
-                    self.hit(actor, target, 0.75 if effect == 'triple' else 0.85)
+                if actor.hp > 0 and target.hp > 0:
+                    self.hit(actor, target, 0.85 if effect == 'triple' else 0.9)
         else:
-            power = {'strike': 1.6, 'precise': 1.5, 'crush': 2.2, 'shield_bash': 1.2, 'poison_arrow': 1.2}.get(effect, 1)
-            hit = self.hit(actor, target, power,
-                           precise=effect == 'precise')
+            power = {'strike': 1.6, 'hindering_shot': 1.2, 'crush': 2.2,
+                     'shield_bash': 1.2, 'poison_arrow': 1.1}.get(effect, 1)
+            hit = self.hit(actor, target, power)
             if hit and effect == 'break' and target.hp > 0:
-                target.effects['break'] = self.round + 1
-                target.effect_sources['break'] = actor.user_id
-            if hit and target.hp > 0 and effect in ('shield_bash', 'poison_arrow'):
-                status = 'stun' if effect == 'shield_bash' else 'poison'
+                self.apply_debuff(target, 'break', self.round + 1, actor)
+            if hit and effect == 'hindering_shot' and target.hp > 0:
+                if self.apply_debuff(target, 'weak', self.round + 1, actor):
+                    self.log.append(f'{target.name} 陷入虛弱，攻擊降低 20%。')
+            if hit and effect == 'poison_arrow' and target.hp > 0:
+                if target.has('immunity', self.round):
+                    self.log.append(f'{target.name} 受到【護衛】保護，免疫毒箭侵蝕。')
+                elif target.job in ('城崎諾亞', '繪畫魔女．城崎諾亞'):
+                    self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
+                else:
+                    attack = actor.stats['攻擊']
+                    attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
+                    attack *= 0.8 if actor.has('weak', self.round) else 1
+                    attack *= self.damage_dealt_multiplier(actor)
+                    attack *= 1.25 if actor.has('bless', self.round) else 1
+                    target.status_stacks.setdefault('poison_arrows', []).append({
+                        'source_id': actor.user_id, 'damage': max(1, int(attack * 0.7)),
+                        'next_round': self.round + 1, 'remaining': 2,
+                    })
+                    self.log.append(f'{target.name} 遭毒箭侵蝕，後續兩回合將受到無視防禦傷害。')
+            if hit and target.hp > 0 and effect == 'shield_bash':
+                status = 'stun'
                 if status == 'stun' and target.job == '深淵鐘龍':
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
                     return
@@ -962,12 +1063,13 @@ class Battle:
                     else:
                         self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
                     return
+                if target.has('immunity', self.round):
+                    self.log.append(f'{target.name} 受到【護衛】保護，免疫暈眩。')
+                    return
                 if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
                     self.log.append(f'{target.name} 的蓄力被打斷')
-                target.effects[status] = max(target.effects.get(status, 0), self.round + (1 if status == 'stun' else 2))
-                if status == 'poison':
-                    target.effect_sources['poison'] = actor.user_id
-                self.log.append(f'{target.name} {"暈眩" if status == "stun" else "中毒"}')
+                self.apply_debuff(target, status, self.round + 1, actor)
+                self.log.append(f'{target.name} 暈眩')
 
     def step(self):
         if self.result or self.check_end():
@@ -1009,6 +1111,12 @@ class Battle:
             if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞') and actor.effects.pop('poison', None) is not None:
                 actor.effect_sources.pop('poison', None)
                 self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
+            if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞'):
+                actor.status_stacks.pop('poison_arrows', None)
+            if actor.status_stacks.get('poison_arrows') and not self.tick_poison_arrows(actor):
+                if self.check_end():
+                    break
+                continue
             if actor.has('poison', self.round):
                 # PvE poison only targets the opposing team: monsters poison players
                 # for 5%, while player poison arrows damage monsters for 2%.

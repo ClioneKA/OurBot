@@ -145,7 +145,7 @@ class BattleTests(unittest.TestCase):
     def test_preparation_is_a_visible_data_driven_skill_keyword(self):
         preparation = {skill.name for skills in SKILLS.values() for skill in skills
                        if skill.timing == PREPARATION_TIMING}
-        self.assertEqual(preparation, {'防禦', '破甲', '攻守架勢', '嘲諷', '護衛', '堅守', '祝福'})
+        self.assertEqual(preparation, {'防禦', '破甲', '攻守架勢', '挑釁反擊', '護衛', '祝福'})
         self.assertTrue(skill_description(SKILLS['騎士'][0]).startswith('【準備】'))
         self.assertFalse(skill_description(SKILLS['僧侶'][0]).startswith('【準備】'))
 
@@ -159,7 +159,7 @@ class BattleTests(unittest.TestCase):
         battle.step()
         self.assertLess(tank.hp, tank.stats['HP'])
         self.assertEqual(ally.hp, 100)
-        self.assertLess(battle.log.index('騎士 使用【嘲諷】'), battle.log.index('敵人 使用普通攻擊'))
+        self.assertLess(battle.log.index('騎士 使用【挑釁反擊】'), battle.log.index('敵人 使用普通攻擊'))
 
         cleric = fighter('僧侶', job='僧侶', dex=1,
                          rules=[Rule(2, 1, True, 'always', 'strongest')])
@@ -543,7 +543,7 @@ class BattleTests(unittest.TestCase):
 
     def test_slime_three_hits_taunt_and_stop_when_no_targets(self):
         from unittest.mock import patch
-        tank = fighter('騎士', hp=1000)
+        tank = fighter('騎士', job='騎士', hp=1000)
         tank.effects['taunt'] = 2
         ally = fighter('隊友', hp=1000)
         ally.hp = 100
@@ -552,8 +552,8 @@ class BattleTests(unittest.TestCase):
         battle.round = 1
         with patch.object(battle, 'hit', wraps=battle.hit) as hit:
             battle.act(slime)
-            self.assertEqual(hit.call_count, 3)
-            for call in hit.call_args_list:
+            self.assertEqual(hit.call_count, 6)
+            for call in hit.call_args_list[::2]:
                 self.assertEqual(call.args, (slime, tank, 0.45))
         restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
         battle.step()
@@ -647,26 +647,24 @@ class BattleTests(unittest.TestCase):
         self.assertNotIn('法防', restored.fighters[0].stats)
         restored.step()
 
-    def test_knight_mitigation_stacks_and_expires(self):
+    def test_knight_taunt_counters_direct_hits_and_expires(self):
         attacker = fighter('敵人', 1, attack=200, rules=[])
         target = fighter(job='騎士', hp=1000)
         target.stats['防禦'] = 0
+        target.stats['攻擊'] = 100
         battle = Battle([target, attacker], seed=1)
         battle.round = 1
-        for effects, expected in (({'taunt': 2}, 170), ({'stance': 2}, 100),
-                                  ({'taunt': 2, 'stance': 2}, 85)):
-            target.effects = effects
-            target.hp = 1000
-            battle.hit(attacker, target, precise=True)
-            self.assertEqual(1000 - target.hp, expected)
-        battle.round = 3
-        target.hp = 1000
+        target.effects = {'taunt': 2}
         battle.hit(attacker, target, precise=True)
         self.assertEqual(target.hp, 800)
-        for job, expected_hp in (('民兵', 840), ('裝甲步兵', 870)):
-            target.job, target.effects, target.hp = job, {'stance': 3}, 1000
-            battle.hit(attacker, target, precise=True)
-            self.assertEqual(target.hp, expected_hp)
+        self.assertLess(attacker.hp, attacker.stats['HP'])
+        self.assertTrue(any('挑釁反擊' in line for line in battle.log))
+        battle.round = 3
+        target.hp = 1000
+        attacker.hp = attacker.stats['HP']
+        battle.hit(attacker, target, precise=True)
+        self.assertEqual(target.hp, 800)
+        self.assertEqual(attacker.hp, attacker.stats['HP'])
 
     def test_militia_bandage_is_half_healing_and_caps_at_max_hp(self):
         for job, slot, expected in (('民兵', 2, 30), ('僧侶', 1, 61)):
@@ -692,23 +690,60 @@ class BattleTests(unittest.TestCase):
         battle = Battle([knight, ally, fallen, enemy], seed=1)
         battle.round = 1
         battle.act(knight)
-        self.assertEqual((knight.guard_bonus, ally.guard_bonus), (50, 50))
+        self.assertEqual((knight.guard_bonus, ally.guard_bonus), (20, 20))
+        self.assertTrue(knight.has('immunity', 1))
+        self.assertTrue(ally.has('immunity', 1))
         self.assertFalse(fallen.has('guard', 1))
         self.assertFalse(enemy.has('guard', 1))
         ally.hp = 1000
         battle.hit(enemy, ally, precise=True)
-        self.assertEqual(1000 - ally.hp, int(200 - (20 + 50) * 0.35))
+        self.assertEqual(1000 - ally.hp, int(200 - (20 + 20) * 0.35))
         restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
-        self.assertEqual(restored.fighters[1].guard_bonus, 50)
+        self.assertEqual(restored.fighters[1].guard_bonus, 20)
         restored.round = 3
         restored.fighters[1].hp = 1000
         restored.hit(restored.fighters[-1], restored.fighters[1], precise=True)
         self.assertEqual(restored.fighters[1].hp, 807)
         self.assertEqual(ally.stats['防禦'], 20)
 
+    def test_guard_clears_and_blocks_cleansable_debuffs(self):
+        knight = fighter('騎士', job='騎士', rules=[Rule(2, 1, True, 'always', 'lowest')])
+        ally = fighter('隊友')
+        ally.effects.update(poison=3, weak=3)
+        ally.status_stacks['corruption'] = 2
+        ally.status_stacks['poison_arrows'] = [
+            {'source_id': None, 'damage': 70, 'next_round': 2, 'remaining': 2}]
+        battle = Battle([knight, ally, fighter('敵人', 1, rules=[])], seed=1)
+        battle.round = 1
+        battle.act(knight)
+        self.assertNotIn('poison', ally.effects)
+        self.assertNotIn('weak', ally.effects)
+        self.assertNotIn('corruption', ally.status_stacks)
+        self.assertNotIn('poison_arrows', ally.status_stacks)
+        self.assertFalse(battle.apply_debuff(ally, 'stun', 2))
+        battle.add_corruption(ally)
+        self.assertNotIn('stun', ally.effects)
+        self.assertNotIn('corruption', ally.status_stacks)
+
+    def test_hindering_shot_reduces_attack_twenty_percent(self):
+        archer = fighter('弓兵', job='弓兵', attack=100,
+                         rules=[Rule(2, 1, True, 'always', 'lowest')])
+        enemy = fighter('敵人', 1, attack=100, hp=1000, rules=[])
+        victim = fighter('木樁', hp=1000, rules=[])
+        victim.stats['防禦'] = 0
+        battle = Battle([archer, victim, enemy], seed=1)
+        battle.round = 1
+        battle.act(archer)
+        self.assertTrue(enemy.has('weak', 1))
+        before = victim.hp
+        battle.hit(enemy, victim, precise=True)
+        self.assertEqual(before - victim.hp, 80)
+
     def test_guard_uses_strongest_bonus_without_stacking_or_extending(self):
         strong = fighter('強騎士', job='騎士', hp=2000, rules=[Rule(2, 1, True, 'always', 'lowest')])
         weak = fighter('弱騎士', job='騎士', hp=1000, rules=[Rule(2, 1, True, 'always', 'lowest')])
+        strong.stats['防禦'] = 100
+        weak.stats['防禦'] = 50
         battle = Battle([strong, weak, fighter('敵人', 1)], seed=1)
         battle.round = 1
         battle.act(weak)
@@ -825,9 +860,9 @@ class BattleTests(unittest.TestCase):
                         battle.step()
                         self.assertEqual(victim.hp, hp - damage * 2)
 
-    def test_draw_cap_and_precise_hit(self):
+    def test_draw_cap_and_attack_hit(self):
         archer = fighter(job='弓兵', attack=1, rules=[Rule(2, 1, True, 'always', 'lowest')])
-        archer.stats['命中率'] = 0
+        archer.stats['命中率'] = 100
         enemy = fighter('B', 1, hp=100000, attack=1, rules=[])
         battle = Battle([archer, enemy], seed=1, max_rounds=1)
         battle.step()

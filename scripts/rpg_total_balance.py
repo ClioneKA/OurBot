@@ -103,14 +103,14 @@ def choose_round(battle):
                               battle.key(target) if target is not None else None, rule.slot)
                 continue
         if actor.job == '騎士' and eroded is not None:
-            rule = usable(battle, actor, '嘲諷')
+            rule = usable(battle, actor, '挑釁反擊')
             if rule is not None:
                 battle.submit(actor.user_id, ACTION_SKILL, None, rule.slot)
                 continue
         preferred = {
             '裝甲步兵': ('重裝猛擊', '重擊', '破甲'),
             '騎士': (),
-            '弓兵': ('三連矢', '連射', '精準射擊'),
+            '弓兵': ('三連矢', '連射', '妨害射擊'),
             '僧侶': (),
         }[actor.job]
         rule = next((usable(battle, actor, name) for name in preferred

@@ -317,6 +317,7 @@ class TotalRaidBattle(Battle):
                 self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
             if actor.effects.pop('stun', None) is not None:
                 self.log.append(f'{actor.name} 免疫暈眩；只有黑色能使她停止行動。')
+            actor.status_stacks.pop('poison_arrows', None)
         if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
             actor.status_stacks.pop('corruption', None)
             damage = max(1, actor.stats['HP'] * 12 // 100)
@@ -338,6 +339,8 @@ class TotalRaidBattle(Battle):
                 self.maybe_eat(ally)
             if actor.hp <= 0:
                 return False
+        if actor.status_stacks.get('poison_arrows') and not self.tick_poison_arrows(actor):
+            return False
         if actor.has('poison', self.round):
             damage = max(1, actor.stats['HP'] // (20 if actor.team == 0 else 50))
             actual = min(actor.hp, damage)
@@ -496,8 +499,8 @@ class TotalRaidBattle(Battle):
                 if hit and target.hp > 0:
                     self._grant_source_paint(target, self.mechanics['noah_intent_color'])
                     if not had_green and self.rng.random() < .2:
-                        target.effects['stun'] = self.round + 1
-                        self.log.append(f'{target.name} 被源色震懾，將跳過下一次行動。')
+                        if self.apply_debuff(target, 'stun', self.round + 1, actor):
+                            self.log.append(f'{target.name} 被源色震懾，將跳過下一次行動。')
             if self.mechanics['noah_phase_round'] % 3 == 0:
                 self.mechanics['noah_source_stacks'] = self.mechanics.get('noah_source_stacks', 0) + 1
                 self._clear_paints()

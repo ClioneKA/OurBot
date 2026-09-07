@@ -194,7 +194,7 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         fighter.status_stacks['corruption'] = 2
         boss.effects.update({'stance': 1, 'break': 1})
         buffs, debuffs = effect_status(fighter, battle)
-        self.assertIn('護衛(防禦+15・1回合)', buffs)
+        self.assertIn('護衛(防禦+15・負面免疫・1回合)', buffs)
         self.assertIn('中毒(2回合)', debuffs)
         self.assertIn('腐敗(2/3層)', debuffs)
         complete = [f'完整紀錄 {index}：' + '測' * 80 for index in range(20)]

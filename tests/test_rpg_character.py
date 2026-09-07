@@ -232,6 +232,7 @@ class CharacterTests(unittest.TestCase):
         level_one = combat_from_stats((10, 10, 10, 10, 10), '弓兵')
         level_120 = combat_from_stats((260, 376, 144, 376, 144), '弓兵')
         self.assertEqual(level_one['暴擊率'], 10)
+        self.assertEqual(level_one['閃避率'], 0)
         self.assertEqual(level_120['暴擊率'], 95)
         self.assertEqual(level_120['閃避率'], 35)
         self.assertGreater(

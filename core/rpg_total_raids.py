@@ -75,14 +75,14 @@ def effect_status(fighter, battle):
 
     buffs, debuffs = [], []
     if fighter.has('guard', turn):
-        buffs.append(f'護衛(防禦+{fighter.guard_bonus}・{remaining("guard")}回合)')
+        buffs.append(f'護衛(防禦+{fighter.guard_bonus}・負面免疫・{remaining("guard")}回合)')
     if fighter.has('bless', turn):
         buffs.append(f'祝福(攻擊+25%・{remaining("bless")}回合)')
     if fighter.has('stance', turn):
         reduction = {'民兵': 20, '騎士': 50}.get(fighter.job, 35)
         buffs.append(f'防禦姿態(減傷{reduction}%・{remaining("stance")}回合)')
     if fighter.has('taunt', turn):
-        buffs.append(f'嘲諷(減傷15%・{remaining("taunt")}回合)')
+        buffs.append(f'挑釁反擊(反擊100%・{remaining("taunt")}回合)')
     if fighter.has('moon_shadow', turn):
         buffs.append(f'月影(閃避+15%・{remaining("moon_shadow")}回合)')
     if fighter.food_regen_left and turn >= fighter.food_regen_start:
@@ -93,6 +93,11 @@ def effect_status(fighter, battle):
         debuffs.append(f'中毒({remaining("poison")}回合)')
     if fighter.has('stun', turn):
         debuffs.append(f'暈眩({remaining("stun")}回合)')
+    if fighter.has('weak', turn):
+        debuffs.append(f'虛弱(攻擊-20%・{remaining("weak")}回合)')
+    poison_arrows = fighter.status_stacks.get('poison_arrows', [])
+    if poison_arrows:
+        debuffs.append(f'毒箭侵蝕({len(poison_arrows)}支)')
     if fighter.has('vulnerable', turn):
         debuffs.append(f'易傷(+10%・{remaining("vulnerable")}回合)')
     corruption = fighter.status_stacks.get('corruption', 0)

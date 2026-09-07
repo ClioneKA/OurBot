@@ -291,7 +291,7 @@ class TotalRaidBattleTests(unittest.TestCase):
         battle.submit(1, ACTION_ATTACK, target)
         battle.resolve()
         self.assertLess(dummy.hp, after_hit - 1)
-        self.assertTrue(any('訓練用假人 中毒' in line for line in battle.log))
+        self.assertTrue(any('訓練用假人 受到毒箭侵蝕' in line for line in battle.log))
 
     def test_resolve_saves_the_complete_latest_round_log(self):
         battle = training_dummy_battle([player(1), player(2)], seed=1)

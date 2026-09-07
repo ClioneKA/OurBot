@@ -66,6 +66,18 @@ class ProgressionTests(unittest.TestCase):
         rule = next(rule for rule in self.tactics.rules(1, 1, '僧侶') if rule.slot == 2)
         self.assertEqual((rule.condition, rule.target), ('always', 'strongest'))
 
+    def test_knight_charge_has_offensive_defaults_and_migrates_old_stance_defaults(self):
+        tactics = Tactics(self.store)
+        rule = next(rule for rule in tactics.rules(1, 1, '騎士') if rule.slot == 3)
+        self.assertEqual((rule.condition, rule.target), ('always', 'lowest'))
+        with self.store.db:
+            self.store.db.execute(
+                'INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (1, 1, '騎士', 1, 1, 1, 'self40', 'self', 3, 40))
+        migrated = next(rule for rule in tactics.rules(1, 1, '騎士') if rule.slot == 1)
+        self.assertEqual((migrated.condition, migrated.target, migrated.condition_value),
+                         ('always', 'lowest', None))
+
     def test_target_validation_follows_equipped_skill(self):
         self.store.award_voice([(1, 1, level_floor(20))])
         self.tactics.equip(1, 1, '騎士', 3, 4)
@@ -92,9 +104,32 @@ class ProgressionTests(unittest.TestCase):
 
 
 class AdvancedBattleTests(unittest.TestCase):
+    def test_knight_charge_uses_own_max_hp_as_attack_base(self):
+        actor, enemy = fighter('騎士', 3, hp=1200), fighter(team=1)
+        battle = Battle([actor, enemy], seed=1)
+        with patch.object(battle, 'hit', return_value=True) as hit:
+            battle.act(actor)
+        hit.assert_called_once_with(actor, enemy, 0.5, attack_override=1200)
+
+    def test_poison_arrows_stack_and_tick_independently(self):
+        actor, enemy = fighter('弓兵', 5), fighter(team=1, hp=2000)
+        battle = Battle([actor, enemy], seed=1)
+        battle.round = 1
+        skill = rule_skill('弓兵', actor.rules[0])
+        battle.use_skill(actor, actor.rules[0], skill, enemy)
+        battle.use_skill(actor, actor.rules[0], skill, enemy)
+        self.assertEqual(len(enemy.status_stacks['poison_arrows']), 2)
+        before = enemy.hp
+        battle.round = 2
+        self.assertTrue(battle.tick_poison_arrows(enemy))
+        self.assertEqual(before - enemy.hp, 140)
+        battle.round = 3
+        self.assertTrue(battle.tick_poison_arrows(enemy))
+        self.assertEqual(len(enemy.status_stacks.get('poison_arrows', [])), 0)
+
     def test_offensive_skills_use_expected_targets_and_power(self):
         for job, skill_id, expected in (('裝甲步兵', 4, [1.2, 1.2]), ('裝甲步兵', 5, [2.2]),
-                                        ('騎士', 4, [1.2]), ('弓兵', 4, [0.75] * 3), ('弓兵', 5, [1.2])):
+                                        ('騎士', 4, [1.2]), ('弓兵', 4, [0.85] * 3), ('弓兵', 5, [1.1])):
             with self.subTest(job=job, skill_id=skill_id):
                 actor, a, b = fighter(job, skill_id), fighter(team=1), fighter(team=1)
                 battle = Battle([actor, a, b], seed=1)
@@ -109,7 +144,7 @@ class AdvancedBattleTests(unittest.TestCase):
                 if job == '騎士':
                     self.assertEqual(a.effects['stun'], 2)
                 if job == '弓兵' and skill_id == 5:
-                    self.assertEqual(a.effects['poison'], 3)
+                    self.assertEqual(a.status_stacks['poison_arrows'][0]['remaining'], 2)
 
     def test_misses_and_unarmed_attacks_do_not_apply_status(self):
         for job, skill_id in (('騎士', 4), ('弓兵', 5)):
@@ -143,13 +178,14 @@ class AdvancedBattleTests(unittest.TestCase):
         actor.rules = [Rule(1, 1, True, 'always', 'lowest', 5)]
         ally.hp = 100
         battle.act(actor)
-        self.assertEqual(ally.hp, 280)
+        self.assertEqual(ally.hp, 170)
+        self.assertLess(enemy.hp, 1000)
         knight = fighter('騎士', 5)
         knight.hp = 300
         battle.fighters.append(knight)
         battle.act(knight)
-        self.assertEqual(knight.hp, 550)
-        self.assertEqual(ally.hp, 280)
+        self.assertEqual(knight.hp, 800)
+        self.assertEqual(ally.hp, 170)
         knight.ready.clear()
         knight.hp = 1000
         self.assertIsNone(battle.select(knight))
