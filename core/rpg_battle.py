@@ -944,10 +944,15 @@ class Battle:
                     else:
                         self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
                     return
-                if status == 'stun' and target.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging'):
-                    self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
-                    target.effects['break'] = self.round + 1
-                    self.log.append(f'{target.name} 的【未完成稿】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
+                if target.job == '城崎諾亞':
+                    if status == 'stun' and self.mechanics.get('noah_draft_charging'):
+                        self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
+                        target.effects['break'] = self.round + 1
+                        self.log.append(f'{target.name} 的【未完成稿】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
+                    elif status == 'stun':
+                        self.log.append(f'{target.name} 免疫暈眩；盾擊只能在未完成稿蓄力時打斷構圖。')
+                    else:
+                        self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
                     return
                 if status == 'stun' and target.effects.pop('charged_punch', None) is not None:
                     self.log.append(f'{target.name} 的蓄力被打斷')
@@ -993,6 +998,9 @@ class Battle:
                     break
                 if actor.hp == 0:
                     continue
+            if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞') and actor.effects.pop('poison', None) is not None:
+                actor.effect_sources.pop('poison', None)
+                self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
             if actor.has('poison', self.round):
                 # PvE poison only targets the opposing team: monsters poison players
                 # for 5%, while player poison arrows damage monsters for 2%.
@@ -1012,6 +1020,8 @@ class Battle:
                     break
                 if actor.hp == 0:
                     continue
+            if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞') and actor.effects.pop('stun', None) is not None:
+                self.log.append(f'{actor.name} 免疫暈眩，沒有跳過行動。')
             if actor.has('stun', self.round):
                 actor.effects.pop('stun', None)
                 self.log.append(f'{actor.name} 因暈眩跳過本次行動。')
