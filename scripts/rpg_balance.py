@@ -54,6 +54,10 @@ def mechanism_rules(job, kind):
         return [Rule(1, 1, True, 'always', 'lowest', skill_id=4),
                 Rule(2, 2, True, 'always', 'lowest', skill_id=2),
                 Rule(3, 3, True, 'always', 'lowest', skill_id=1)]
+    if job == '弓兵' and kind == '城崎諾亞':
+        return [Rule(1, 1, True, 'always', 'lowest', skill_id=5),
+                Rule(2, 2, True, 'always', 'lowest', skill_id=1),
+                Rule(3, 3, True, 'always', 'lowest', skill_id=2)]
     return default_rules(job)
 
 

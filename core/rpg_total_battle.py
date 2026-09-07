@@ -312,12 +312,8 @@ class TotalRaidBattle(Battle):
     def _begin_actor_turn(self, actor):
         """Apply persistent statuses before the actor's selected action."""
         if actor.job == NOAH_JOB:
-            if actor.effects.pop('poison', None) is not None:
-                actor.effect_sources.pop('poison', None)
-                self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
             if actor.effects.pop('stun', None) is not None:
                 self.log.append(f'{actor.name} 免疫暈眩；只有黑色能使她停止行動。')
-            actor.status_stacks.pop('poison_arrows', None)
         if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
             actor.status_stacks.pop('corruption', None)
             damage = max(1, actor.stats['HP'] * 12 // 100)

@@ -46,7 +46,7 @@ class BattleTests(unittest.TestCase):
         self.assertTrue(noah.has('break', 6))
         self.assertIn('被打斷', battle.log[-1])
 
-    def test_regular_noah_ignores_poison_and_stun_outside_draft(self):
+    def test_regular_noah_takes_poison_but_ignores_stun_outside_draft(self):
         archer = fighter('弓兵', job='弓兵', hp=5000, dex=100, attack=500, rules=[])
         knight = fighter('騎士', job='騎士', hp=5000, dex=100, attack=500, rules=[])
         noah = fighter('城崎諾亞', 1, job='城崎諾亞', hp=10000, attack=100, rules=[])
@@ -59,16 +59,18 @@ class BattleTests(unittest.TestCase):
         battle.use_skill(archer, Rule(1, 1, True, 'always', 'lowest'), SKILLS['弓兵'][4], noah)
         battle.use_skill(knight, Rule(1, 1, True, 'always', 'lowest'), SKILLS['騎士'][3], noah)
         self.assertLess(noah.hp, before)
-        self.assertNotIn('poison', noah.effects)
+        self.assertIn('poison_arrows', noah.status_stacks)
         self.assertNotIn('stun', noah.effects)
-        self.assertTrue(any('免疫中毒' in line for line in battle.log))
+        self.assertFalse(any('免疫中毒' in line for line in battle.log))
         self.assertTrue(any('免疫暈眩' in line for line in battle.log))
 
         noah.effects.update(poison=2, stun=2)
+        before = noah.hp
         battle.step()
-        self.assertNotIn('poison', noah.effects)
+        self.assertLess(noah.hp, before)
+        self.assertIn('poison', noah.effects)
         self.assertNotIn('stun', noah.effects)
-        self.assertTrue(any('沒有受到毒傷' in line for line in battle.log))
+        self.assertTrue(any('中毒，損失' in line for line in battle.log))
         self.assertTrue(any('沒有跳過行動' in line for line in battle.log))
 
     def test_clock_dragon_armor_requires_hits_and_survives_restart(self):

@@ -1029,8 +1029,6 @@ class Battle:
             if hit and effect == 'poison_arrow' and target.hp > 0:
                 if target.has('immunity', self.round):
                     self.log.append(f'{target.name} 受到【護衛】保護，免疫毒箭侵蝕。')
-                elif target.job in ('城崎諾亞', '繪畫魔女．城崎諾亞'):
-                    self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
                 else:
                     attack = actor.stats['攻擊']
                     attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
@@ -1048,20 +1046,15 @@ class Battle:
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
                     return
                 if target.job == '繪畫魔女．城崎諾亞':
-                    if status == 'stun':
-                        self.log.append(f'{target.name} 免疫暈眩；只有黑色能使她停止行動。')
-                    else:
-                        self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
+                    self.log.append(f'{target.name} 免疫暈眩；只有黑色能使她停止行動。')
                     return
                 if target.job == '城崎諾亞':
                     if status == 'stun' and self.mechanics.get('noah_draft_charging'):
                         self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
                         target.effects['break'] = self.round + 1
                         self.log.append(f'{target.name} 的【未完成稿】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
-                    elif status == 'stun':
-                        self.log.append(f'{target.name} 免疫暈眩；盾擊只能在未完成稿蓄力時打斷構圖。')
                     else:
-                        self.log.append(f'{target.name} 免疫中毒，不會受到後續毒傷。')
+                        self.log.append(f'{target.name} 免疫暈眩；盾擊只能在未完成稿蓄力時打斷構圖。')
                     return
                 if target.has('immunity', self.round):
                     self.log.append(f'{target.name} 受到【護衛】保護，免疫暈眩。')
@@ -1108,11 +1101,6 @@ class Battle:
                     break
                 if actor.hp == 0:
                     continue
-            if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞') and actor.effects.pop('poison', None) is not None:
-                actor.effect_sources.pop('poison', None)
-                self.log.append(f'{actor.name} 免疫中毒，沒有受到毒傷。')
-            if actor.job in ('城崎諾亞', '繪畫魔女．城崎諾亞'):
-                actor.status_stacks.pop('poison_arrows', None)
             if actor.status_stacks.get('poison_arrows') and not self.tick_poison_arrows(actor):
                 if self.check_end():
                     break

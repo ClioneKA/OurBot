@@ -139,7 +139,7 @@ class TotalRaidBattleTests(unittest.TestCase):
         self.assertEqual(restored.paint_gifts, battle.paint_gifts)
         self.assertEqual(restored.intent(), battle.intent())
 
-    def test_painting_witch_is_immune_to_poison_and_stun_but_takes_direct_hit(self):
+    def test_painting_witch_takes_poison_but_is_immune_to_stun(self):
         archer = player(1, job='弓兵', hp=5000, attack=500, dex=100,
                         rules=[Rule(1, 1, True, 'always', 'lowest', skill_id=5)])
         knight = player(2, job='騎士', hp=5000, attack=500, dex=100,
@@ -153,10 +153,14 @@ class TotalRaidBattleTests(unittest.TestCase):
         battle.submit(2, ACTION_SKILL, target, 1)
         battle.resolve()
         self.assertLess(noah.hp, before)
-        self.assertNotIn('poison', noah.effects)
+        self.assertIn('poison_arrows', noah.status_stacks)
         self.assertNotIn('stun', noah.effects)
-        self.assertTrue(any('免疫中毒' in line for line in battle.log))
+        self.assertFalse(any('免疫中毒' in line for line in battle.log))
         self.assertTrue(any('免疫暈眩' in line for line in battle.log))
+        before = noah.hp
+        battle.round += 1
+        self.assertTrue(battle._begin_actor_turn(noah))
+        self.assertLess(noah.hp, before)
 
     def test_supports_one_to_six_unique_players(self):
         for count in range(1, MAX_TOTAL_RAID_PLAYERS + 1):
