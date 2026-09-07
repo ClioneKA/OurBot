@@ -758,6 +758,64 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(channel.send.call_args.kwargs['view'], RaidSignup)
         self.assertGreater(self.repo.next_at(2), 0)
 
+    async def test_scheduler_serializes_regular_and_mid_raids_per_guild(self):
+        class FakeChannel:
+            def __init__(self, channel_id):
+                self.id = channel_id
+                self.guild = SimpleNamespace(id=1, unavailable=False)
+                self.send = AsyncMock(return_value=SimpleNamespace(id=channel_id + 100))
+
+        regular, mid = FakeChannel(2), FakeChannel(3)
+        bot = SimpleNamespace(is_ready=lambda: True,
+                              get_channel=lambda channel_id: {2: regular, 3: mid}.get(channel_id))
+        cog = SimpleNamespace(store=self.store, settings=self.settings, characters=self.characters,
+                              tactics=self.tactics, ai_model='unused', bot=bot)
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        service.imagine = AsyncMock(side_effect=lambda kind=None: dict(
+            self.monster, kind=kind or self.monster['kind']))
+        service.repo.schedule(2, 10)
+        service.repo.schedule(3, 20)
+        try:
+            with patch('core.rpg_raids.discord.TextChannel', FakeChannel):
+                await service.tick.coro(service)
+                self.assertEqual((regular.send.await_count, mid.send.await_count), (1, 0))
+                self.assertEqual(service.repo.next_at(3), 20)
+
+                first = next(raid for raid in service.repo.pending() if raid['channel_id'] == 2)
+                first.update(status='cancelled', delivered=True)
+                service.repo.save(first)
+                await service.tick.coro(service)
+
+            self.assertEqual((regular.send.await_count, mid.send.await_count), (1, 1))
+            self.assertEqual([raid['channel_id'] for raid in service.repo.pending()], [3])
+        finally:
+            await service.close()
+
+    async def test_manual_spawn_rejects_active_raid_in_another_pool(self):
+        class FakeChannel:
+            def __init__(self, channel_id):
+                self.id = channel_id
+                self.guild = SimpleNamespace(id=1, unavailable=False)
+                self.send = AsyncMock(return_value=SimpleNamespace(id=channel_id + 100))
+
+        regular, mid = FakeChannel(2), FakeChannel(3)
+        bot = SimpleNamespace(get_channel=lambda channel_id: {2: regular, 3: mid}.get(channel_id))
+        cog = SimpleNamespace(store=self.store, settings=self.settings, characters=self.characters,
+                              tactics=self.tactics, ai_model='unused', bot=bot)
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        service.imagine = AsyncMock(return_value=self.monster)
+        try:
+            with patch('core.rpg_raids.discord.TextChannel', FakeChannel):
+                await service.spawn(regular)
+                with self.assertRaisesRegex(CharacterError, '本伺服器已有討伐'):
+                    await service.spawn(mid, kind='深淵鐘龍')
+        finally:
+            await service.close()
+
     async def test_manual_spawn_rejects_overlap_and_cleans_up_failed_send(self):
         class FakeChannel:
             id = 2

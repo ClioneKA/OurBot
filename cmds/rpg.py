@@ -269,7 +269,7 @@ class RPG(commands.Cog):
         embed.add_field(name='已裝備技能', value='｜'.join(rule_skill(state['job'], rule).name for rule in rules),
                         inline=False)
         if showcase:
-            item = ITEMS[showcase]
+            item = self.characters.showcase_item(guild_id, member.id)
             detail = item.description or item_text(item)
             embed.add_field(name='展示品', value=f'**{item.name}**\n{detail}'[:1024], inline=False)
         else:

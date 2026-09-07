@@ -45,6 +45,70 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(ITEMS['noah:archer:suit:blue'].evasion, 5)
         self.assertFalse(item_sellable(ITEMS['noah:unfinished']))
 
+    def test_duplicate_equipment_has_independent_socket_and_affixes(self):
+        self.level(45)
+        self.characters.change_job(1, 1, '弓兵')
+        instance_ids = self.characters.grant_item(1, 1, 'noah:archer:weapon', 2)
+        self.characters.grant_item(1, 1, 'paint:blue')
+        first, second = (f'instance:{instance_id}' for instance_id in instance_ids)
+
+        self.assertEqual(self.characters.socket_paint(1, 1, first, 'blue'), first)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts['noah:archer:weapon'], 1)
+        self.assertEqual(counts['noah:archer:weapon:blue'], 1)
+        self.assertEqual(self.characters.get_instance(1, 1, second).sockets, ())
+
+        self.characters.set_affixes(1, 1, first, (
+            ('mighty', 'combat:1', 7),
+            ('swift', 'speed', 3),
+        ))
+        self.characters.equip(1, 1, first)
+        state = self.characters.snapshot(1, 1)
+        self.assertEqual(state['equipped_instances']['武器'], instance_ids[0])
+        self.assertEqual(state['combat_bonus']['攻擊'],
+                         ITEMS['noah:archer:weapon:blue'].combat[1]
+                         + ITEMS['弓兵:0:套裝'].combat[1] + 7)
+        self.assertEqual(state['speed'], 63)
+        self.assertEqual(self.characters.resolved_item(
+            self.characters.get_instance(1, 1, second)).combat,
+            ITEMS['noah:archer:weapon'].combat)
+
+    def test_legacy_quantities_and_colored_equipment_migrate_once(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        store = RPGStore(Path(directory.name) / 'legacy.db')
+        self.addCleanup(store.close)
+        with store.db:
+            store.db.execute('''CREATE TABLE rpg_inventory (
+                guild_id INTEGER, user_id INTEGER, item_id TEXT, quantity INTEGER,
+                PRIMARY KEY(guild_id,user_id,item_id))''')
+            store.db.execute('''CREATE TABLE rpg_equipment (
+                guild_id INTEGER, user_id INTEGER, slot TEXT, item_id TEXT,
+                PRIMARY KEY(guild_id,user_id,slot))''')
+            store.db.execute('''CREATE TABLE rpg_characters (
+                guild_id INTEGER, user_id INTEGER, job TEXT,
+                PRIMARY KEY(guild_id,user_id))''')
+            store.db.execute('''CREATE TABLE rpg_starter_claims (
+                guild_id INTEGER, user_id INTEGER,
+                PRIMARY KEY(guild_id,user_id))''')
+            store.db.execute("INSERT INTO rpg_inventory VALUES (1,2,'noah:archer:weapon:red',2)")
+            store.db.execute("INSERT INTO rpg_equipment VALUES (1,2,'武器','noah:archer:weapon:red')")
+            store.db.execute("INSERT INTO rpg_characters VALUES (1,2,'弓兵')")
+            store.db.execute("INSERT INTO rpg_starter_claims VALUES (1,2)")
+
+        store.award_voice([(1, 2, level_floor(45))])
+
+        migrated = Characters(store, self.settings)
+        instances = migrated.equipment_instances(1, 2)
+        self.assertEqual(len(instances), 2)
+        self.assertTrue(all(instance.item_id == 'noah:archer:weapon' for instance in instances))
+        self.assertTrue(all(dict(instance.sockets)[0] == 'paint:red' for instance in instances))
+        self.assertEqual(migrated.snapshot(1, 2)['equipped']['武器'], 'noah:archer:weapon:red')
+        self.assertIsNone(store.db.execute("SELECT 1 FROM rpg_inventory WHERE item_id LIKE 'noah:%'").fetchone())
+
+        reloaded = Characters(store, self.settings)
+        self.assertEqual(len(reloaded.equipment_instances(1, 2)), 2)
+
     def test_tier_three_items_require_level_thirty_and_snapshot_effects(self):
         from core.rpg_character import item_text
         self.level(10)
@@ -184,7 +248,9 @@ class CharacterTests(unittest.TestCase):
         self.level(10)
         self.characters.change_job(1, 1, '騎士')
         with self.store.db:
-            self.store.db.execute("DELETE FROM rpg_inventory WHERE item_id='starter:club'")
+            starter = reloaded.get_instance(1, 1, 'starter:club')
+            self.store.db.execute('DELETE FROM rpg_equipment_instances WHERE instance_id=?',
+                                  (starter.instance_id,))
         self.assertEqual(reloaded.snapshot(1, 1)['equipped']['武器'], '騎士:0:武器')
         self.assertNotIn('starter:club', reloaded.inventory_counts(1, 1))
         self.assertEqual(reloaded.claim(1, 1), ['starter:club'])
@@ -265,7 +331,7 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(self.store.gold(1, 1), 1500)
         with self.assertRaises(CharacterError):
             self.characters.buy(2, 1, '騎士:1:套裝')
-        self.store.db.execute("CREATE TEMP TRIGGER reject_purchase BEFORE INSERT ON rpg_inventory BEGIN SELECT RAISE(ABORT, 'test'); END")
+        self.store.db.execute("CREATE TEMP TRIGGER reject_purchase BEFORE INSERT ON rpg_equipment_instances BEGIN SELECT RAISE(ABORT, 'test'); END")
         with self.assertRaises(sqlite3.IntegrityError):
             self.characters.buy(1, 1, '騎士:1:套裝')
         self.assertEqual(self.store.gold(1, 1), 1500)

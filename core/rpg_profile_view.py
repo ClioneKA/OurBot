@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, item_text
+from core.rpg_character import CharacterError, item_text
 from core.rpg_menu import add_back, navigate
 
 
@@ -12,11 +12,12 @@ PAGE_SIZE = 24
 
 class ShowcaseSelect(discord.ui.Select):
     def __init__(self, view, owned):
-        current = view.cog.characters.showcase(view.guild_id, view.owner.id)
+        current = view.cog.characters.showcase_reference(view.guild_id, view.owner.id)
         options = [discord.SelectOption(
-            label=ITEMS[key].name[:100], value=key,
-            description=f'{ITEMS[key].category}｜{item_text(ITEMS[key])}'[:100],
-            default=key == current) for key in owned]
+            label=(f'{entry.item.name} #{entry.instance_id}' if entry.instance_id else entry.item.name)[:100],
+            value=entry.reference,
+            description=f'{entry.item.category}｜{item_text(entry.item)}'[:100],
+            default=entry.reference == current) for entry in owned]
         super().__init__(placeholder='選擇要公開展示的物品', options=options, row=0)
         self.profile_view = view
 
@@ -43,7 +44,7 @@ class ProfileView(discord.ui.View):
 
     def rebuild(self):
         self.clear_items()
-        owned = self.cog.characters.inventory(self.guild_id, self.owner.id)
+        owned = self.cog.characters.inventory_entries(self.guild_id, self.owner.id)
         self.pages = max(1, (len(owned) + PAGE_SIZE - 1) // PAGE_SIZE)
         self.index = min(self.index, self.pages - 1)
         page = owned[self.index * PAGE_SIZE:(self.index + 1) * PAGE_SIZE]
@@ -90,8 +91,9 @@ class ProfileView(discord.ui.View):
             notice = None
             try:
                 if action == 'showcase':
+                    item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, value)
                     self.cog.characters.set_showcase(self.guild_id, self.owner.id, value)
-                    notice = f'現在展示：{ITEMS[value].name}'
+                    notice = f'現在展示：{item.name}'
                 elif action == 'clear':
                     self.cog.characters.set_showcase(self.guild_id, self.owner.id, None)
                     notice = '已取消展示物品。'

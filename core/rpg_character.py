@@ -1,5 +1,6 @@
 """Character rules and transactional equipment storage; no Discord dependency."""
 from dataclasses import dataclass, replace
+import time
 
 from core.rpg import level_for
 
@@ -82,6 +83,34 @@ class Item:
     transferable: bool = True
     socket_base: str = ''
     paint_color: str = ''
+
+
+@dataclass(frozen=True)
+class EquipmentInstance:
+    """One owned piece of combat equipment.
+
+    ``item_id`` always points at the shared, unmodified item definition.  Socket
+    and affix rolls live on the instance so two copies can evolve separately.
+    """
+    instance_id: int
+    guild_id: int
+    user_id: int
+    item_id: str
+    sockets: tuple = ()
+    affixes: tuple = ()
+
+    @property
+    def token(self):
+        return f'instance:{self.instance_id}'
+
+
+@dataclass(frozen=True)
+class InventoryEntry:
+    reference: str
+    item_id: str
+    item: Item
+    quantity: int
+    instance_id: int | None = None
 
 
 ITEMS = {}
@@ -396,6 +425,36 @@ def item_text(item):
     return '、'.join(parts) or '無加成'
 
 
+def add_owned_item(db, guild_id, user_id, item_id, quantity=1):
+    """Credit stackables or create independent combat-equipment instances.
+
+    The caller controls the transaction, which lets raid settlement keep loot,
+    XP, gold, and its idempotency marker in one atomic commit.
+    """
+    item = ITEMS.get(item_id)
+    if not item or quantity < 1:
+        raise CharacterError('無效的物品。')
+    if item.slot not in ('武器', '套裝', '飾品'):
+        db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+            VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
+            DO UPDATE SET quantity=quantity+excluded.quantity''',
+            (guild_id, user_id, item_id, quantity))
+        return []
+    base_id = item.socket_base if item.socket_base and item.paint_color else item_id
+    socket_item_id = PAINT_ITEMS.get(item.paint_color) if item.paint_color else None
+    ids = []
+    for _ in range(quantity):
+        cursor = db.execute('''INSERT INTO rpg_equipment_instances
+            (guild_id,user_id,item_id,created_at) VALUES (?,?,?,?)''',
+            (guild_id, user_id, base_id, int(time.time())))
+        instance_id = cursor.lastrowid
+        ids.append(instance_id)
+        if socket_item_id:
+            db.execute('INSERT INTO rpg_instance_sockets VALUES (?,?,?)',
+                       (instance_id, 0, socket_item_id))
+    return ids
+
+
 class Characters:
     def __init__(self, store, settings):
         self.store = store
@@ -411,20 +470,243 @@ class Characters:
                 PRIMARY KEY (guild_id, user_id, item_id))''')
             if 'quantity' not in {row[1] for row in self.db.execute('PRAGMA table_info(rpg_inventory)')}:
                 self.db.execute('ALTER TABLE rpg_inventory ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1')
-            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_equipment (
-                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, slot TEXT NOT NULL,
-                item_id TEXT NOT NULL,
-                PRIMARY KEY (guild_id, user_id, slot),
-                UNIQUE (guild_id, user_id, item_id))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_starter_claims (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 PRIMARY KEY (guild_id, user_id))''')
+            # Record starter ownership before legacy equipment is removed from the
+            # stackable inventory by the instance migration below.
+            self.db.execute('''INSERT OR IGNORE INTO rpg_starter_claims
+                SELECT guild_id,user_id FROM rpg_inventory WHERE item_id='starter:club' ''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_character_profiles (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 showcase_item_id TEXT,
                 PRIMARY KEY (guild_id, user_id))''')
-            self.db.execute('''INSERT OR IGNORE INTO rpg_starter_claims
-                SELECT guild_id,user_id FROM rpg_inventory WHERE item_id='starter:club' ''')
+            if 'showcase_instance_id' not in {row[1] for row in self.db.execute(
+                    'PRAGMA table_info(rpg_character_profiles)')}:
+                self.db.execute('ALTER TABLE rpg_character_profiles ADD COLUMN showcase_instance_id INTEGER')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_equipment_instances (
+                instance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                item_id TEXT NOT NULL, created_at INTEGER NOT NULL)''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_equipment_instances_owner
+                ON rpg_equipment_instances(guild_id,user_id)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_instance_sockets (
+                instance_id INTEGER NOT NULL, socket_index INTEGER NOT NULL,
+                socket_item_id TEXT NOT NULL,
+                PRIMARY KEY(instance_id,socket_index),
+                FOREIGN KEY(instance_id) REFERENCES rpg_equipment_instances(instance_id) ON DELETE CASCADE)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_instance_affixes (
+                instance_id INTEGER NOT NULL, affix_index INTEGER NOT NULL,
+                affix_id TEXT NOT NULL, effect_key TEXT NOT NULL, rolled_value INTEGER NOT NULL,
+                PRIMARY KEY(instance_id,affix_index),
+                FOREIGN KEY(instance_id) REFERENCES rpg_equipment_instances(instance_id) ON DELETE CASCADE)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_schema_migrations (
+                name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)''')
+            self._migrate_equipment_storage()
+
+    @staticmethod
+    def _is_instance_item(item_id):
+        item = ITEMS.get(item_id)
+        return bool(item and item.slot in ('武器', '套裝', '飾品'))
+
+    def _insert_instance(self, guild_id, user_id, item_id):
+        """Insert one instance. Caller owns the surrounding transaction."""
+        return add_owned_item(self.db, guild_id, user_id, item_id)[0]
+
+    def _create_equipment_table(self):
+        self.db.execute('''CREATE TABLE rpg_equipment (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, slot TEXT NOT NULL,
+            instance_id INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id, slot),
+            UNIQUE (guild_id, user_id, instance_id),
+            FOREIGN KEY(instance_id) REFERENCES rpg_equipment_instances(instance_id) ON DELETE CASCADE)''')
+
+    def _migrate_equipment_storage(self):
+        """Atomically expand legacy equipment quantities into owned instances."""
+        columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_equipment)')}
+        legacy_rows = []
+        had_legacy_table = False
+        if not columns:
+            self._create_equipment_table()
+        elif 'instance_id' not in columns:
+            had_legacy_table = True
+            legacy_rows = self.db.execute(
+                'SELECT guild_id,user_id,slot,item_id FROM rpg_equipment').fetchall()
+            self.db.execute('ALTER TABLE rpg_equipment RENAME TO rpg_equipment_legacy')
+            self._create_equipment_table()
+
+        created = {}
+        rows = self.db.execute(
+            'SELECT guild_id,user_id,item_id,quantity FROM rpg_inventory').fetchall()
+        for guild_id, user_id, item_id, quantity in rows:
+            if not self._is_instance_item(item_id):
+                continue
+            ids = [self._insert_instance(guild_id, user_id, item_id)
+                   for _ in range(max(0, quantity))]
+            created[(guild_id, user_id, item_id)] = ids
+            self.db.execute('''DELETE FROM rpg_inventory
+                WHERE guild_id=? AND user_id=? AND item_id=?''', (guild_id, user_id, item_id))
+
+        for guild_id, user_id, slot, item_id in legacy_rows:
+            if not self._is_instance_item(item_id):
+                continue
+            candidates = created.get((guild_id, user_id, item_id), [])
+            instance_id = candidates.pop(0) if candidates else self._insert_instance(guild_id, user_id, item_id)
+            self.db.execute('INSERT OR REPLACE INTO rpg_equipment VALUES (?,?,?,?)',
+                            (guild_id, user_id, slot, instance_id))
+        if had_legacy_table:
+            self.db.execute('DROP TABLE rpg_equipment_legacy')
+        self.db.execute('''INSERT OR IGNORE INTO rpg_schema_migrations VALUES (?,?)''',
+                        ('equipment_instances_v1', int(time.time())))
+
+    def _materialize_legacy_inventory(self, guild_id, user_id):
+        """Compatibility bridge for callers/tests still inserting old item rows."""
+        rows = self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
+            WHERE guild_id=? AND user_id=?''', (guild_id, user_id)).fetchall()
+        for item_id, quantity in rows:
+            if not self._is_instance_item(item_id):
+                continue
+            for _ in range(max(0, quantity)):
+                self._insert_instance(guild_id, user_id, item_id)
+            self.db.execute('''DELETE FROM rpg_inventory
+                WHERE guild_id=? AND user_id=? AND item_id=?''', (guild_id, user_id, item_id))
+
+    def _materialize_legacy_inventory_atomic(self, guild_id, user_id):
+        if self.db.in_transaction:
+            self._materialize_legacy_inventory(guild_id, user_id)
+        else:
+            with self.db:
+                self._materialize_legacy_inventory(guild_id, user_id)
+
+    def _instance(self, guild_id, user_id, instance_id):
+        row = self.db.execute('''SELECT instance_id,guild_id,user_id,item_id
+            FROM rpg_equipment_instances WHERE instance_id=? AND guild_id=? AND user_id=?''',
+            (instance_id, guild_id, user_id)).fetchone()
+        if not row:
+            return None
+        sockets = tuple(self.db.execute('''SELECT socket_index,socket_item_id
+            FROM rpg_instance_sockets WHERE instance_id=? ORDER BY socket_index''', (instance_id,)))
+        affixes = tuple(self.db.execute('''SELECT affix_index,affix_id,effect_key,rolled_value
+            FROM rpg_instance_affixes WHERE instance_id=? ORDER BY affix_index''', (instance_id,)))
+        return EquipmentInstance(*row, sockets=sockets, affixes=affixes)
+
+    def equipment_instances(self, guild_id, user_id):
+        self.ensure_starter(guild_id, user_id)
+        self._materialize_legacy_inventory_atomic(guild_id, user_id)
+        ids = [row[0] for row in self.db.execute('''SELECT instance_id
+            FROM rpg_equipment_instances WHERE guild_id=? AND user_id=? ORDER BY instance_id''',
+            (guild_id, user_id))]
+        return [self._instance(guild_id, user_id, instance_id) for instance_id in ids]
+
+    def inventory_entries(self, guild_id, user_id):
+        """Return stackable rows plus one row for every equipment instance."""
+        self.ensure_starter(guild_id, user_id)
+        self._materialize_legacy_inventory_atomic(guild_id, user_id)
+        entries = [InventoryEntry(key, key, ITEMS[key], quantity)
+                   for key, quantity in self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
+                       WHERE guild_id=? AND user_id=?''', (guild_id, user_id)) if key in ITEMS]
+        for instance in self.equipment_instances(guild_id, user_id):
+            entries.append(InventoryEntry(instance.token, self.instance_item_id(instance),
+                                          self.resolved_item(instance), 1, instance.instance_id))
+        return sorted(entries, key=lambda entry: (entry.item.category, entry.item.name,
+                                                   entry.instance_id or 0, entry.item_id))
+
+    @staticmethod
+    def instance_token(instance_id):
+        return f'instance:{instance_id}'
+
+    def instance_item_id(self, instance):
+        sockets = dict(instance.sockets)
+        paint = sockets.get(0)
+        if paint in PAINT_ITEMS.values():
+            color = next(color for color, key in PAINT_ITEMS.items() if key == paint)
+            variant = f'{instance.item_id}:{color}'
+            if variant in ITEMS:
+                return variant
+        return instance.item_id
+
+    def resolved_item(self, instance):
+        item = ITEMS[self.instance_item_id(instance)]
+        stats, combat = list(item.stats), list(item.combat)
+        changes = {}
+        for _, _, effect_key, value in instance.affixes:
+            if effect_key.startswith('stat:'):
+                index = int(effect_key.split(':', 1)[1])
+                stats[index] += value
+            elif effect_key.startswith('combat:'):
+                index = int(effect_key.split(':', 1)[1])
+                combat[index] += value
+            elif effect_key in ('speed', 'accuracy', 'evasion', 'lifesteal',
+                                'damage_guard_chance', 'vulnerable_chance',
+                                'vulnerable_percent', 'healing_share'):
+                changes[effect_key] = changes.get(effect_key, getattr(item, effect_key)) + value
+        return replace(item, stats=tuple(stats), combat=tuple(combat), **changes)
+
+    def _resolve_instance(self, guild_id, user_id, reference):
+        if isinstance(reference, int) or isinstance(reference, str) and reference.startswith('instance:'):
+            try:
+                instance_id = int(reference.split(':', 1)[1]) if isinstance(reference, str) else reference
+            except ValueError:
+                return None
+            return self._instance(guild_id, user_id, instance_id)
+        if reference not in ITEMS or not self._is_instance_item(reference):
+            return None
+        self._materialize_legacy_inventory_atomic(guild_id, user_id)
+        instances = self.equipment_instances(guild_id, user_id)
+        matches = [instance for instance in instances if self.instance_item_id(instance) == reference]
+        if not matches:
+            return None
+        equipped = {row[0] for row in self.db.execute('''SELECT instance_id FROM rpg_equipment
+            WHERE guild_id=? AND user_id=?''', (guild_id, user_id))}
+        return next((instance for instance in matches if instance.instance_id in equipped), matches[0])
+
+    def item_for_reference(self, guild_id, user_id, reference):
+        instance = self._resolve_instance(guild_id, user_id, reference)
+        return self.resolved_item(instance) if instance else ITEMS.get(reference)
+
+    def get_instance(self, guild_id, user_id, reference):
+        return self._resolve_instance(guild_id, user_id, reference)
+
+    def set_affixes(self, guild_id, user_id, reference, affixes):
+        """Replace rolls on one item; intended for the future roll/reroll service.
+
+        Each entry is ``(affix_id, effect_key, rolled_value)``. Values are saved,
+        rather than regenerated from a seed, so balance changes cannot silently
+        alter existing equipment.
+        """
+        allowed_fields = {'speed', 'accuracy', 'evasion', 'lifesteal',
+                          'damage_guard_chance', 'vulnerable_chance',
+                          'vulnerable_percent', 'healing_share'}
+        normalized = []
+        for index, entry in enumerate(affixes):
+            if len(entry) != 3:
+                raise CharacterError('詞條資料格式錯誤。')
+            affix_id, effect_key, value = entry
+            if not isinstance(affix_id, str) or not affix_id or not isinstance(effect_key, str):
+                raise CharacterError('詞條資料格式錯誤。')
+            valid_vector = (effect_key.startswith('stat:') or effect_key.startswith('combat:'))
+            if valid_vector:
+                try:
+                    vector, position = effect_key.split(':', 1)
+                    limit = 5 if vector == 'stat' else 4
+                    valid_vector = 0 <= int(position) < limit
+                except ValueError:
+                    valid_vector = False
+            if effect_key not in allowed_fields and not valid_vector:
+                raise CharacterError('詞條效果種類無效。')
+            if type(value) is not int:
+                raise CharacterError('詞條數值必須是整數。')
+            normalized.append((index, affix_id, effect_key, value))
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            instance = self._resolve_instance(guild_id, user_id, reference)
+            if not instance:
+                raise CharacterError('背包中沒有這件裝備。')
+            self.db.execute('DELETE FROM rpg_instance_affixes WHERE instance_id=?',
+                            (instance.instance_id,))
+            self.db.executemany('INSERT INTO rpg_instance_affixes VALUES (?,?,?,?,?)',
+                                [(instance.instance_id, *entry) for entry in normalized])
+        return self._instance(guild_id, user_id, instance.instance_id)
 
     def job(self, guild_id, user_id):
         row = self.db.execute('SELECT job FROM rpg_characters WHERE guild_id=? AND user_id=?',
@@ -437,9 +719,13 @@ class Characters:
 
     def inventory(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
-        return [row[0] for row in self.db.execute(
+        self._materialize_legacy_inventory_atomic(guild_id, user_id)
+        stackable = [row[0] for row in self.db.execute(
             'SELECT item_id FROM rpg_inventory WHERE guild_id=? AND user_id=? ORDER BY item_id',
             (guild_id, user_id)) if row[0] in ITEMS]
+        equipment = [self.instance_item_id(instance)
+                     for instance in self.equipment_instances(guild_id, user_id)]
+        return sorted(set(stackable + equipment))
 
     def ensure_starter(self, guild_id, user_id):
         if self.db.execute('SELECT 1 FROM rpg_starter_claims WHERE guild_id=? AND user_id=?',
@@ -453,10 +739,9 @@ class Characters:
         granted = self.db.execute('INSERT OR IGNORE INTO rpg_starter_claims VALUES (?,?)',
                                   (guild_id, user_id))
         if granted.rowcount:
-            self.db.execute('INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?)',
-                            (guild_id, user_id, 'starter:club'))
+            instance_id = self._insert_instance(guild_id, user_id, 'starter:club')
             self.db.execute('INSERT OR IGNORE INTO rpg_equipment VALUES (?,?,?,?)',
-                            (guild_id, user_id, '武器', 'starter:club'))
+                            (guild_id, user_id, '武器', instance_id))
 
     def snapshot(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
@@ -466,71 +751,106 @@ class Characters:
         stage = stage_for(level, self.settings) if job != '民兵' else 0
         capacity = 1 if job == '民兵' else stage + 2
         slots = ['武器', '套裝'] + [f'飾品{i}' for i in range(1, capacity + 1)]
-        raw = dict(self.db.execute('SELECT slot, item_id FROM rpg_equipment WHERE guild_id=? AND user_id=?',
+        raw = dict(self.db.execute('SELECT slot, instance_id FROM rpg_equipment WHERE guild_id=? AND user_id=?',
                                    (guild_id, user_id)))
-        owned = set(self.inventory(guild_id, user_id))
-        equipped = {}
-        for slot, item_id in raw.items():
-            item = ITEMS.get(item_id)
-            if (slot in slots and item and item_id in owned and
+        equipped, equipped_instances, resolved = {}, {}, {}
+        for slot, instance_id in raw.items():
+            instance = self._instance(guild_id, user_id, instance_id)
+            item = self.resolved_item(instance) if instance else None
+            if (slot in slots and item and
                     (not item.job or item.job == job) and
                     level >= item_level(item, self.settings)):
-                equipped[slot] = item_id
+                equipped[slot] = self.instance_item_id(instance)
+                equipped_instances[slot] = instance_id
+                resolved[slot] = item
         # First nine level-ups always use militia growth, even after changing jobs.
         growth = GROWTH[job]
         base = tuple(10 + min(level - 1, 9) * 2 + max(0, level - 10) * weight
                      + (stage * weight * 2 if job != '民兵' else 0) for weight in growth)
-        bonus = tuple(sum(ITEMS[item].stats[i] for item in equipped.values()) for i in range(5))
+        bonus = tuple(sum(item.stats[i] for item in resolved.values()) for i in range(5))
         total = tuple(a + b for a, b in zip(base, bonus))
         combat = combat_from_stats(total)
-        combat_bonus = {name: sum(ITEMS[key].combat[i] for key in equipped.values())
+        combat_bonus = {name: sum(item.combat[i] for item in resolved.values())
                         for i, name in enumerate(COMBAT_NAMES)}
         for name, value in combat_bonus.items():
             combat[name] += value
-        weapon = ITEMS.get(equipped.get('武器'))
-        combat['閃避率'] += sum(ITEMS[key].evasion for key in equipped.values())
-        combat['命中率'] += sum(ITEMS[key].accuracy for key in equipped.values())
-        speed = speed_from_equipment(job, equipped)
+        weapon = resolved.get('武器')
+        combat['閃避率'] += sum(item.evasion for item in resolved.values())
+        combat['命中率'] += sum(item.accuracy for item in resolved.values())
+        speed = max(1, min(100, BASE_SPEED.get(job, 50) + sum(item.speed for item in resolved.values())))
         combat['速度'] = speed
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
+                    equipped_instances=equipped_instances,
                     combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100), speed=speed,
                     lifesteal=weapon.lifesteal if weapon else 0,
-                    damage_guard_chance=min(100, sum(ITEMS[key].damage_guard_chance for key in equipped.values())),
+                    damage_guard_chance=min(100, sum(item.damage_guard_chance for item in resolved.values())),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
                     vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
-                    healing_share=max((ITEMS[key].healing_share for key in equipped.values()), default=0))
+                    healing_share=max((item.healing_share for item in resolved.values()), default=0))
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
-        return dict(self.db.execute('SELECT item_id, quantity FROM rpg_inventory WHERE guild_id=? AND user_id=?',
-                                    (guild_id, user_id)))
+        self._materialize_legacy_inventory_atomic(guild_id, user_id)
+        counts = dict(self.db.execute('SELECT item_id, quantity FROM rpg_inventory WHERE guild_id=? AND user_id=?',
+                                      (guild_id, user_id)))
+        for instance in self.equipment_instances(guild_id, user_id):
+            key = self.instance_item_id(instance)
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def showcase(self, guild_id, user_id):
-        row = self.db.execute('SELECT showcase_item_id FROM rpg_character_profiles '
+        row = self.db.execute('SELECT showcase_item_id,showcase_instance_id FROM rpg_character_profiles '
                               'WHERE guild_id=? AND user_id=?', (guild_id, user_id)).fetchone()
-        if not row or not row[0] or row[0] not in ITEMS:
+        if not row:
+            return None
+        if row[1]:
+            instance = self._instance(guild_id, user_id, row[1])
+            return self.instance_item_id(instance) if instance else None
+        if not row[0] or row[0] not in ITEMS:
             return None
         owned = self.db.execute('SELECT 1 FROM rpg_inventory '
                                 'WHERE guild_id=? AND user_id=? AND item_id=?',
                                 (guild_id, user_id, row[0])).fetchone()
-        return row[0] if owned else None
+        if owned:
+            return row[0]
+        instance = self._resolve_instance(guild_id, user_id, row[0])
+        return self.instance_item_id(instance) if instance else None
+
+    def showcase_reference(self, guild_id, user_id):
+        row = self.db.execute('SELECT showcase_item_id,showcase_instance_id FROM rpg_character_profiles '
+                              'WHERE guild_id=? AND user_id=?', (guild_id, user_id)).fetchone()
+        if not row:
+            return None
+        if row[1] and self._instance(guild_id, user_id, row[1]):
+            return self.instance_token(row[1])
+        return row[0]
+
+    def showcase_item(self, guild_id, user_id):
+        reference = self.showcase_reference(guild_id, user_id)
+        return self.item_for_reference(guild_id, user_id, reference) if reference else None
 
     def set_showcase(self, guild_id, user_id, item_id):
-        if item_id is not None and item_id not in ITEMS:
+        if item_id is not None and item_id not in ITEMS and not str(item_id).startswith('instance:'):
             raise CharacterError('找不到這件展示品。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self.ensure_starter(guild_id, user_id)
-            if item_id is not None and not self.db.execute(
-                    'SELECT 1 FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=?',
-                    (guild_id, user_id, item_id)).fetchone():
+            instance = self._resolve_instance(guild_id, user_id, item_id) if item_id is not None else None
+            stackable = item_id is not None and self.db.execute(
+                'SELECT 1 FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=?',
+                (guild_id, user_id, item_id)).fetchone()
+            if item_id is not None and not instance and not stackable:
                 raise CharacterError('背包中沒有這件物品。')
-            self.db.execute('INSERT INTO rpg_character_profiles VALUES (?, ?, ?) '
+            definition_id = None if instance else item_id
+            instance_id = instance.instance_id if instance else None
+            self.db.execute('''INSERT INTO rpg_character_profiles
+                (guild_id,user_id,showcase_item_id,showcase_instance_id) VALUES (?, ?, ?, ?) '''
                             'ON CONFLICT(guild_id, user_id) DO UPDATE SET '
-                            'showcase_item_id=excluded.showcase_item_id',
-                            (guild_id, user_id, item_id))
+                            'showcase_item_id=excluded.showcase_item_id, '
+                            'showcase_instance_id=excluded.showcase_instance_id',
+                            (guild_id, user_id, definition_id, instance_id))
         return item_id
 
     def _grant(self, guild_id, user_id, job):
@@ -539,9 +859,8 @@ class Characters:
                           item.job == job and item.stage == 0 and item.slot in ('武器', '套裝'))]
         granted = []
         for key in candidates:
-            cursor = self.db.execute('INSERT OR IGNORE INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?, ?, ?)',
-                                     (guild_id, user_id, key))
-            if cursor.rowcount:
+            if self.inventory_counts(guild_id, user_id).get(key, 0) == 0:
+                self._insert_instance(guild_id, user_id, key)
                 granted.append(key)
         return granted
 
@@ -562,8 +881,9 @@ class Characters:
             self._grant(guild_id, user_id, job)
             self.db.execute('DELETE FROM rpg_equipment WHERE guild_id=? AND user_id=?', (guild_id, user_id))
             for slot in ('武器', '套裝'):
+                instance = self._resolve_instance(guild_id, user_id, f'{job}:0:{slot}')
                 self.db.execute('INSERT INTO rpg_equipment VALUES (?, ?, ?, ?)',
-                                (guild_id, user_id, slot, f'{job}:0:{slot}'))
+                                (guild_id, user_id, slot, instance.instance_id))
         return self.snapshot(guild_id, user_id)
 
     def claim(self, guild_id, user_id):
@@ -571,9 +891,8 @@ class Characters:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.snapshot(guild_id, user_id)
             granted = []
-            starter = self.db.execute('''INSERT OR IGNORE INTO rpg_inventory
-                (guild_id,user_id,item_id) VALUES (?,?,?)''', (guild_id, user_id, 'starter:club'))
-            if starter.rowcount:
+            if self.inventory_counts(guild_id, user_id).get('starter:club', 0) == 0:
+                self._insert_instance(guild_id, user_id, 'starter:club')
                 granted.append('starter:club')
             if state['job'] != '民兵':
                 granted.extend(self._grant(guild_id, user_id, state['job']))
@@ -583,9 +902,10 @@ class Characters:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.snapshot(guild_id, user_id)
-            if item_id not in self.inventory(guild_id, user_id):
+            instance = self._resolve_instance(guild_id, user_id, item_id)
+            if not instance:
                 raise CharacterError('背包中沒有這件裝備，請重新開啟 /冒險 → 裝備／能力 並從面板選擇。')
-            item = ITEMS[item_id]
+            item = self.resolved_item(instance)
             if item.job and item.job != state['job']:
                 raise CharacterError('這件裝備不適合目前職業。')
             if state['level'] < item_level(item, self.settings):
@@ -595,12 +915,19 @@ class Characters:
                 if not 1 <= accessory_slot <= state['capacity']:
                     raise CharacterError(f'目前只有 {state["capacity"]} 個飾品格。')
                 slot = f'飾品{accessory_slot}'
-            # Moving a unique accessory never duplicates its bonus.
-            self.db.execute('DELETE FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
-                            (guild_id, user_id, item_id))
+            # Moving the same instance never duplicates its bonus. Accessories
+            # retain the existing rule that the same definition cannot occupy
+            # multiple accessory slots even when several copies are owned.
+            self.db.execute('DELETE FROM rpg_equipment WHERE guild_id=? AND user_id=? AND instance_id=?',
+                            (guild_id, user_id, instance.instance_id))
+            if item.slot == '飾品':
+                self.db.execute('''DELETE FROM rpg_equipment WHERE guild_id=? AND user_id=?
+                    AND instance_id IN (SELECT instance_id FROM rpg_equipment_instances
+                    WHERE guild_id=? AND user_id=? AND item_id=?)''',
+                    (guild_id, user_id, guild_id, user_id, instance.item_id))
             self.db.execute('INSERT INTO rpg_equipment VALUES (?, ?, ?, ?) '
-                            'ON CONFLICT(guild_id, user_id, slot) DO UPDATE SET item_id=excluded.item_id',
-                            (guild_id, user_id, slot, item_id))
+                            'ON CONFLICT(guild_id, user_id, slot) DO UPDATE SET instance_id=excluded.instance_id',
+                            (guild_id, user_id, slot, instance.instance_id))
         return slot
 
     def buy(self, guild_id, user_id, item_id):
@@ -614,13 +941,13 @@ class Characters:
                 raise CharacterError('只能購買目前職業的裝備。')
             if state['level'] < stage_level(item.stage, self.settings):
                 raise CharacterError('尚未達到這件裝備的等級需求。')
-            if item_id in self.inventory(guild_id, user_id):
+            if self.inventory_counts(guild_id, user_id).get(item_id, 0):
                 raise CharacterError('你已經持有這件裝備，不需要重複購買。')
             paid = self.db.execute('UPDATE rpg_wallets SET gold=gold-? WHERE guild_id=? AND user_id=? AND gold>=?',
                                    (item.price, guild_id, user_id, item.price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，需要 {item.price:,} 金幣。')
-            self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?)', (guild_id, user_id, item_id))
+            self._insert_instance(guild_id, user_id, item_id)
         return item
 
     def unequip(self, guild_id, user_id, slot):
@@ -633,10 +960,20 @@ class Characters:
                 raise CharacterError('這個欄位沒有裝備。')
 
     def available_quantity(self, guild, user, key):
+        if isinstance(key, int) or isinstance(key, str) and key.startswith('instance:'):
+            instance = self._resolve_instance(guild, user, key)
+            if not instance:
+                return 0
+            equipped = self.db.execute('''SELECT 1 FROM rpg_equipment
+                WHERE guild_id=? AND user_id=? AND instance_id=?''',
+                (guild, user, instance.instance_id)).fetchone()
+            return 0 if equipped else 1
         owned = self.inventory_counts(guild, user).get(key, 0)
-        equipped = self.db.execute('SELECT 1 FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
-                                   (guild, user, key)).fetchone()
-        return max(0, owned - bool(equipped))
+        equipped_ids = [row[0] for row in self.db.execute('''SELECT instance_id FROM rpg_equipment
+            WHERE guild_id=? AND user_id=?''', (guild, user))]
+        equipped = sum(self.instance_item_id(instance) == key for instance_id in equipped_ids
+                       if (instance := self._instance(guild, user, instance_id)))
+        return max(0, owned - equipped)
 
     def combine_paint_set(self, guild, user):
         with self.db:
@@ -659,36 +996,31 @@ class Characters:
             raise CharacterError('請選擇紅色、黃色或藍色顏料。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            item = ITEMS.get(item_id)
+            instance = self._resolve_instance(guild, user, item_id)
+            item = ITEMS.get(instance.item_id) if instance else None
             if not item or not item.socket_base:
                 raise CharacterError('這件裝備沒有顏料鑲嵌格。')
-            if item.paint_color == color:
+            current_socket = dict(instance.sockets).get(0)
+            if current_socket == PAINT_ITEMS[color]:
                 raise CharacterError(f'這件裝備已經鑲嵌{PAINT_NAMES[color]}顏料。')
             counts = self.inventory_counts(guild, user)
-            if counts.get(item_id, 0) < 1:
-                raise CharacterError('背包中沒有這件裝備。')
             paint_key = PAINT_ITEMS[color]
             if counts.get(paint_key, 0) < 1:
                 raise CharacterError(f'背包中沒有{ITEMS[paint_key].name}。')
-            target_key = f'{item.socket_base}:{color}'
-            equipped = self.db.execute(
-                'SELECT slot FROM rpg_equipment WHERE guild_id=? AND user_id=? AND item_id=?',
-                (guild, user, item_id)).fetchone()
-            for key in (item_id, paint_key):
-                self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
-                                'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, key))
-                self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
-                                'AND item_id=? AND quantity=0', (guild, user, key))
-            self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
-                VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
-                DO UPDATE SET quantity=quantity+1''', (guild, user, target_key))
-            if equipped:
-                self.db.execute('UPDATE rpg_equipment SET item_id=? '
-                                'WHERE guild_id=? AND user_id=? AND slot=?',
-                                (target_key, guild, user, equipped[0]))
-        return target_key
+            self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
+                            'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, paint_key))
+            self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
+                            'AND item_id=? AND quantity=0', (guild, user, paint_key))
+            self.db.execute('''INSERT INTO rpg_instance_sockets(instance_id,socket_index,socket_item_id)
+                VALUES (?,?,?) ON CONFLICT(instance_id,socket_index)
+                DO UPDATE SET socket_item_id=excluded.socket_item_id''',
+                (instance.instance_id, 0, paint_key))
+            updated = self._instance(guild, user, instance.instance_id)
+        return updated.token if isinstance(item_id, int) or str(item_id).startswith('instance:') else self.instance_item_id(updated)
 
     def consume_item(self, guild, user, key, quantity=1):
+        if self._is_instance_item(key):
+            raise CharacterError('裝備必須指定單件實例，不能作為堆疊物品消耗。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             counts = self.inventory_counts(guild, user)
@@ -704,13 +1036,15 @@ class Characters:
         if key not in ITEMS or quantity < 1:
             raise CharacterError('無效的物品。')
         with self.db:
-            self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
-                VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
-                DO UPDATE SET quantity=quantity+excluded.quantity''', (guild, user, key, quantity))
+            if self._is_instance_item(key):
+                return add_owned_item(self.db, guild, user, key, quantity)
+            add_owned_item(self.db, guild, user, key, quantity)
 
     def dispose(self, guild, user, key, quantity, recipient=None):
         """Transfer or sell only unequipped copies in one transaction."""
-        item = ITEMS.get(key)
+        reference_instance = self._resolve_instance(guild, user, key)
+        display_key = self.instance_item_id(reference_instance) if reference_instance else key
+        item = self.resolved_item(reference_instance) if reference_instance else ITEMS.get(key)
         if not item or recipient is not None and not item.transferable:
             raise CharacterError('這件物品為綁定物品，不能給予其他玩家。')
         if recipient is None and not item_sellable(item):
@@ -723,6 +1057,33 @@ class Characters:
             self.db.execute('BEGIN IMMEDIATE')
             if quantity > self.available_quantity(guild, user, key):
                 raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
+            if reference_instance:
+                equipped = {row[0] for row in self.db.execute('''SELECT instance_id FROM rpg_equipment
+                    WHERE guild_id=? AND user_id=?''', (guild, user))}
+                matches = [instance for instance in self.equipment_instances(guild, user)
+                           if self.instance_item_id(instance) == display_key and instance.instance_id not in equipped]
+                if str(key).startswith('instance:'):
+                    matches = [instance for instance in matches
+                               if instance.instance_id == reference_instance.instance_id]
+                if len(matches) < quantity:
+                    raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
+                selected = matches[:quantity]
+                if recipient is not None:
+                    self.db.executemany('''UPDATE rpg_equipment_instances SET user_id=?
+                        WHERE instance_id=? AND guild_id=? AND user_id=?''',
+                        [(recipient, instance.instance_id, guild, user) for instance in selected])
+                    return 0
+                self.db.executemany('DELETE FROM rpg_instance_sockets WHERE instance_id=?',
+                                    [(instance.instance_id,) for instance in selected])
+                self.db.executemany('DELETE FROM rpg_instance_affixes WHERE instance_id=?',
+                                    [(instance.instance_id,) for instance in selected])
+                self.db.executemany('DELETE FROM rpg_equipment_instances WHERE instance_id=?',
+                                    [(instance.instance_id,) for instance in selected])
+                gold = item_sell_price(item) * quantity
+                self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
+                                'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold',
+                                (guild, user, gold))
+                return gold
             self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? WHERE guild_id=? AND user_id=? AND item_id=?',
                             (quantity, guild, user, key))
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0',

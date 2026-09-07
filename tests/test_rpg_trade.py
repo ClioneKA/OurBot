@@ -52,7 +52,7 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
             self.characters.dispose(1, 1, 'raid:0', 2)
         self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
         self.assertEqual(self.store.gold(1, 1), 0)
-        self.store.db.execute("CREATE TEMP TRIGGER reject_gift BEFORE INSERT ON rpg_inventory WHEN NEW.user_id=2 BEGIN SELECT RAISE(ABORT, 'test'); END")
+        self.store.db.execute("CREATE TEMP TRIGGER reject_gift BEFORE UPDATE ON rpg_equipment_instances WHEN NEW.user_id=2 BEGIN SELECT RAISE(ABORT, 'test'); END")
         with self.assertRaises(sqlite3.IntegrityError):
             self.characters.dispose(1, 1, 'raid:0', 1, 2)
         self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
@@ -63,8 +63,8 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('starter:club', view.catalog)
         self.characters.unequip(1, 1, '武器')
         view.rebuild()
-        self.assertIn('starter:club', view.catalog)
-        await view.execute(self.interaction, 'starter:club', None, 1, view.revision)
+        starter = next(key for key in view.catalog if view.entries[key].item_id == 'starter:club')
+        await view.execute(self.interaction, starter, None, 1, view.revision)
         self.assertNotIn('starter:club', self.characters.inventory(1, 1))
         self.assertEqual(self.characters.claim(1, 1), ['starter:club'])
         self.assertEqual(self.store.gold(1, 1), 0)
@@ -80,16 +80,16 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         modal = self.interaction.response.send_modal.call_args.args[0]
         self.assertIsInstance(modal, QuantityModal)
         self.addCleanup(modal.stop)
-        await view.execute(self.interaction, modal.key, modal.recipient, 2, modal.revision)
-        await view.execute(self.interaction, modal.key, modal.recipient, 2, modal.revision)
-        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 2)
+        await view.execute(self.interaction, modal.key, modal.recipient, 1, modal.revision)
+        await view.execute(self.interaction, modal.key, modal.recipient, 1, modal.revision)
+        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 1)
         self.interaction.guild.fetch_member.assert_awaited_once_with(2)
         self.interaction.guild.fetch_member.return_value.send.assert_awaited_once()
         sent = self.interaction.guild.fetch_member.return_value.send.call_args.kwargs
-        self.assertIn('數量：2', sent['embed'].fields[0].value)
+        self.assertIn('數量：1', sent['embed'].fields[0].value)
         self.interaction.guild.fetch_member.return_value = SimpleNamespace(bot=True)
         await view.execute(self.interaction, 'raid:0', 3, 1, view.revision)
-        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 2)
         self.assertIn('機器人', self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value)
 
     async def test_sell_modal_stale_and_unauthorized_then_success(self):

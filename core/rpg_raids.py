@@ -94,6 +94,7 @@ class RaidService:
         self.rosters = {}
         self.client = None
         self.spawning = set()
+        self.spawning_guilds = set()
         self.spawn_tasks = set()
 
     def start(self):
@@ -461,10 +462,13 @@ class RaidService:
             raise CharacterError(f'{"中階" if pool == "mid" else "一般"}討伐活動目前已停用。')
         if channel.guild.unavailable:
             raise CharacterError('伺服器暫時無法使用，請稍後再試。')
-        if channel.id in self.spawning or any(r['channel_id'] == channel.id for r in self.repo.pending()):
-            raise CharacterError('本頻道已有討伐或結果待送出，請等待完成。')
-        # Reserve before the AI call so manual and scheduled spawns cannot overlap.
+        pending = self.repo.pending()
+        if (channel.id in self.spawning or channel.guild.id in self.spawning_guilds
+                or any(r['guild_id'] == channel.guild.id for r in pending)):
+            raise CharacterError('本伺服器已有討伐或結果待送出，請等待完成。')
+        # Reserve the guild before the AI call so no two raid channels can publish together.
         self.spawning.add(channel.id)
+        self.spawning_guilds.add(channel.guild.id)
         task = asyncio.current_task()
         self.spawn_tasks.add(task)
         if not preserve_schedule:
@@ -516,6 +520,7 @@ class RaidService:
             raise
         finally:
             self.spawning.discard(channel.id)
+            self.spawning_guilds.discard(channel.guild.id)
             self.spawn_tasks.discard(task)
 
     async def summon_bounty(self, guild, user, pool, price):
@@ -599,11 +604,9 @@ class RaidService:
                     and channel.guild.id == guild.id]
         if not channels:
             raise CharacterError('這個伺服器尚未設定中階討伐文字頻道。')
-        active = [raid for raid in self.repo.pending()
-                  if raid['guild_id'] == guild.id and raid.get('pool') in ('mid', 'special')
-                  and raid['status'] in ('posting', 'lobby', 'running')]
-        if active or any(channel.id in self.spawning for channel in channels):
-            raise CharacterError('目前已有中階討伐正在發布或進行，暫時不能使用噴漆罐套組。')
+        active = [raid for raid in self.repo.pending() if raid['guild_id'] == guild.id]
+        if active or guild.id in self.spawning_guilds:
+            raise CharacterError('目前已有討伐或結果待送出，暫時不能使用噴漆罐套組。')
         if any(raid['status'] in ('lobby', 'running') and user.id in raid.get('members', ())
                for raid in self.repo.pending()):
             raise CharacterError('你已參與另一場討伐，請先完成或退出。')
@@ -614,6 +617,7 @@ class RaidService:
             raise CharacterError('伺服器暫時無法使用，請稍後再試。')
 
         self.spawning.add(channel.id)
+        self.spawning_guilds.add(guild.id)
         task = asyncio.current_task()
         self.spawn_tasks.add(task)
         self.next_spawn(channel.id, time.time())
@@ -655,6 +659,7 @@ class RaidService:
             raise
         finally:
             self.spawning.discard(channel.id)
+            self.spawning_guilds.discard(channel.guild.id)
             self.spawn_tasks.discard(task)
 
     @tasks.loop(seconds=5)
@@ -688,7 +693,10 @@ class RaidService:
                 logger.exception('Raid update failed: %s', raid['id'])
         if not self.settings.enabled and not self.mid_settings.enabled:
             return
-        occupied = {r['channel_id'] for r in self.repo.pending()}
+        current = self.repo.pending()
+        occupied = {r['channel_id'] for r in current}
+        busy_guilds = {r['guild_id'] for r in current} | self.spawning_guilds
+        due_channels = []
         for channel_id in self.all_channels - occupied:
             channel = self.bot.get_channel(channel_id)
             if not isinstance(channel, discord.TextChannel) or channel.guild.unavailable:
@@ -701,8 +709,15 @@ class RaidService:
                 continue
             if now < due:
                 continue
+            due_channels.append((due, channel_id, channel))
+        # Keep colliding deadlines overdue. Once the current raid is delivered,
+        # the oldest waiting channel is published on the next scheduler tick.
+        for _, channel_id, channel in sorted(due_channels):
+            if channel.guild.id in busy_guilds:
+                continue
             try:
                 await self.spawn(channel)
+                busy_guilds.add(channel.guild.id)
             except CharacterError:
                 continue  # A manual spawn may already be generating this channel's monster.
             except Exception:

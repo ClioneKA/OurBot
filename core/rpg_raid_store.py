@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 
 from core.rpg import level_for
-from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS
+from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS, add_owned_item
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -298,21 +298,15 @@ class RaidStore:
                         drop = rng.choice(own if own and rng.random() < 0.5 else other or own)
                     else:
                         drop = rng.choice(pool)
-                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
-                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
-                                    (raid['guild_id'], p['id'], drop))
+                    add_owned_item(self.db, raid['guild_id'], p['id'], drop)
                 receives_fixed_drop = (victory and fixed_drop and
                                        (fixed_drop_mode != 'single_random' or p['id'] == fixed_drop_winner))
                 if receives_fixed_drop:
-                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
-                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
-                                    (raid['guild_id'], p['id'], fixed_drop))
+                    add_owned_item(self.db, raid['guild_id'], p['id'], fixed_drop)
                 chance_items = [item for winner, item in chance_drop_results
                                 if winner is None or p['id'] == winner]
                 for chance_item in chance_items:
-                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
-                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
-                                    (raid['guild_id'], p['id'], chance_item))
+                    add_owned_item(self.db, raid['guild_id'], p['id'], chance_item)
                 self.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?) '
                                 'ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp',
                                 (raid['guild_id'], p['id'], personal_xp))
@@ -323,9 +317,7 @@ class RaidStore:
                 extra_item = None
                 if victory and raid['monster']['kind'] == '城崎諾亞' and rng.random() < 0.02:
                     extra_item = 'noah:unfinished'
-                    self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id) VALUES (?,?,?) '
-                                    'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=rpg_inventory.quantity+1',
-                                    (raid['guild_id'], p['id'], extra_item))
+                    add_owned_item(self.db, raid['guild_id'], p['id'], extra_item)
                 reward = dict(id=p['id'], xp=personal_xp, gold=gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop

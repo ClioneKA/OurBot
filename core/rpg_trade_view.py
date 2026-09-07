@@ -2,7 +2,7 @@
 import asyncio
 import discord
 
-from core.rpg_character import ITEMS, CharacterError, item_sell_price, item_sellable, item_text
+from core.rpg_character import CharacterError, item_sell_price, item_sellable, item_text
 from core.rpg_menu import add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
@@ -12,7 +12,7 @@ class QuantityModal(discord.ui.Modal):
         super().__init__(title='確認給予數量' if panel.mode == 'give' else '確認賣出數量')
         self.panel, self.key, self.recipient = panel, panel.selected, panel.recipient
         self.revision = panel.revision
-        item = ITEMS[self.key]
+        item = panel.entries[self.key].item
         label = f'{item.name}｜每件 {item_sell_price(item)} 金幣' if panel.mode == 'sell' else item.name
         self.amount = discord.ui.TextInput(label=label[:45], default='1', min_length=1, max_length=9)
         self.add_item(self.amount)
@@ -22,6 +22,9 @@ class QuantityModal(discord.ui.Modal):
             amount = int(self.amount.value)
         except ValueError:
             await interaction.response.send_message('請輸入正整數數量。', ephemeral=True)
+            return
+        if self.panel.entries[self.key].instance_id and amount != 1:
+            await interaction.response.send_message('獨立裝備一次只能操作一件。', ephemeral=True)
             return
         await self.panel.execute(interaction, self.key, self.recipient, amount, self.revision)
 
@@ -46,10 +49,10 @@ class TradeView(discord.ui.View):
 
     def rebuild(self):
         chars = self.cog.characters
-        self.catalog = [key for key in chars.inventory(self.guild_id, self.owner.id)
-                        if (item_sellable(ITEMS[key]) if self.mode == 'sell'
-                            else ITEMS[key].transferable)
-                        and chars.available_quantity(self.guild_id, self.owner.id, key) > 0]
+        self.entries = {entry.reference: entry for entry in chars.inventory_entries(self.guild_id, self.owner.id)}
+        self.catalog = [reference for reference, entry in self.entries.items()
+                        if (item_sellable(entry.item) if self.mode == 'sell' else entry.item.transferable)
+                        and chars.available_quantity(self.guild_id, self.owner.id, reference) > 0]
         self.pages = max(1, (len(self.catalog) + 9) // 10)
         self.page = min(self.page, self.pages - 1)
         if self.selected not in self.catalog:
@@ -57,9 +60,14 @@ class TradeView(discord.ui.View):
         self.clear_items()
         keys = self.catalog[self.page * 10:(self.page + 1) * 10]
         self.add_item(PanelSelect('item', row=0, placeholder=f'選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
-            options=[discord.SelectOption(label=ITEMS[key].name, value=key, default=key == self.selected,
-                description=(f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件'
-                             + (f'｜收購 {item_sell_price(ITEMS[key])} 金幣／件' if self.mode == 'sell' else '')))
+            options=[discord.SelectOption(
+                label=(f'{self.entries[key].item.name} #{self.entries[key].instance_id}'
+                       if self.entries[key].instance_id else self.entries[key].item.name),
+                value=key, default=key == self.selected,
+                description=(('獨立裝備｜一次一件' if self.entries[key].instance_id else
+                              f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件')
+                             + (f'｜收購 {item_sell_price(self.entries[key].item)} 金幣／件'
+                                if self.mode == 'sell' else '')))
                 for key in keys] or [discord.SelectOption(label='沒有可用物品', value='empty')]))
         if self.mode == 'give':
             self.add_item(RecipientSelect())
@@ -84,7 +92,7 @@ class TradeView(discord.ui.View):
             description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n'
                         '木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。', color=0xD8AF40)
         if self.selected:
-            item = ITEMS[self.selected]
+            item = self.entries[self.selected].item
             value = item_text(item)
             if self.mode == 'sell':
                 value += f'\n收購價 {item_sell_price(item)} 金幣／件'
@@ -126,6 +134,10 @@ class TradeView(discord.ui.View):
             self.revision += 1
             if action == 'item' and value in self.catalog:
                 self.selected = value
+            elif action == 'item':
+                # Compatibility for component payloads created before instance ids.
+                self.selected = next((reference for reference in self.catalog
+                                      if self.entries[reference].item_id == value), None)
             elif action == 'recipient':
                 self.recipient = value
             elif action in ('next', 'previous'):
@@ -153,17 +165,18 @@ class TradeView(discord.ui.View):
                         raise CharacterError('無法確認收件人仍在伺服器，請重新選擇。')
                     if member.bot:
                         raise CharacterError('不能給予機器人。')
+                item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, key)
                 gold = self.cog.characters.dispose(self.guild_id, self.owner.id, key, amount,
                                                   recipient if self.mode == 'give' else None)
-                notice = (f'已給予 <@{recipient}> {ITEMS[key].name} ×{amount}。' if self.mode == 'give'
-                          else f'已賣出 {ITEMS[key].name} ×{amount}，獲得 {gold} 金幣。')
+                notice = (f'已給予 <@{recipient}> {item.name} ×{amount}。' if self.mode == 'give'
+                          else f'已賣出 {item.name} ×{amount}，獲得 {gold} 金幣。')
                 self.selected = None
                 if self.mode == 'give':
                     sender = discord.utils.escape_markdown(getattr(self.owner, 'display_name', str(self.owner.id)))
                     guild_name = discord.utils.escape_markdown(getattr(interaction.guild, 'name', str(self.guild_id)))
                     notification = discord.Embed(title='安安大冒險｜收到道具',
                         description=f'你在 **{guild_name}** 收到 **{sender}** 贈送的道具！', color=0x8B5CF6)
-                    notification.add_field(name=ITEMS[key].name, value=f'數量：{amount}\n{item_text(ITEMS[key])}', inline=False)
+                    notification.add_field(name=item.name, value=f'數量：{amount}\n{item_text(item)}', inline=False)
                     notification.set_footer(text='道具已放入該伺服器的背包，使用 /冒險 → 背包 查看。')
                     try:
                         await asyncio.wait_for(member.send(embed=notification,

@@ -108,8 +108,9 @@ class AdventureView(discord.ui.View):
             self.button('重新領取補給', 'claim_supplies', 1)
         elif self.page == 'backpack':
             from core.rpg_equipment_view import PanelSelect
-            all_owned = self.cog.characters.inventory(self.guild_id, self.owner.id)
-            owned = [key for key in all_owned if self.category == '全部' or ITEMS[key].category == self.category]
+            all_owned = self.cog.characters.inventory_entries(self.guild_id, self.owner.id)
+            owned = [entry for entry in all_owned
+                     if self.category == '全部' or entry.item.category == self.category]
             self.pages = max(1, (len(owned) + 9) // 10)
             self.index = min(self.index, self.pages - 1)
             self.add_item(PanelSelect('category', row=0, placeholder='選擇背包分類', options=[
@@ -130,17 +131,19 @@ class AdventureView(discord.ui.View):
             embed.title = '安安大冒險｜' + embed.title
         elif self.page == 'backpack':
             chars = self.cog.characters
-            all_owned = chars.inventory(self.guild_id, self.owner.id)
-            owned = [key for key in all_owned if self.category == '全部' or ITEMS[key].category == self.category]
-            counts = chars.inventory_counts(self.guild_id, self.owner.id)
-            equipped = set(chars.snapshot(self.guild_id, self.owner.id)['equipped'].values())
+            all_owned = chars.inventory_entries(self.guild_id, self.owner.id)
+            owned = [entry for entry in all_owned
+                     if self.category == '全部' or entry.item.category == self.category]
+            equipped = set(chars.snapshot(self.guild_id, self.owner.id)['equipped_instances'].values())
             lines = []
-            for key in owned[self.index * 10:(self.index + 1) * 10]:
-                item = ITEMS[key]
+            for entry in owned[self.index * 10:(self.index + 1) * 10]:
+                item = entry.item
                 requirement = (f'{item.job} Lv.{item_level(item, self.cog.settings)}' if item.job
                                else '全職業通用' if item.category == '裝備' else item.category)
                 sale = item_sell_price(item)
-                lines.append(f'**{item.name}** ×{counts[key]} {"【已裝備】" if key in equipped else ""}\n'
+                identity = f' #{entry.instance_id}' if entry.instance_id else ''
+                lines.append(f'**{item.name}{identity}** ×{entry.quantity} '
+                             f'{"【已裝備】" if entry.instance_id in equipped else ""}\n'
                              f'{requirement}｜{item_text(item)}'
                              + (f'｜收購 {sale} 金幣／件' if item_sellable(item) else ''))
             embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}',
