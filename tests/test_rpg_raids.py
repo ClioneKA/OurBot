@@ -320,7 +320,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_difficulty_scales_announced_rewards_and_preserves_overrides(self):
         policy = asdict(self.settings.raid)
         cases = [(0.5, '巨獸', {}, 150, 50), (1.5, '巨獸', {}, 450, 150),
-                 (3.0, '巨獸', {}, 900, 300), (1.5, '史萊姆群', {}, 900, 300),
+                 (3.0, '巨獸', {}, 900, 300), (1.5, '史萊姆群', {}, 1500, 300),
                  (1.5, '史萊姆群', {'victory_xp': 7}, 7, 300),
                  (1.5, '巨獸', {'victory_xp': 0, 'victory_gold': 9}, 0, 9),
                  (1.089, '巨獸', {}, 326, 108)]
@@ -334,7 +334,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((saved['reward_policy']['victory_xp'], saved['reward_policy']['victory_gold']), (xp, gold))
             self.assertEqual(saved['reward_policy']['defeat_xp'], 30)
             self.assertEqual(saved['reward_policy']['drop_chance'], 0 if kind == '史萊姆群' else 0.25)
-            self.assertIn(f'{xp} XP', self.service.lobby_embed(saved).fields[-1].value)
+            embed = self.service.lobby_embed(saved)
+            self.assertIn(f'{xp} XP', embed.fields[-1].value)
+            self.assertNotIn('強度倍率', [field.name for field in embed.fields])
             p = self.participant()
             saved.update(status='running', participants=[p], members=[1])
             self.repo.save(saved)
@@ -409,9 +411,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
                 'VALUES (1,8,2.5,1)')
         first = finish('勝利', 12)
         self.assertEqual(first['difficulty']['current'], 1)
-        self.assertEqual(self.repo.difficulty(1, 8), 1.01)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.02)
         finish('勝利', 25)
-        self.assertEqual(self.repo.difficulty(1, 8), 1.01505)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.0302)
 
         with self.store.db:
             self.store.db.execute(
@@ -422,9 +424,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         finish('戰敗', 12, remaining_percent=80)
         self.assertEqual(self.repo.difficulty(1, 8), 1.275)
         finish('勝利', 10, quality='首領')
-        self.assertEqual(self.repo.difficulty(1, 8), 1.278187)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.281375)
         finish('戰敗', 10, remaining_percent=80, quality='傳說')
-        self.assertEqual(self.repo.difficulty(1, 8), 1.246232)
+        self.assertEqual(self.repo.difficulty(1, 8), 1.262154)
 
         with self.store.db:
             self.store.db.execute(

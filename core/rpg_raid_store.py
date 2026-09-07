@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from core.rpg import level_for
 from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS, add_owned_item
+from core.rpg_monsters import TIER_VICTORY_XP
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -100,14 +101,16 @@ class RaidStore:
             from dataclasses import asdict
             from core.settings import RaidSettings
             reward_policy = dict(reward_policy) if reward_policy is not None else asdict(RaidSettings())
+            reward_policy['victory_xp'] = TIER_VICTORY_XP.get(
+                monster.get('tier'), reward_policy.get('victory_xp', 0))
             for key in ('victory_xp', 'victory_gold'):
-                reward_policy[key] = int(Decimal(str(monster['quality_reward'])) * reward_policy.get(key, 0))
+                reward_policy[key] = int(
+                    Decimal(str(monster['quality_reward'])) * reward_policy.get(key, 0))
             reward_policy['drop_chance'] = monster['quality_drop']
         if monster['kind'] == '史萊姆群':
             from dataclasses import asdict
             from core.settings import RaidSettings
             reward_policy = dict(reward_policy) if reward_policy is not None else asdict(RaidSettings())
-            reward_policy['victory_xp'] *= 2
             reward_policy['victory_gold'] = reward_policy.get('victory_gold', 0) * 2
             reward_policy['drop_chance'] = 0.0
         if reward_overrides:
@@ -379,7 +382,7 @@ class RaidStore:
                     weight = {'普通': 1, '精英': 0.5, '首領': 0.25, '傳說': 0.1}.get(quality, 0)
                     if victory:
                         rounds = battle_data['round']
-                        change = 0.02 if rounds < 7 else 0.01 if rounds <= 13 else 0.005
+                        change = 0.04 if rounds < 7 else 0.02 if rounds <= 13 else 0.01
                     elif '回合上限' in battle_data['result']:
                         change = -0.15 if progress < 0.6 else -0.1 if progress < 0.85 else -0.05
                     else:

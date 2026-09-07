@@ -7,6 +7,9 @@ BALANCE_VERSION = 5
 # Calibrated encounter tiers are content levels. Higher-level players are
 # intentionally stronger when returning to these lower-tier encounters.
 REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40}
+# Base victory XP is tied to encounter tier instead of the channel that hosts
+# it. Quality and channel difficulty are applied after this value is selected.
+TIER_VICTORY_XP = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750}
 # HP, attack, defense. Tiers are internal and never part of display names.
 TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
          4: (2.2, 1.25, 1.2)}

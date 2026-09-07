@@ -286,7 +286,7 @@ class MonsterTests(unittest.TestCase):
                 self.assertEqual(raid['reward_policy']['victory_xp'], 17)
                 self.assertEqual(raid['reward_policy']['drop_chance'], .07)
                 slime = repo.create(1, 11, monster('史萊姆群', '精英'), 0, asdict(RaidSettings()))
-                self.assertEqual(slime['reward_policy']['victory_xp'], 900)
+                self.assertEqual(slime['reward_policy']['victory_xp'], 1500)
                 self.assertEqual(slime['reward_policy']['drop_chance'], 0)
                 battle = raid_battle([participant()], slime['monster'], 1)
                 embed = RaidService.battle_embed(None, slime, battle)
@@ -301,5 +301,24 @@ class MonsterTests(unittest.TestCase):
                 self.assertEqual(raid['reward_policy']['victory_xp'], 450)
                 self.assertEqual(raid['reward_policy']['victory_gold'], 150)
                 self.assertEqual(raid['reward_policy']['drop_chance'], .2)
+            finally:
+                store.close()
+
+    def test_victory_xp_uses_monster_tier_before_quality(self):
+        from core.rpg_monsters import TIER_VICTORY_XP
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = RPGStore(Path(directory) / 'rpg.db')
+            try:
+                repo = RaidStore(store)
+                expected = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750}
+                self.assertEqual(TIER_VICTORY_XP, expected)
+                kinds = {0: '史萊姆群', 1: '巨獸', 2: '鐵殼魔像',
+                         3: '深淵鐘龍', 4: '吞城鯨'}
+                for channel, (tier, kind) in enumerate(kinds.items(), 20):
+                    raid = repo.create(1, channel, monster(kind, quality='普通'), 0,
+                                       asdict(RaidSettings()))
+                    self.assertEqual(raid['monster']['tier'], tier)
+                    self.assertEqual(raid['reward_policy']['victory_xp'], expected[tier])
             finally:
                 store.close()

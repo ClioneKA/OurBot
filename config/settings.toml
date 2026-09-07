@@ -81,15 +81,15 @@ elite_level = 90
 [rpg.raid]
 enabled = true
 ai_monsters = true
-min_interval_minutes = 30
-max_interval_minutes = 60
+min_interval_minutes = 20
+max_interval_minutes = 40
 # 重新抽選時間落在以下台灣時段時，將上述 30–60 分鐘減半為 15–30 分鐘；可用逗號分隔多個時段。
 half_interval_periods = "12:00-14:00,18:00-23:00"
 schedule_timezone_offset_hours = 8
 max_participants = 20
+# 舊怪物快照／未帶階層資料時的相容值；新討伐 XP 由怪物階層表決定。
 victory_xp = 300
 victory_gold = 100
-# 舊設定相容欄位；失敗改依怪物已削減 HP 比例發放勝利經驗與金幣，此值不再用於結算。
 drop_chance = 0.125
 
 [rpg.mid_raid]
@@ -100,6 +100,7 @@ max_interval_minutes = 90
 half_interval_periods = "12:00-14:00,18:00-23:00"
 schedule_timezone_offset_hours = 8
 max_participants = 20
+# 舊怪物快照／未帶階層資料時的相容值；新討伐 XP 由怪物階層表決定。
 victory_xp = 600
 victory_gold = 200
 drop_chance = 0.125
