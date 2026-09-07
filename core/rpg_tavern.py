@@ -104,6 +104,11 @@ class TavernStore:
         return self.db.execute('SELECT COUNT(*) FROM rpg_tavern_drink_claims WHERE offer_id=?',
                                (offer_id,)).fetchone()[0]
 
+    def claimants(self, offer_id):
+        return [row[0] for row in self.db.execute('''SELECT user_id
+            FROM rpg_tavern_drink_claims WHERE offer_id=? ORDER BY claimed_at,user_id''',
+            (offer_id,)).fetchall()]
+
     def open_offers(self, now=None):
         now = time.time() if now is None else now
         rows = self.db.execute("SELECT id FROM rpg_tavern_drinks WHERE status='open' "
@@ -119,16 +124,25 @@ class TavernStore:
                 raise CharacterError('找不到這次請客。')
             if offer['status'] != 'open' or now >= offer['expires_at']:
                 raise CharacterError('這次請客已經結束了。')
-            if self.claim_count(offer_id) >= offer['capacity']:
-                raise CharacterError('這次請客已經客滿了。')
             active = self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
                 WHERE guild_id=? AND user_id=? AND consumed_raid_id IS NULL AND valid_until>? LIMIT 1''',
                                      (guild, user, now)).fetchone()
             if active:
                 raise CharacterError('你已經有尚未使用的酒館祝福，不能重複領取。')
-            self.db.execute('''INSERT INTO rpg_tavern_drink_claims
-                (offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id)
-                VALUES (?,?,?,?,?,NULL)''', (offer_id, guild, user, now, now + DRINK_EFFECT_SECONDS))
+            previous = self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
+                WHERE offer_id=? AND user_id=?''', (offer_id, user)).fetchone()
+            if not previous and self.claim_count(offer_id) >= offer['capacity']:
+                raise CharacterError('這次請客已經客滿了。')
+            if previous:
+                self.db.execute('''UPDATE rpg_tavern_drink_claims
+                    SET guild_id=?,claimed_at=?,valid_until=?,consumed_raid_id=NULL
+                    WHERE offer_id=? AND user_id=?''',
+                    (guild, now, now + DRINK_EFFECT_SECONDS, offer_id, user))
+            else:
+                self.db.execute('''INSERT INTO rpg_tavern_drink_claims
+                    (offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id)
+                    VALUES (?,?,?,?,?,NULL)''',
+                    (offer_id, guild, user, now, now + DRINK_EFFECT_SECONDS))
         return self.offer(offer_id)
 
     def prepare_for_raid(self, raid_id, guild, users, now=None):
@@ -158,18 +172,18 @@ class DrinkOfferView(discord.ui.View):
         self.tavern, self.offer_id = tavern, offer_id
         self.claim_button.custom_id = f'tavern:drink:{offer_id}'
 
-    def embed(self, notice=None):
+    def embed(self):
         offer = self.tavern.store.offer(self.offer_id)
         package = DRINK_PACKAGES[offer['package_id']]
-        count = self.tavern.store.claim_count(self.offer_id)
+        claimants = self.tavern.store.claimants(self.offer_id)
         embed = discord.Embed(title=f'冒險者酒館｜{package.name}', color=0xC47A3A,
             description=(f'<@{offer["host_id"]}> 請大家喝一杯！\n\n'
                          f'前 **{offer["capacity"]}** 名冒險者可取得「下一場討伐經驗 +{DRINK_XP_PERCENT}%」。\n'
-                         f'效果保留 24 小時，完成下一場討伐後消耗。'))
-        embed.add_field(name=f'已入席 {count}/{offer["capacity"]}',
-                        value=f'<t:{int(offer["expires_at"])}:R> 截止', inline=False)
-        if notice:
-            embed.add_field(name='酒館消息', value=notice, inline=False)
+                         '效果保留 24 小時，完成下一場討伐後消耗；'
+                         '若公告仍開放，消耗後可再次乾杯。'))
+        guest_list = '、'.join(f'<@{user_id}>' for user_id in claimants) or '尚無人入席'
+        embed.add_field(name=f'已入席 {len(claimants)}/{offer["capacity"]}',
+                        value=f'{guest_list}\n<t:{int(offer["expires_at"])}:R> 截止', inline=False)
         return embed
 
     @discord.ui.button(label='一起乾杯', style=discord.ButtonStyle.success, custom_id='tavern:drink')
@@ -179,8 +193,7 @@ class DrinkOfferView(discord.ui.View):
             return
         try:
             self.tavern.store.claim(self.offer_id, interaction.guild_id, interaction.user.id)
-            notice = f'{interaction.user.mention} 入席了！'
-            await interaction.response.edit_message(embed=self.embed(notice), view=self,
+            await interaction.response.edit_message(embed=self.embed(), view=self,
                                                     allowed_mentions=discord.AllowedMentions.none())
         except CharacterError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
@@ -257,7 +270,7 @@ class TavernView(discord.ui.View):
             description=('**張貼懸賞**\n發起者會自動報名。懸賞討伐保留經驗與掉落，但不發金幣、'
                          '不影響頻道動態難度，也不重排正常討伐；到點的正常討伐會等懸賞結束後發布。\n\n'
                          '**請大家喝一杯**\n公開請客，入席者取得下一場討伐經驗 +5%。'
-                         '領取時間 10 分鐘，效果保留 24 小時且不能囤積。\n\n'
+                         '領取時間 10 分鐘，效果保留 24 小時且不能囤積；消耗後可再次領取。\n\n'
                          f'持有金幣：**{self.cog.store.gold(self.guild_id, self.owner.id):,}**'))
         if notice:
             embed.add_field(name='酒館消息', value=notice, inline=False)

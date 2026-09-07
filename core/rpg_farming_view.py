@@ -16,7 +16,9 @@ class FarmingView(discord.ui.View):
         super().__init__(timeout=180)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
-        self.location_id, self.plant_id = 'courtyard', 'potato'
+        level = self.cog.farming.state(self.guild_id, self.owner.id)['level']
+        self.location_id = next(key for key in reversed(LOCATIONS) if level >= LOCATION_LEVELS[key])
+        self.plant_id = next(key for key, plant in reversed(PLANTS.items()) if level >= plant.level)
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()

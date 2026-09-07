@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.rpg import RPGStore
+from core.rpg import RPGStore, level_floor
 from core.rpg_character import Characters
 from core.rpg_fishing import Fishing
 from core.rpg_fishing_view import FishingView
@@ -78,6 +78,17 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((state['session']['status'], state['xp']), ('cancelled', 0))
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('不會獲得任何物品或釣魚 XP', embed.fields[-1].value)
+
+    async def test_defaults_to_highest_unlocked_spot(self):
+        self.view.stop()
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(40),))
+
+        self.view = FishingView(self.cog, self.interaction)
+
+        self.assertEqual(self.view.spot_id, 'waterway')
+        self.assertTrue(self.view.children[0].options[-1].default)
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.rpg import RPGStore
+from core.rpg import RPGStore, level_floor
 from core.rpg_character import Characters
 from core.rpg_farming import Farming
 from core.rpg_farming_view import FarmingView
@@ -61,6 +61,19 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertEqual(embed.fields[0].value, '目前閒置')
         self.assertIn('不會獲得作物或農耕 XP', embed.fields[-1].value)
+
+    async def test_defaults_to_highest_unlocked_location_and_plant(self):
+        self.view.stop()
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_farming_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(45),))
+
+        self.view = FarmingView(self.cog, self.interaction)
+
+        self.assertEqual((self.view.location_id, self.view.plant_id),
+                         ('greenhouse', 'dreammist_herb'))
+        self.assertTrue(self.view.children[0].options[-1].default)
+        self.assertTrue(self.view.children[1].options[-1].default)
 
 
 if __name__ == '__main__':

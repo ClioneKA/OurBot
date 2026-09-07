@@ -17,7 +17,9 @@ class FishingView(discord.ui.View):
         super().__init__(timeout=180)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
-        self.spot_id, self.duration_id = 'pond', 'short'
+        level = self.cog.fishing.state(self.guild_id, self.owner.id)['level']
+        self.spot_id = next(key for key, spot in reversed(SPOTS.items()) if level >= spot.level)
+        self.duration_id = 'short'
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()

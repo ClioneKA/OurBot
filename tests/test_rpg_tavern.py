@@ -12,7 +12,8 @@ from core.rpg_character import CharacterError, Characters
 from core.rpg_raids import RaidService
 from core.rpg_raid_store import RaidStore
 from core.rpg_monsters import prepare_monster
-from core.rpg_tavern import BOUNTY_PRICES, DRINK_PACKAGES, DRINK_XP_PERCENT, TavernStore
+from core.rpg_tavern import (BOUNTY_PRICES, DRINK_PACKAGES, DRINK_XP_PERCENT,
+                             DrinkOfferView, TavernStore)
 from core.settings import RPGSettings
 
 
@@ -44,6 +45,31 @@ class TavernStoreTests(unittest.TestCase):
         self.assertEqual(self.tavern.prepare_for_raid('raid-a', 1, [2], now=200),
                          {2: {'xp_percent': DRINK_XP_PERCENT}})
         self.assertEqual(self.tavern.prepare_for_raid('raid-b', 1, [2], now=201), {})
+
+    def test_consumed_guest_can_claim_same_open_round_again(self):
+        offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
+        self.tavern.publish_offer(offer['id'], 99)
+        self.tavern.claim(offer['id'], 1, 2, now=101)
+        self.assertEqual(self.tavern.prepare_for_raid('raid-a', 1, [2], now=102),
+                         {2: {'xp_percent': DRINK_XP_PERCENT}})
+
+        self.tavern.claim(offer['id'], 1, 2, now=103)
+
+        self.assertEqual(self.tavern.claim_count(offer['id']), 1)
+        self.assertEqual(self.tavern.claimants(offer['id']), [2])
+        self.assertEqual(self.tavern.prepare_for_raid('raid-b', 1, [2], now=104),
+                         {2: {'xp_percent': DRINK_XP_PERCENT}})
+
+    def test_round_preserves_complete_guest_list(self):
+        offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
+        self.tavern.publish_offer(offer['id'], 99)
+        for user_id in (4, 2, 3):
+            self.tavern.claim(offer['id'], 1, user_id, now=100 + user_id)
+
+        self.assertEqual(self.tavern.claimants(offer['id']), [2, 3, 4])
+        view = DrinkOfferView(SimpleNamespace(store=self.tavern), offer['id'])
+        self.addCleanup(view.stop)
+        self.assertIn('<@2>、<@3>、<@4>', view.embed().fields[0].value)
 
     def test_unpublished_round_is_refunded_once_during_recovery(self):
         self.tavern.create_offer(1, 1, 9, 'hall', now=100)
