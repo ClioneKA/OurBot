@@ -256,7 +256,7 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
                     STABILITY[job] if slot == '武器' else (100, 100),
                     required_level=45, socket_base=base_key,
                     accuracy=45 if slot == '武器' else 0,
-                    description='可在遠野漢娜的裁縫所使用噴漆染色。')
+                    description='可在漢娜的裁縫所使用噴漆染色。')
         ITEMS[base_key] = base
         NOAH_EQUIPMENT.setdefault(job, []).append(base_key)
         for color in ('red', 'yellow', 'blue'):

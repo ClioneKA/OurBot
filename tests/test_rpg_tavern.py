@@ -55,8 +55,8 @@ class TavernStoreTests(unittest.TestCase):
 
         self.tavern.claim(offer['id'], 1, 2, now=103)
 
-        self.assertEqual(self.tavern.claim_count(offer['id']), 1)
-        self.assertEqual(self.tavern.claimants(offer['id']), [2])
+        self.assertEqual(self.tavern.claim_count(offer['id']), 2)
+        self.assertEqual(self.tavern.claimants(offer['id']), [2, 2])
         self.assertEqual(self.tavern.prepare_for_raid('raid-b', 1, [2], now=104),
                          {2: {'xp_percent': DRINK_XP_PERCENT}})
 
@@ -69,7 +69,19 @@ class TavernStoreTests(unittest.TestCase):
         self.assertEqual(self.tavern.claimants(offer['id']), [2, 3, 4])
         view = DrinkOfferView(SimpleNamespace(store=self.tavern), offer['id'])
         self.addCleanup(view.stop)
-        self.assertIn('<@2>、<@3>、<@4>', view.embed().fields[0].value)
+        self.assertIn('1. <@2>\n2. <@3>\n3. <@4>', view.embed().fields[0].value)
+
+    def test_repeat_claim_uses_capacity(self):
+        offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
+        self.tavern.publish_offer(offer['id'], 99)
+        self.tavern.claim(offer['id'], 1, 2, now=101)
+        self.tavern.prepare_for_raid('raid-a', 1, [2], now=102)
+        self.tavern.claim(offer['id'], 1, 2, now=103)
+        for user_id in (3, 4, 5):
+            self.tavern.claim(offer['id'], 1, user_id, now=103 + user_id)
+
+        with self.assertRaisesRegex(CharacterError, '客滿'):
+            self.tavern.claim(offer['id'], 1, 6, now=110)
 
     def test_unpublished_round_is_refunded_once_during_recovery(self):
         self.tavern.create_offer(1, 1, 9, 'hall', now=100)

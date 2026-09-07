@@ -106,7 +106,7 @@ class TailorView(discord.ui.View):
         else:
             description = (f'支付 **{EMBROIDERY_PRICE:,} 金幣**，在具有刺繡格的討伐飾品上縫製圖樣。'
                            '再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
-        embed = discord.Embed(title='安安大冒險｜遠野漢娜的裁縫所',
+        embed = discord.Embed(title='安安大冒險｜漢娜的裁縫所',
                               description=description, color=0xE85D75)
         entry = self.entries.get(self.selected)
         if entry:
@@ -147,7 +147,7 @@ class TailorView(discord.ui.View):
             if action == 'close':
                 self.closed = True
                 self.stop()
-                await interaction.response.edit_message(content='你離開了遠野漢娜的裁縫所。', embed=None, view=None)
+                await interaction.response.edit_message(content='你離開了漢娜的裁縫所。', embed=None, view=None)
                 return
             notice = None
             try:

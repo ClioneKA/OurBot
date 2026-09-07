@@ -118,5 +118,5 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         await travel.handle(self.interaction, 'divination')
         room = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(room.stop)
-        self.assertIn('寶生瑪格的占卜室', room.embed().title)
+        self.assertIn('瑪格的占卜室', room.embed().title)
         self.assertIn('300 金幣', room.embed().description)

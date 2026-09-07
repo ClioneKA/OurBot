@@ -39,9 +39,26 @@ class TavernStore:
                 capacity INTEGER NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
                 status TEXT NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_tavern_drink_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 offer_id TEXT NOT NULL, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
-                claimed_at REAL NOT NULL, valid_until REAL NOT NULL, consumed_raid_id TEXT,
-                PRIMARY KEY (offer_id, user_id))''')
+                claimed_at REAL NOT NULL, valid_until REAL NOT NULL, consumed_raid_id TEXT)''')
+            claim_columns = {row[1] for row in self.db.execute(
+                'PRAGMA table_info(rpg_tavern_drink_claims)')}
+            if 'id' not in claim_columns:
+                self.db.execute('ALTER TABLE rpg_tavern_drink_claims RENAME TO rpg_tavern_drink_claims_legacy')
+                self.db.execute('''CREATE TABLE rpg_tavern_drink_claims (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    offer_id TEXT NOT NULL, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                    claimed_at REAL NOT NULL, valid_until REAL NOT NULL, consumed_raid_id TEXT)''')
+                self.db.execute('''INSERT INTO rpg_tavern_drink_claims
+                    (offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id)
+                    SELECT offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id
+                    FROM rpg_tavern_drink_claims_legacy''')
+                self.db.execute('DROP TABLE rpg_tavern_drink_claims_legacy')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_tavern_drink_claims_offer
+                ON rpg_tavern_drink_claims(offer_id,claimed_at,id)''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_tavern_drink_claims_active
+                ON rpg_tavern_drink_claims(guild_id,user_id,consumed_raid_id,valid_until)''')
 
     def recover_drafts(self):
         rows = self.db.execute(
@@ -106,7 +123,7 @@ class TavernStore:
 
     def claimants(self, offer_id):
         return [row[0] for row in self.db.execute('''SELECT user_id
-            FROM rpg_tavern_drink_claims WHERE offer_id=? ORDER BY claimed_at,user_id''',
+            FROM rpg_tavern_drink_claims WHERE offer_id=? ORDER BY claimed_at,id''',
             (offer_id,)).fetchall()]
 
     def open_offers(self, now=None):
@@ -129,20 +146,12 @@ class TavernStore:
                                      (guild, user, now)).fetchone()
             if active:
                 raise CharacterError('你已經有尚未使用的酒館祝福，不能重複領取。')
-            previous = self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
-                WHERE offer_id=? AND user_id=?''', (offer_id, user)).fetchone()
-            if not previous and self.claim_count(offer_id) >= offer['capacity']:
+            if self.claim_count(offer_id) >= offer['capacity']:
                 raise CharacterError('這次請客已經客滿了。')
-            if previous:
-                self.db.execute('''UPDATE rpg_tavern_drink_claims
-                    SET guild_id=?,claimed_at=?,valid_until=?,consumed_raid_id=NULL
-                    WHERE offer_id=? AND user_id=?''',
-                    (guild, now, now + DRINK_EFFECT_SECONDS, offer_id, user))
-            else:
-                self.db.execute('''INSERT INTO rpg_tavern_drink_claims
-                    (offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id)
-                    VALUES (?,?,?,?,?,NULL)''',
-                    (offer_id, guild, user, now, now + DRINK_EFFECT_SECONDS))
+            self.db.execute('''INSERT INTO rpg_tavern_drink_claims
+                (offer_id,guild_id,user_id,claimed_at,valid_until,consumed_raid_id)
+                VALUES (?,?,?,?,?,NULL)''',
+                (offer_id, guild, user, now, now + DRINK_EFFECT_SECONDS))
         return self.offer(offer_id)
 
     def prepare_for_raid(self, raid_id, guild, users, now=None):
@@ -151,14 +160,14 @@ class TavernStore:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             for user in users:
-                row = self.db.execute('''SELECT offer_id FROM rpg_tavern_drink_claims
+                row = self.db.execute('''SELECT id FROM rpg_tavern_drink_claims
                     WHERE guild_id=? AND user_id=?
                     AND (consumed_raid_id=? OR (consumed_raid_id IS NULL AND valid_until>?))
-                    ORDER BY claimed_at LIMIT 1''', (guild, user, raid_id, now)).fetchone()
+                    ORDER BY claimed_at,id LIMIT 1''', (guild, user, raid_id, now)).fetchone()
                 if not row:
                     continue
                 changed = self.db.execute('''UPDATE rpg_tavern_drink_claims SET consumed_raid_id=?
-                    WHERE offer_id=? AND user_id=?
+                    WHERE id=? AND user_id=?
                     AND (consumed_raid_id IS NULL OR consumed_raid_id=?)''',
                                           (raid_id, row[0], user, raid_id))
                 if changed.rowcount:
@@ -178,11 +187,12 @@ class DrinkOfferView(discord.ui.View):
         claimants = self.tavern.store.claimants(self.offer_id)
         embed = discord.Embed(title=f'冒險者酒館｜{package.name}', color=0xC47A3A,
             description=(f'<@{offer["host_id"]}> 請大家喝一杯！\n\n'
-                         f'前 **{offer["capacity"]}** 名冒險者可取得「下一場討伐經驗 +{DRINK_XP_PERCENT}%」。\n'
+                         f'共準備 **{offer["capacity"]}** 杯，每次乾杯可取得「下一場討伐經驗 +{DRINK_XP_PERCENT}%」。\n'
                          '效果保留 24 小時，完成下一場討伐後消耗；'
                          '若公告仍開放，消耗後可再次乾杯。'))
-        guest_list = '、'.join(f'<@{user_id}>' for user_id in claimants) or '尚無人入席'
-        embed.add_field(name=f'已入席 {len(claimants)}/{offer["capacity"]}',
+        guest_list = '\n'.join(f'{index}. <@{user_id}>'
+                               for index, user_id in enumerate(claimants, 1)) or '尚無人乾杯'
+        embed.add_field(name=f'乾杯紀錄 {len(claimants)}/{offer["capacity"]} 杯',
                         value=f'{guest_list}\n<t:{int(offer["expires_at"])}:R> 截止', inline=False)
         return embed
 
@@ -259,7 +269,7 @@ class TavernView(discord.ui.View):
         self._button('一般懸賞（2,000）', 'bounty:regular', 0, discord.ButtonStyle.danger)
         self._button('中階懸賞（5,000）', 'bounty:mid', 0, discord.ButtonStyle.danger)
         for package_id, package in DRINK_PACKAGES.items():
-            self._button(f'{package.name}（{package.price:,}／{package.capacity} 人）',
+            self._button(f'{package.name}（{package.price:,}／{package.capacity} 杯）',
                          f'drink:{package_id}', 1, discord.ButtonStyle.success)
         add_back(self, 2)
         self._button('重新整理', 'refresh', 2)

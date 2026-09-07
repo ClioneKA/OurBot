@@ -56,7 +56,7 @@ class DivinationView(discord.ui.View):
         else:
             active = '目前沒有占卜效果。'
         embed = discord.Embed(
-            title='安安大冒險｜寶生瑪格的占卜室',
+            title='安安大冒險｜瑪格的占卜室',
             description=(f'{active}\n\n今日已占卜 **{status["draws"]}** 次；'
                          f'下次需要 **{status["next_price"]:,} 金幣**。\n'
                          '每天不限次數，每次價格增加 300 金幣；每日 00:00 重置價格。'
@@ -86,7 +86,7 @@ class DivinationView(discord.ui.View):
             if action == 'close':
                 self.closed = True
                 self.stop()
-                await interaction.response.edit_message(content='你離開了寶生瑪格的占卜室。', embed=None, view=None)
+                await interaction.response.edit_message(content='你離開了瑪格的占卜室。', embed=None, view=None)
                 return
             if action == 'summon':
                 await interaction.response.defer()
