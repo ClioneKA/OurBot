@@ -394,7 +394,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=2,balance_version=3 '
+                'UPDATE rpg_raid_difficulty SET multiplier=2,balance_version=4 '
                 'WHERE guild_id=1 AND channel_id=8')
         finish('平手（達回合上限）', 30, remaining_percent=80)
         self.assertEqual(self.repo.difficulty(1, 8), 1.7)
@@ -407,7 +407,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
         with self.store.db:
             self.store.db.execute(
-                'UPDATE rpg_raid_difficulty SET multiplier=2.5,balance_version=3 '
+                'UPDATE rpg_raid_difficulty SET multiplier=2.5,balance_version=4 '
                 'WHERE guild_id=1 AND channel_id=8')
         finish('勝利', 5)
         self.assertEqual(self.repo.difficulty(1, 8), 2.5)
