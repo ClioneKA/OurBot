@@ -76,6 +76,8 @@ def reference_participant(job, tier, user_id, level_bonus=0, kind=None, strategy
         combat[stat] += sum(ITEMS[item].combat[index] for item in equipped.values())
     weapon = ITEMS[equipped['武器']]
     suit = ITEMS[equipped['套裝']]
+    combat['命中率'] += weapon.accuracy
+    combat['閃避率'] += suit.evasion
     state = dict(level=level, job=job, total=base, combat=combat, equipped=equipped,
                  stability=weapon.stability, damage_guard_chance=suit.damage_guard_chance,
                  vulnerable_chance=weapon.vulnerable_chance,

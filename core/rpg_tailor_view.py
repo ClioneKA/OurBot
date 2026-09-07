@@ -16,13 +16,13 @@ PAGE_SIZE = 20
 def paint_effect(color, slot):
     if slot not in ('武器', '套裝'):
         return {'red': '武器攻擊 +30%；套裝 HP +50%',
-                'yellow': '武器命中率 +5；套裝速度 +15',
-                'blue': '武器 5% 機率減傷 50%；套裝閃避率 +5'}[color]
+                'yellow': '武器命中值 +5；套裝速度 +15',
+                'blue': '武器 5% 機率減傷 50%；套裝閃避值 +5'}[color]
     if color == 'red':
         return '武器攻擊 +30%' if slot == '武器' else '套裝 HP +50%'
     if color == 'yellow':
-        return '武器命中率 +5 個百分點' if slot == '武器' else '套裝速度 +15'
-    return '武器 5% 機率減傷 50%' if slot == '武器' else '套裝閃避率 +5 個百分點'
+        return '武器命中值 +5' if slot == '武器' else '套裝速度 +15'
+    return '武器 5% 機率減傷 50%' if slot == '武器' else '套裝閃避值 +5'
 
 
 class TailorView(discord.ui.View):

@@ -208,9 +208,12 @@ class RPG(commands.Cog):
         embed.add_field(name='基礎能力＋飾品加成', value='\n'.join(
             f'{name}：{total}（{base} + {bonus}）' for name, total, base, bonus in
             zip(STAT_NAMES, state['total'], state['base'], state['bonus'])), inline=False)
+        combat_labels = {'命中率': '命中值', '閃避率': '閃避值'}
         embed.add_field(name='戰鬥能力', value='｜'.join(
-            f'{name} {value}{"%" if name.endswith("率") else ""}'
-            for name, value in state['combat'].items()), inline=False)
+            f'{combat_labels.get(name, name)} {value}'
+            f'{"%" if name == "暴擊率" else ""}'
+            for name, value in state['combat'].items())
+            + f'｜暴擊傷害 {state["critical_damage_percent"]}%', inline=False)
         if 'goblin:badge' in state['equipped'].values():
             embed.add_field(name='戰團徽章', value='開戰每兩名參戰者（不足兩人進位）使五項能力各 +1，最多各 +5。整場固定，僅自身，上方能力尚未計入。', inline=False)
         embed.add_field(name='武器／套裝直接加成', value='、'.join(

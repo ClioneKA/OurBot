@@ -29,6 +29,7 @@ def shop_fighter(job, user_id):
     for index, stat in enumerate(('HP', '攻擊', '防禦', '治療量')):
         combat[stat] += sum(ITEMS[key].combat[index] for key in equipped.values())
     weapon = ITEMS[equipped['武器']]
+    combat['命中率'] += weapon.accuracy
     rules = [Rule(slot, slot, True, 'always', 'lowest', skill_id=skill_id)
              for slot, skill_id in enumerate(LOADOUTS[job], 1)]
     potion_stat = {'裝甲步兵': '攻擊', '騎士': '防禦', '弓兵': '攻擊', '僧侶': '治療量'}[job]

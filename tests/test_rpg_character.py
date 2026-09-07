@@ -46,7 +46,7 @@ class CharacterTests(unittest.TestCase):
         recolored = self.characters.dye_equipment(1, 1, colored, 'yellow')
         state = self.characters.snapshot(1, 1)
         self.assertEqual(state['equipped']['武器'], recolored)
-        self.assertEqual(ITEMS[recolored].accuracy, 5)
+        self.assertEqual(ITEMS[recolored].accuracy, 50)
         self.assertNotIn(colored, self.characters.inventory(1, 1))
         self.assertEqual(ITEMS['noah:archer:weapon:red'].combat[1],
                          ITEMS['noah:archer:weapon'].combat[1] * 130 // 100)
@@ -216,13 +216,27 @@ class CharacterTests(unittest.TestCase):
             self.assertEqual(item.speed, 7)
             self.assertLess(item.speed, ITEMS[f'{item.job}:2:武器'].speed)
             self.assertGreater(item.combat[1], ITEMS[f'{item.job}:1:武器'].combat[1])
-        self.assertIn('閃避率 +5 個百分點', item_text(ITEMS['fox:pendant']))
+        self.assertIn('閃避值 +5', item_text(ITEMS['fox:pendant']))
 
-    def test_accuracy_can_exceed_100_and_caps_at_150(self):
+    def test_accuracy_is_independent_of_dexterity_and_comes_from_weapons(self):
         from core.rpg_character import combat_from_stats
-        for dexterity, accuracy in ((120, 99), (125, 100), (130, 101), (374, 149), (375, 150), (500, 150)):
+        for dexterity in (10, 120, 375, 500):
             with self.subTest(dexterity=dexterity):
-                self.assertEqual(combat_from_stats((10, 10, 10, dexterity, 10))['命中率'], accuracy)
+                self.assertEqual(combat_from_stats((10, 10, 10, dexterity, 10))['命中率'], 95)
+        self.assertEqual(ITEMS['弓兵:0:武器'].accuracy, 10)
+        self.assertEqual(ITEMS['弓兵:1:武器'].accuracy, 20)
+        self.assertEqual(ITEMS['plague:bow'].accuracy, 30)
+        self.assertEqual(ITEMS['noah:archer:weapon'].accuracy, 45)
+
+    def test_dexterity_critical_curve_and_linear_evasion_hit_level_120_archer_targets(self):
+        level_one = combat_from_stats((10, 10, 10, 10, 10), '弓兵')
+        level_120 = combat_from_stats((260, 376, 144, 376, 144), '弓兵')
+        self.assertEqual(level_one['暴擊率'], 10)
+        self.assertEqual(level_120['暴擊率'], 95)
+        self.assertEqual(level_120['閃避率'], 35)
+        self.assertGreater(
+            combat_from_stats((10, 10, 10, 60, 10))['暴擊率'] - level_one['暴擊率'],
+            level_120['暴擊率'] - combat_from_stats((10, 10, 10, 326, 10))['暴擊率'])
 
     def test_speed_is_level_independent_and_modified_by_equipment(self):
         from core.rpg_character import item_text

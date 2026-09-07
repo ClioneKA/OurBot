@@ -1,5 +1,6 @@
 """Character rules and transactional equipment storage; no Discord dependency."""
 from dataclasses import dataclass, replace
+import math
 import time
 
 from core.rpg import level_for
@@ -9,6 +10,13 @@ STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
 COMBAT_NAMES = ('HP', '攻擊', '防禦', '治療量')
 BASE_SPEED = {'民兵': 50, '裝甲步兵': 45, '騎士': 40, '弓兵': 60, '僧侶': 50}
 STABILITY = {'裝甲步兵': (60, 140), '騎士': (80, 120), '弓兵': (75, 125), '僧侶': (90, 110)}
+# Accuracy is an equipment rating.  A weapon's rating follows the content
+# level it is designed for; monsters use the same scale for evasion.
+WEAPON_ACCURACY_BY_STAGE = (10, 20, 50, 90)
+# An Lv.120 archer has 376 dexterity under the current growth rules.  This
+# scale anchors 10 dexterity at 10% critical chance and 376 at 95%, with
+# diminishing returns between and beyond those points.
+CRITICAL_CURVE_SCALE = 366 / math.log(18)
 # Every profession gains the same total points per level, with different priorities.
 GROWTH = {
     '民兵': (2, 2, 2, 2, 2),
@@ -126,6 +134,7 @@ for job in JOBS:
                               STABILITY[job] if slot == '武器' else (100, 100),
                               (0, 500, 1500, 4000)[stage],
                               speed=stage * 5 if slot == '武器' else 0,
+                              accuracy=WEAPON_ACCURACY_BY_STAGE[stage] if slot == '武器' else 0,
                               sell_price=0 if stage == 0 else None,
                               transferable=stage != 0)
 for index, name in enumerate(('生命護符', '力量指環', '堅韌徽章', '靈巧吊墜', '信仰念珠')):
@@ -141,13 +150,13 @@ for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '�
 
 # Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
 ITEMS['golem:hammer'] = Item('鐵核重鎚', '武器', '裝甲步兵', 1, (0, 0, 0, 0, 0),
-                            (41, 50, 9, 0), (50, 150))
+                            (41, 50, 9, 0), (50, 150), accuracy=20)
 ITEMS['golem:sword_shield'] = Item('鐵核劍盾', '武器', '騎士', 1, (0, 0, 0, 0, 0),
-                                  (71, 41, 17, 0), (70, 130))
+                                  (71, 41, 17, 0), (70, 130), accuracy=20)
 ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0),
-                         (0, 36, 0, 0), (65, 135))
+                         (0, 36, 0, 0), (65, 135), accuracy=20)
 ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
-                           (0, 41, 0, 38), (85, 115))
+                           (0, 41, 0, 38), (85, 115), accuracy=20)
 
 
 for job, key, name, bonuses in (
@@ -168,7 +177,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '掠奪者權杖', (0, 47, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                                 bonuses, (60, 140), required_level=20, speed=7)
+                                 bonuses, (60, 140), required_level=20, speed=7, accuracy=20)
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
@@ -180,7 +189,8 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '血翼權杖', (0, 34, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                              bonuses, STABILITY[job], required_level=20, speed=7, lifesteal=3)
+                              bonuses, STABILITY[job], required_level=20, speed=7,
+                              accuracy=20, lifesteal=3)
 
 
 # Tier-3 raid equipment. These pieces sit between regular T20 and veteran T50 gear.
@@ -204,7 +214,7 @@ for job, key, name, bonuses in (
 ):
     ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
                                  STABILITY[job], required_level=30,
-                                 speed=8,
+                                 speed=8, accuracy=30,
                                  vulnerable_chance=5, vulnerable_percent=10)
 
 for key, name, description in (
@@ -245,12 +255,14 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
         base = Item(name, slot, job, 2, (0, 0, 0, 0, 0), combat,
                     STABILITY[job] if slot == '武器' else (100, 100),
                     required_level=45, socket_base=base_key,
+                    accuracy=45 if slot == '武器' else 0,
                     description='可在遠野漢娜的裁縫所使用噴漆染色。')
         ITEMS[base_key] = base
         NOAH_EQUIPMENT.setdefault(job, []).append(base_key)
         for color in ('red', 'yellow', 'blue'):
             colored_combat = combat
-            speed = accuracy = evasion = guard = 0
+            speed = evasion = guard = 0
+            accuracy = base.accuracy
             if color == 'red':
                 values = list(combat)
                 index = 1 if slot == '武器' else 0
@@ -258,7 +270,7 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
                 colored_combat = tuple(values)
             elif color == 'yellow':
                 if slot == '武器':
-                    accuracy = 5
+                    accuracy += 5
                 else:
                     speed = 15
             elif slot == '武器':
@@ -337,8 +349,8 @@ for key, name, description, sell_price in (
 
 _POTION_KINDS = {
     'hp': ('生命', '最大 HP'), 'attack': ('強攻', '攻擊'), 'defense': ('硬化', '防禦'),
-    'healing': ('治癒', '治療量'), 'hit': ('專注', '命中率'),
-    'evasion': ('靈敏', '閃避率'), 'critical': ('會心', '暴擊率'),
+    'healing': ('治癒', '治療量'), 'hit': ('專注', '命中值'),
+    'evasion': ('靈敏', '閃避值'), 'critical': ('會心', '暴擊率'),
 }
 for tier, prefix, percent, chance, sell_price in (
     (1, '初級', 5, (3, 2, 3), 100),
@@ -347,7 +359,7 @@ for tier, prefix, percent, chance, sell_price in (
 ):
     for kind, (name, stat) in _POTION_KINDS.items():
         amount = {'hit': chance[0], 'evasion': chance[1], 'critical': chance[2]}.get(kind, percent)
-        unit = ' 個百分點' if kind in ('hit', 'evasion', 'critical') else '%'
+        unit = ' 個百分點' if kind == 'critical' else ('' if kind in ('hit', 'evasion') else '%')
         ITEMS[f'potion:{tier}:{kind}'] = Item(
             f'{prefix}{name}藥水', '藥水', '', 0, (0, 0, 0, 0, 0), category='藥水',
             description=f'下一場討伐使{stat} +{amount}{unit}，效果持續整場。', sell_price=sell_price)
@@ -403,8 +415,10 @@ def combat_from_stats(total, job='民兵'):
     }.get(job, strength * 2)
     return {'HP': 50 + vitality * 10, '攻擊': attack,
             '防禦': endurance * 3, '治療量': faith * 3,
-            '命中率': min(150, 75 + dexterity // 5),
-            '閃避率': min(35, dexterity // 10), '暴擊率': min(50, 5 + dexterity // 8)}
+            '命中率': 95,
+            '閃避率': min(35, max(0, dexterity) * 35 // 376),
+            '暴擊率': min(100, 10 + round(90 * (1 - math.exp(-max(0, dexterity - 10)
+                                                               / CRITICAL_CURVE_SCALE))))}
 
 
 def speed_from_equipment(job, equipped=()):
@@ -425,9 +439,9 @@ def item_text(item):
     if item.speed:
         parts.append(f'速度 {item.speed:+d}')
     if item.accuracy:
-        parts.append(f'命中率 +{item.accuracy} 個百分點')
+        parts.append(f'命中值 +{item.accuracy}')
     if item.evasion:
-        parts.append(f'閃避率 +{item.evasion} 個百分點')
+        parts.append(f'閃避值 +{item.evasion}')
     if item.lifesteal:
         parts.append(f'吸血 {item.lifesteal}%（直接傷害實際扣血量）')
     if item.damage_guard_chance:
@@ -806,7 +820,8 @@ class Characters:
                     damage_guard_chance=min(100, sum(item.damage_guard_chance for item in resolved.values())),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
                     vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
-                    healing_share=max((item.healing_share for item in resolved.values()), default=0))
+                    healing_share=max((item.healing_share for item in resolved.values()), default=0),
+                    critical_damage_percent=150)
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)

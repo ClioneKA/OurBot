@@ -72,12 +72,15 @@ class MonsterTests(unittest.TestCase):
             original = dict(people[0]['state']['combat'])
             for stat, per_player in (('HP', 10), ('防禦', 3), ('治療量', 3)):
                 self.assertEqual(wearer.stats[stat], original[stat] + counted * per_player)
-            before_attack = combat_from_stats([20] * 5, '弓兵')['攻擊']
-            after_attack = combat_from_stats([20 + counted] * 5, '弓兵')['攻擊']
-            self.assertEqual(wearer.stats['攻擊'], original['攻擊'] + after_attack - before_attack)
+            before_combat = combat_from_stats([20] * 5, '弓兵')
+            after_combat = combat_from_stats([20 + counted] * 5, '弓兵')
+            self.assertEqual(wearer.stats['攻擊'],
+                             original['攻擊'] + after_combat['攻擊'] - before_combat['攻擊'])
             self.assertEqual(wearer.speed, 60)
-            for stat, divisor in (('命中率', 5), ('閃避率', 10), ('暴擊率', 8)):
-                self.assertEqual(wearer.stats[stat], original[stat] + (20 + counted) // divisor - 20 // divisor)
+            for stat in ('閃避率', '暴擊率'):
+                self.assertEqual(wearer.stats[stat],
+                                 original[stat] + after_combat[stat] - before_combat[stat])
+            self.assertEqual(wearer.stats['命中率'], original['命中率'])
             self.assertEqual(wearer.hp, wearer.stats['HP'])
             self.assertEqual(people[0]['state']['combat'], original)
             if count > 1:
@@ -100,22 +103,22 @@ class MonsterTests(unittest.TestCase):
         state['combat']['攻擊'] += ITEMS['goblin:bow'].combat[1]
         wearer = raid_battle(people, monster(), 10).fighters[0]
         self.assertEqual(wearer.stats, {'HP': 600, '攻擊': 689, '防禦': 225,
-                                     '治療量': 255, '命中率': 150, '閃避率': 35, '暴擊率': 50})
+                                     '治療量': 255, '命中率': 95, '閃避率': 35, '暴擊率': 95})
         self.assertEqual(wearer.speed, 60)
 
     def test_tiers_and_distinct_stats(self):
         expected = {
-            '月影妖狐': (2, 1416, 308, 45, 70, 95, 20, 15),
-            '血翼蝠王': (2, 1411, 315, 52, 65, 94, 12, 10),
-            '巨獸': (1, 814, 155, 24, 40, 88, 0, 10),
-            '毒蛛': (1, 653, 144, 21, 65, 95, 15, 15),
-            '史萊姆群': (0, 852, 113, 25, 55, 90, 8, 5),
-            '鐵殼魔像': (2, 1803, 367, 130, 35, 90, 0, 5),
-            '荊棘妖樹': (2, 1572, 507, 84, 40, 92, 0, 5),
-            '哥布林戰團': (2, 1548, 261, 52, 55, 92, 8, 10),
-            '深淵鐘龍': (3, 3595, 420, 92, 45, 92, 0, 10),
-            '王城傀儡師': (3, 2582, 559, 72, 55, 94, 8, 10),
-            '瘟疫縫合獸': (3, 3772, 721, 80, 50, 93, 3, 8),
+            '月影妖狐': (2, 1416, 308, 45, 70, 95, 23, 15),
+            '血翼蝠王': (2, 1411, 315, 52, 65, 94, 21, 10),
+            '巨獸': (1, 814, 155, 24, 40, 88, 10, 10),
+            '毒蛛': (1, 653, 144, 21, 65, 95, 12, 15),
+            '史萊姆群': (0, 852, 113, 25, 55, 90, 0, 5),
+            '鐵殼魔像': (2, 1803, 367, 130, 35, 90, 18, 5),
+            '荊棘妖樹': (2, 1572, 507, 84, 40, 92, 19, 5),
+            '哥布林戰團': (2, 1548, 261, 52, 55, 92, 20, 10),
+            '深淵鐘龍': (3, 3595, 420, 92, 45, 92, 30, 10),
+            '王城傀儡師': (3, 2582, 559, 72, 55, 94, 31, 10),
+            '瘟疫縫合獸': (3, 3772, 721, 80, 50, 93, 29, 8),
         }
         for kind, values in expected.items():
             with self.subTest(kind=kind):
@@ -133,6 +136,24 @@ class MonsterTests(unittest.TestCase):
             f = raid_battle([participant()], monster(quality=quality), 1).living(1)[0]
             self.assertEqual((f.stats['HP'], f.stats['攻擊'], f.stats['防禦']), (hp, attack, defense))
             self.assertEqual((f.speed, f.stats['命中率'], f.stats['暴擊率']), (40, 88, 10))
+
+    def test_same_tier_weapons_have_about_ninety_five_percent_hit_chance(self):
+        weapons = {
+            0: 'starter:club', 1: '弓兵:0:武器', 2: 'goblin:bow',
+            3: 'plague:bow', 4: 'noah:archer:weapon',
+        }
+        for kind in ('史萊姆群', '巨獸', '毒蛛', '月影妖狐', '血翼蝠王',
+                     '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '深淵鐘龍',
+                     '王城傀儡師', '瘟疫縫合獸', '城崎諾亞'):
+            encounter = monster(kind)
+            weapon = ITEMS[weapons[encounter['tier']]]
+            player = participant()
+            player['state']['equipped']['武器'] = weapons[encounter['tier']]
+            player['state']['combat']['命中率'] = 95 + weapon.accuracy
+            battle = raid_battle([player], encounter, 1)
+            with self.subTest(kind=kind):
+                self.assertIn(battle.hit_chance(battle.fighters[0], battle.living(1)[0]),
+                              range(92, 98))
 
     def test_v4_monster_stats_use_fixed_tier_and_quality_levels(self):
         attacks, hit_points = [], []

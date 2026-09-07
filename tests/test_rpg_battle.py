@@ -285,7 +285,7 @@ class BattleTests(unittest.TestCase):
         participant = dict(name='玩家', state=state, rules=[], provisions={'food': food, 'potion': potion})
         battle = raid_battle([participant], dict(name='怪物', kind='巨獸'), 1)
         player = battle.fighters[0]
-        self.assertEqual(player.stats['命中率'], 150)
+        self.assertEqual(player.stats['命中率'], 152)
         self.assertEqual((player.food_name, player.food_regen_rounds), ('香酥七彩錦魚', 2))
         percent = dict(name='初級生命藥水', stat='HP', mode='percent', amount=5)
         participant['provisions']['potion'] = percent
@@ -599,6 +599,34 @@ class BattleTests(unittest.TestCase):
         battle.step()
         saved.step()
         self.assertEqual(dump_battle(battle), dump_battle(saved))
+
+    def test_final_hit_chance_has_no_upper_cap(self):
+        actor = fighter(rules=[])
+        target = fighter('敵人', 1, rules=[])
+        actor.stats['命中率'] = 180
+        target.stats['閃避率'] = 20
+        battle = Battle([actor, target], seed=1)
+        self.assertEqual(battle.hit_chance(actor, target), 160)
+
+    def test_critical_damage_is_per_fighter_and_defaults_to_one_hundred_fifty_percent(self):
+        first = fighter('甲', attack=100, hp=1000, rules=[])
+        second = fighter('乙', attack=100, hp=1000, rules=[])
+        target = fighter('敵人', 1, hp=1000, rules=[])
+        target.stats['防禦'] = 0
+        first.stats['暴擊率'] = second.stats['暴擊率'] = 100
+        second.critical_damage_percent = 175
+        battle = Battle([first, second, target], seed=1)
+        battle.hit(first, target, precise=True)
+        self.assertEqual(target.hp, 850)
+        target.hp = 1000
+        battle.hit(second, target, precise=True)
+        self.assertEqual(target.hp, 825)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        self.assertEqual([fighter.critical_damage_percent for fighter in restored.fighters],
+                         [150, 175, 150])
+        legacy = dump_battle(battle)
+        legacy['fighters'][0].pop('critical_damage_percent')
+        self.assertEqual(load_battle(legacy).fighters[0].critical_damage_percent, 150)
 
     def test_legacy_battle_stats_upgrade_without_resetting_progress(self):
         battle = Battle([fighter(job='僧侶'), fighter('敵人', 1)], seed=2)

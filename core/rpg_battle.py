@@ -249,6 +249,7 @@ class Fighter:
     vulnerable_chance: int = 0
     vulnerable_percent: int = 0
     healing_share: int = 0
+    critical_damage_percent: int = 150
     status_stacks: dict = field(default_factory=dict)
     user_id: int | None = None
     combat_stats: dict = field(default_factory=empty_combat_stats)
@@ -308,8 +309,16 @@ class Battle:
     def accuracy_bonus(self, actor):
         return 0
 
+    def hit_chance(self, actor, target):
+        """Resolve accuracy and evasion ratings into a percentage chance."""
+        evasion = target.stats['閃避率'] + (15 if target.has('moon_shadow', self.round) else 0)
+        return max(10, actor.stats['命中率'] + self.accuracy_bonus(actor) - evasion)
+
     def critical_bonus(self, actor):
         return 0
+
+    def critical_chance(self, actor):
+        return max(0, min(100, actor.stats['暴擊率'] + self.critical_bonus(actor)))
 
     def damage_dealt_multiplier(self, actor):
         return (100 + actor.damage_dealt_percent) / 100
@@ -517,8 +526,7 @@ class Battle:
             self.log.append(f'{actor.name} 未裝備武器，無法造成傷害。')
             return False
         actor.combat_stats['attacks'] += 1
-        evasion = target.stats['閃避率'] + (15 if target.has('moon_shadow', self.round) else 0)
-        chance = max(10, min(99, actor.stats['命中率'] + self.accuracy_bonus(actor) - evasion))
+        chance = self.hit_chance(actor, target)
         if not precise and self.rng.random() * 100 >= chance:
             actor.combat_stats['misses'] += 1
             self.log.append(f'{actor.name} → {target.name}：未命中')
@@ -535,7 +543,7 @@ class Battle:
         defense = 0 if broken else base_defense
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
-        critical = self.rng.random() * 100 < actor.stats['暴擊率'] + self.critical_bonus(actor)
+        critical = self.rng.random() * 100 < self.critical_chance(actor)
         guarded = bool(target.damage_guard_chance and self.rng.random() * 100 < target.damage_guard_chance)
         puppet_shield = (target.job == '王城傀儡師'
                          and any(f.job == '咒傀儡' for f in self.living(target.team))
@@ -546,7 +554,7 @@ class Battle:
             value = max(1, int(attack_value * power - defense_value * defense_effectiveness))
             value = max(1, value * stability // 100)
             if critical:
-                value = int(value * 1.5)
+                value = max(1, value * actor.critical_damage_percent // 100)
             if target.has('stance', self.round):
                 multiplier = {'民兵': 0.8, '騎士': 0.5}.get(target.job, 0.65)
                 value = max(1, int(value * multiplier))
@@ -1062,6 +1070,7 @@ def raid_battle(participants, monster, seed):
                         vulnerable_chance=p['state'].get('vulnerable_chance', 0),
                         vulnerable_percent=p['state'].get('vulnerable_percent', 0),
                         healing_share=p['state'].get('healing_share', 0),
+                        critical_damage_percent=p['state'].get('critical_damage_percent', 150),
                         armed=bool(p['state'].get('equipped', {}).get('武器')),
                         user_id=p.get('id')) for p in participants]
     badge_logs = []
@@ -1076,7 +1085,7 @@ def raid_battle(participants, monster, seed):
             fighter.hp = fighter.stats['HP']
             badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
     provision_logs = []
-    stat_caps = {'命中率': 150, '閃避率': 40, '暴擊率': 50}
+    stat_caps = {'閃避率': 40, '暴擊率': 100}
     for fighter, participant in zip(fighters, participants):
         provisions = participant.get('provisions', {})
         food = provisions.get('food')
@@ -1124,7 +1133,7 @@ def raid_battle(participants, monster, seed):
             fighter.healing_received_percent = 5
         elif card == 'chariot':
             fighter.speed += 8
-            fighter.stats['命中率'] = min(150, fighter.stats['命中率'] + 3)
+            fighter.stats['命中率'] += 3
         elif card == 'moon':
             fighter.stats['閃避率'] = min(40, fighter.stats['閃避率'] + 4)
         elif card == 'sun':
@@ -1142,7 +1151,7 @@ def raid_battle(participants, monster, seed):
         elif card == 'tower':
             percent_stat(fighter, 'HP', -10)
             percent_stat(fighter, '攻擊', 12)
-            fighter.stats['暴擊率'] = min(50, fighter.stats['暴擊率'] + 5)
+            fighter.stats['暴擊率'] = min(100, fighter.stats['暴擊率'] + 5)
         elif card == 'death':
             fighter.lifesteal += 5
         elif card == 'magician':
@@ -1308,6 +1317,8 @@ def load_battle(data):
         f.vulnerable_chance = data_f.get('vulnerable_chance', 0)
         f.vulnerable_percent = data_f.get('vulnerable_percent', 0)
         f.healing_share = data_f.get('healing_share', 0)
+        # Battles saved before critical damage became a fighter stat used 150%.
+        f.critical_damage_percent = data_f.get('critical_damage_percent', 150)
         f.status_stacks = data_f.get('status_stacks', {})
         f.user_id = data_f.get('user_id')
         f.food_name = data_f.get('food_name', '')
