@@ -442,6 +442,13 @@ class CharacterTests(unittest.TestCase):
                          + after['combat_bonus']['攻擊'])
         self.assertFalse({'物攻', '物防', '法攻', '法防'} & set(after['combat']))
 
+    def test_professions_have_distinct_critical_damage(self):
+        self.level(10)
+        for job, expected in (('裝甲步兵', 150), ('騎士', 125),
+                              ('弓兵', 175), ('僧侶', 125)):
+            state = self.characters.change_job(1, 1, job)
+            self.assertEqual(state['critical_damage_percent'], expected)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

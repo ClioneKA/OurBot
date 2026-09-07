@@ -3,7 +3,7 @@ import argparse
 from dataclasses import asdict
 
 from core.rpg_battle import Rule, default_rules, raid_battle
-from core.rpg_character import GROWTH, ITEMS, combat_from_stats
+from core.rpg_character import CRITICAL_DAMAGE_PERCENT, GROWTH, ITEMS, combat_from_stats
 from core.rpg_monsters import PROFILES, QUALITIES, REFERENCE_LEVELS, prepare_monster
 
 
@@ -97,7 +97,8 @@ def reference_participant(job, tier, user_id, level_bonus=0, kind=None, strategy
     state = dict(level=level, job=job, total=base, combat=combat, equipped=equipped,
                  stability=weapon.stability, damage_guard_chance=suit.damage_guard_chance,
                  vulnerable_chance=weapon.vulnerable_chance,
-                 vulnerable_percent=weapon.vulnerable_percent)
+                 vulnerable_percent=weapon.vulnerable_percent,
+                 critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job])
     rules = mechanism_rules(job, kind) if strategy == 'mechanics' else default_rules(job)
     return dict(id=user_id, name=job, state=state,
                 rules=[asdict(rule) for rule in rules])

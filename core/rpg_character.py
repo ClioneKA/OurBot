@@ -26,6 +26,13 @@ GROWTH = {
     '僧侶': (2, 1, 1, 2, 4),
 }
 JOBS = tuple(job for job in GROWTH if job != '民兵')
+CRITICAL_DAMAGE_PERCENT = {
+    '民兵': 150,
+    '裝甲步兵': 150,
+    '騎士': 125,
+    '弓兵': 175,
+    '僧侶': 125,
+}
 PREFIXES = ('早期', '', '老練', '精銳')
 WEAPONS = {'裝甲步兵': '戰斧', '騎士': '劍盾', '弓兵': '長弓', '僧侶': '權杖'}
 SUITS = {'裝甲步兵': '步兵甲', '騎士': '騎士鎧', '弓兵': '獵裝', '僧侶': '僧袍'}
@@ -863,7 +870,7 @@ class Characters:
                     alternating_damage_percent=max(
                         (item.alternating_damage_percent for item in resolved.values()), default=0),
                     defense_conversion=any(item.defense_conversion for item in resolved.values()),
-                    critical_damage_percent=150)
+                    critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job])
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
