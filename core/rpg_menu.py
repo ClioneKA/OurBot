@@ -180,6 +180,7 @@ class AdventureView(discord.ui.View):
                 f'文字至少 {s.text_min_chars} 個非空白字元，每 {s.text_cooldown_seconds} 秒 {s.text_xp} XP，跨頻道共用冷卻。\n'
                 f'一般語音至少 {s.voice_min_members} 位未靜音、未拒聽真人，每完整分鐘 {s.voice_xp_per_minute} XP。AFK、舞台與 Bot 不計入；未滿分鐘及離線時間不補發，不偵測實際說話。\n\n'
                 f'採 RuneScape 標準經驗曲線，上限 Lv.120。Lv.10 可轉職，Lv.{s.regular_level}／{s.veteran_level}／{s.elite_level} 晉升，轉職後飾品格 2／3／4／5 格（民兵 1 格）。\n\n'
+                f'每職業固定三個主動技能格，Lv.{s.regular_level} 解鎖進階主動技能；Lv.{s.veteran_level} 解鎖一格三選一職業被動，可在技能面板自由更換。\n\n'
                 '初始裝備木棒；空手無法造成傷害。武器／套裝增加戰鬥數值，飾品增加基礎能力，同名限穿一件。進階裝備從商店購買；魔像專屬武器、妖樹專屬套裝僅由討伐掉落。\n\n'
                 '在頻道點擊報名，五分鐘後自動討伐；開戰前可調整裝備和技能。勝利獲得經驗、金幣與機率專屬物品（可重複），稀有史萊姆群報酬較高但不掉飾品；實際獎勵依公告。\n\n'
                 '失敗或回合上限：以怪物結束時已削減 HP 比例發放勝利經驗與金幣，無條件捨去，無掉落；多隻怪物合計血量。\n\n'

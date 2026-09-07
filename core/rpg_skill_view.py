@@ -6,7 +6,7 @@ from core.rpg_menu import add_back, navigate
 import discord
 
 from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
-                             condition_text, rule_skill, skill_description)
+                             condition_text, passive_description, rule_skill, skill_description)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 
@@ -40,6 +40,7 @@ class SkillView(discord.ui.View):
         self.job = cog.characters.job(self.guild_id, self.owner.id)
         self.slot = 1
         self.choosing_skill = False
+        self.setting_passive = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -48,13 +49,32 @@ class SkillView(discord.ui.View):
         return next(rule for rule in self.cog.tactics.rules(self.guild_id, self.owner.id, self.job) if rule.slot == self.slot)
 
     def rebuild(self):
+        self.clear_items()
+        rules = self.cog.tactics.rules(self.guild_id, self.owner.id, self.job)
+        navigation = [
+            discord.SelectOption(label=f'槽 {i}：{s.name}', value=str(i),
+                                 default=not self.setting_passive and i == self.slot)
+            for i, s in sorted((r.slot, rule_skill(self.job, r)) for r in rules)]
+        passives = self.cog.tactics.available_passives(self.guild_id, self.owner.id, self.job)
+        if passives:
+            selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
+            navigation.append(discord.SelectOption(
+                label=f'被動：{selected.name if selected else "尚未選擇"}', value='passive',
+                default=self.setting_passive))
+        self.add_item(PanelSelect('slot', row=0, placeholder='選擇要設定的技能', options=navigation))
+        if self.setting_passive:
+            selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
+            self.add_item(PanelSelect('passive', row=1, placeholder='選擇 Lv.50 職業被動', options=[
+                discord.SelectOption(label=passive.name, value=str(passive.id),
+                                     description=passive_description(passive)[:100],
+                                     default=selected is not None and passive.id == selected.id)
+                for passive in passives]))
+            for button in (self.refresh, self.close_panel):
+                self.add_item(button)
+            add_back(self, 4)
+            return
         rule = self.current()
         skill = rule_skill(self.job, rule)
-        self.clear_items()
-        self.add_item(PanelSelect('slot', row=0, placeholder='選擇要設定的技能', options=[
-            discord.SelectOption(label=f'槽 {i}：{s.name}', value=str(i), default=i == self.slot)
-            for i, s in sorted((r.slot, rule_skill(self.job, r))
-                               for r in self.cog.tactics.rules(self.guild_id, self.owner.id, self.job))]))
         if self.choosing_skill:
             available = self.cog.tactics.available(self.guild_id, self.owner.id, self.job)
             self.add_item(PanelSelect('equip', row=1, placeholder='選擇已解鎖技能', options=[
@@ -89,6 +109,15 @@ class SkillView(discord.ui.View):
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
+        if self.setting_passive:
+            selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
+            embed.add_field(name='正在設定被動技能',
+                            value=(f'目前裝備：**{selected.name}**\n{passive_description(selected)}'
+                                   if selected else '尚未選擇被動技能。Lv.50 解鎖三個職業被動，但只能裝備一個。'),
+                            inline=False)
+            if notice:
+                embed.add_field(name='操作結果', value=notice, inline=False)
+            return embed
         skill = rule_skill(self.job, self.current())
         embed.add_field(name='正在設定', value=f'槽 {self.slot}：{skill.name}', inline=False)
         if self.choosing_skill:
@@ -128,6 +157,7 @@ class SkillView(discord.ui.View):
             if job != self.job:
                 self.job, self.slot = job, 1
                 self.choosing_skill = False
+                self.setting_passive = False
                 notice = '職業已變更，已重新載入技能；請再次選擇設定。'
             else:
                 try:
@@ -140,9 +170,21 @@ class SkillView(discord.ui.View):
                         self.choosing_skill = False
                         notice = '已更換技能，開戰時套用。'
                     elif action == 'slot':
-                        if value not in ('1', '2', '3'):
+                        if value == 'passive' and self.cog.tactics.available_passives(
+                                self.guild_id, self.owner.id, self.job):
+                            self.setting_passive = True
+                            self.choosing_skill = False
+                        elif value not in ('1', '2', '3'):
                             raise CharacterError('無效的技能槽。')
-                        self.slot = int(value)
+                        else:
+                            self.slot = int(value)
+                            self.setting_passive = False
+                    elif action == 'passive':
+                        if value not in ('1', '2', '3'):
+                            raise CharacterError('無效的被動技能。')
+                        selected = self.cog.tactics.equip_passive(
+                            self.guild_id, self.owner.id, self.job, int(value))
+                        notice = f'已裝備被動技能【{selected.name}】，開戰時套用。'
                     elif action == 'condition' and value in CONDITION_LIMITS:
                         await interaction.response.send_modal(ConditionValueModal(self, value))
                         return

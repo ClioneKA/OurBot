@@ -116,3 +116,15 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.view.job, '弓兵')
         self.assertIsNone(self.view.current().skill_id)
         self.assertFalse(self.view.choosing_skill)
+
+    async def test_level_fifty_passive_selection(self):
+        self.store.award_voice([(1, 1, level_floor(50))])
+        self.characters.change_job(1, 1, '裝甲步兵')
+        await self.view.handle(self.interaction, 'refresh')
+        self.assertIn('passive', [option.value for option in self.view.children[0].options])
+        await self.view.handle(self.interaction, 'slot', 'passive')
+        self.assertTrue(self.view.setting_passive)
+        self.assertEqual(len(self.view.children[1].options), 3)
+        await self.view.handle(self.interaction, 'passive', '2')
+        self.assertEqual(self.tactics.passive(1, 1, '裝甲步兵').name, '攻守輪轉')
+        self.assertIn('攻守輪轉', self.view.children[0].options[-1].label)

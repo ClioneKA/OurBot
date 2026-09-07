@@ -11,7 +11,7 @@ import uuid
 import discord
 from discord.ext import tasks
 
-from core.rpg_battle import rule_skill
+from core.rpg_battle import PASSIVES, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_raids import channel_ids
 from core.rpg_total_battle import (
@@ -74,6 +74,25 @@ def effect_status(fighter, battle):
         return fighter.effects[effect] - turn + 1
 
     buffs, debuffs = [], []
+    if fighter.passive_id and fighter.job in PASSIVES:
+        passive = next((item for item in PASSIVES[fighter.job] if item.id == fighter.passive_id), None)
+        if passive:
+            state = fighter.passive_state
+            counters = {
+                ('裝甲步兵', 1): f'連式{state.get("chain", 0)}/3',
+                ('裝甲步兵', 2): f'攻勢{state.get("offense", 0)}/2・守勢{state.get("guard_stance", 0)}/2',
+                ('裝甲步兵', 3): f'血怒{state.get("blood_rage", 0)}/5',
+                ('騎士', 1): f'復仇{state.get("revenge", 0)}/3',
+                ('騎士', 2): f'守望{state.get("watch", 0)}/2',
+                ('騎士', 3): {'opening': '破綻', 'momentum': '衝勢'}.get(state.get('lance_combo'), '待機'),
+                ('弓兵', 1): f'箭勢{state.get("arrow_tempo", 0)}/6',
+                ('弓兵', 3): f'洞察{state.get("insight", 0)}/3',
+                ('僧侶', 1): f'恩典{state.get("grace", 0)}/3',
+                ('僧侶', 2): f'樂章{len(state.get("hymn_verses", []))}/3',
+                ('僧侶', 3): f'輝光{state.get("radiance", 0)}/3・戒律{state.get("discipline", 0)}/3',
+            }
+            detail = counters.get((fighter.job, fighter.passive_id))
+            buffs.append(f'{passive.name}({detail})' if detail else passive.name)
     if fighter.has('guard', turn):
         buffs.append(f'護衛(防禦+{fighter.guard_bonus}・負面免疫・{remaining("guard")}回合)')
     if fighter.has('bless', turn):
@@ -98,6 +117,9 @@ def effect_status(fighter, battle):
     poison_arrows = fighter.status_stacks.get('poison_arrows', [])
     if poison_arrows:
         debuffs.append(f'毒箭侵蝕({len(poison_arrows)}支)')
+    toxicity = fighter.status_stacks.get('passive_toxicity', {})
+    if toxicity and max(toxicity.values(), default=0):
+        debuffs.append(f'毒性(最高{max(toxicity.values())}/3層)')
     if fighter.has('vulnerable', turn):
         debuffs.append(f'易傷(+10%・{remaining("vulnerable")}回合)')
     corruption = fighter.status_stacks.get('corruption', 0)
@@ -541,10 +563,12 @@ class TotalRaidService:
                 if participant is None or participant.bot:
                     continue
                 state = self.cog.characters.snapshot(room['guild_id'], user_id)
+                passive = self.cog.tactics.passive(room['guild_id'], user_id, state['job'])
                 participants.append(dict(
                     id=user_id, name=participant.display_name[:16], state=state,
                     rules=[asdict(rule) for rule in self.cog.tactics.rules(
                         room['guild_id'], user_id, state['job'])],
+                    passive_id=passive.id if passive else None,
                 ))
             if not participants:
                 raise TotalRaidError('隊伍中沒有可參戰的玩家。')

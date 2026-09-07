@@ -404,7 +404,7 @@ class TotalRaidBattle(Battle):
             self.record_skill(actor, '普通攻擊')
             self.log.append(f'{actor.name} 使用普通攻擊')
             if target is not None:
-                self.hit(actor, target)
+                self.basic_attack(actor, target)
             return
         rule, skill = self._skill(actor, choice.skill_slot)
         if skill.effect in FIXED_TARGETS:

@@ -271,6 +271,9 @@ class RPG(commands.Cog):
         rules = sorted(self.tactics.rules(guild_id, member.id, state['job']), key=lambda rule: rule.slot)
         embed.add_field(name='已裝備技能', value='｜'.join(rule_skill(state['job'], rule).name for rule in rules),
                         inline=False)
+        passive = self.tactics.passive(guild_id, member.id, state['job'])
+        if passive:
+            embed.add_field(name='職業被動', value=passive.name, inline=False)
         if showcase:
             item = self.characters.showcase_item(guild_id, member.id)
             detail = item.description or item_text(item)
@@ -427,12 +430,17 @@ class RPG(commands.Cog):
         embed = discord.Embed(title=f'{state["title"]}・自動技能', color=0x8B5CF6,
                               description='每回合由優先 1 開始檢查，施放第一個符合條件且冷卻結束的技能；否則普攻。\n'
                               '【準備】技能會在一般行動前結算，彼此仍依速度排序。\n'
-                              '固定三格；Lv.20 後各職業解鎖兩個新技能，按「更換技能」配置。')
+                              '固定三個主動技能格；Lv.20 解鎖兩個進階技能。Lv.50 解鎖一個三選一職業被動格。')
         for rule in self.tactics.rules(guild, user, state['job']):
             skill = rule_skill(state['job'], rule)
             embed.add_field(name=f'優先 {rule.priority}｜槽 {rule.slot}：{skill.name}｜{"開" if rule.enabled else "關"}',
                             value=f'{skill_description(skill)}\n冷卻 {skill.cooldown} 回合｜{condition_text(rule.condition, rule.condition_value)}'
                                   f'｜目標：{FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])}', inline=False)
+        passive = self.tactics.passive(guild, user, state['job'])
+        if passive:
+            embed.add_field(name=f'職業被動｜{passive.name}', value=passive.description, inline=False)
+        elif self.tactics.available_passives(guild, user, state['job']):
+            embed.add_field(name='職業被動｜尚未選擇', value='Lv.50 已解鎖三個職業被動，請從技能面板選擇一個。', inline=False)
         embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。')
         return embed
 
