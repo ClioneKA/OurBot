@@ -86,14 +86,12 @@ class RaidService:
     def __init__(self, cog):
         self.cog, self.bot = cog, cog.bot
         self.settings = cog.settings.raid
-        self.channels = channel_ids(os.getenv('RPG_RAID_CHANNEL_IDS', ''))
+        self.environment_channels = channel_ids(os.getenv('RPG_RAID_CHANNEL_IDS', ''))
         self.mid_settings = cog.settings.mid_raid
-        self.mid_channels = channel_ids(os.getenv('RPG_MID_RAID_CHANNEL_IDS', ''), 'RPG_MID_RAID_CHANNEL_IDS')
+        self.environment_mid_channels = channel_ids(os.getenv('RPG_MID_RAID_CHANNEL_IDS', ''), 'RPG_MID_RAID_CHANNEL_IDS')
         self.high_settings = cog.settings.high_raid
-        self.high_channels = channel_ids(os.getenv('RPG_HIGH_RAID_CHANNEL_IDS', ''), 'RPG_HIGH_RAID_CHANNEL_IDS')
-        if self.channels & self.mid_channels or self.channels & self.high_channels or self.mid_channels & self.high_channels:
-            raise ValueError('一般、中階與高階討伐頻道不可重複')
-        self.all_channels = self.channels | self.mid_channels | self.high_channels
+        self.environment_high_channels = channel_ids(os.getenv('RPG_HIGH_RAID_CHANNEL_IDS', ''), 'RPG_HIGH_RAID_CHANNEL_IDS')
+        self.refresh_channels()
         self.repo = RaidStore(cog.store)
         self.notifications = RaidNotifications(cog.store)
         self.views = {}
@@ -102,6 +100,22 @@ class RaidService:
         self.spawning = set()
         self.spawning_guilds = set()
         self.spawn_tasks = set()
+
+    def refresh_channels(self):
+        self.channels = set(self.environment_channels)
+        self.mid_channels = set(self.environment_mid_channels)
+        self.high_channels = set(self.environment_high_channels)
+        spaces = getattr(getattr(self.cog, 'spaces', None), 'store', None)
+        for space in spaces.all() if spaces else ():
+            if space.regular_channel_id:
+                self.channels.add(space.regular_channel_id)
+            if space.mid_channel_id:
+                self.mid_channels.add(space.mid_channel_id)
+            if space.high_channel_id:
+                self.high_channels.add(space.high_channel_id)
+        if self.channels & self.mid_channels or self.channels & self.high_channels or self.mid_channels & self.high_channels:
+            raise ValueError('一般、中階與高階討伐頻道不可重複')
+        self.all_channels = self.channels | self.mid_channels | self.high_channels
 
     def start(self):
         for raid in self.repo.pending():

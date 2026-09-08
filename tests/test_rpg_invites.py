@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from core.rpg import RPGStore
 from core.rpg_character import CharacterError
 from core.rpg_invites import AdventurerInvitations, AdventurerInvitationView, role_ids
+from core.rpg_spaces import AdventureSpace
 
 
 class InvitationTests(unittest.IsolatedAsyncioTestCase):
@@ -68,3 +69,11 @@ class InvitationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(role_ids('99, 100,99'), (99, 100))
         with self.assertRaises(ValueError):
             role_ids('not-an-id')
+
+    async def test_database_managed_role_takes_priority_over_environment(self):
+        managed = SimpleNamespace(id=100, managed=False, mention='<@&100>', name='管理角色',
+                                  is_default=lambda: False, is_assignable=lambda: True)
+        self.guild.get_role = lambda role_id: {99: self.role, 100: managed}.get(role_id)
+        self.cog.spaces = SimpleNamespace(store=SimpleNamespace(
+            get=lambda guild_id: AdventureSpace(guild_id, adventurer_role_id=100)))
+        self.assertIs(await self.service.role_for(self.guild), managed)

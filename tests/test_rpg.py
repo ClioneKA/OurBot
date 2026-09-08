@@ -105,7 +105,8 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 cog = bot.get_cog('RPG')
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
-                                 {'邀請', '冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰', '討伐通知', '戰鬥統計'})
+                                 {'邀請', '冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰',
+                                  '討伐通知', '冒險區域', '戰鬥統計'})
                 invitation_role = SimpleNamespace(mention='<@&99>')
                 cog.invitations.role_for = AsyncMock(return_value=invitation_role)
                 invitation = SimpleNamespace(

@@ -24,6 +24,7 @@ from core.rpg_divination import Divinations
 from core.rpg_tavern import TavernService
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 from core.rpg_invites import AdventurerInvitations, AdventurerInvitationView
+from core.rpg_spaces import AdventureSpaceService
 
 
 class RPG(commands.Cog):
@@ -32,6 +33,7 @@ class RPG(commands.Cog):
         self.settings = get_settings().rpg
         self.store = RPGStore(Path(__file__).resolve().parent.parent / 'data/rpg.db')
         self.characters = Characters(self.store, self.settings)
+        self.spaces = AdventureSpaceService(self)
         self.invitations = AdventurerInvitations(self)
         self.fishing = Fishing(self.store)
         self.farming = Farming(self.store)
@@ -404,6 +406,38 @@ class RPG(commands.Cog):
         except discord.HTTPException:
             message = 'Discord 暫時無法更新身分組，請稍後再試。'
         await interaction.followup.send(message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name='冒險區域', description='管理員檢查、建立或修復安安大冒險的分類、頻道與身分組')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.rename(action='操作')
+    @app_commands.choices(action=[app_commands.Choice(name='查看狀態', value='status'),
+                                 app_commands.Choice(name='建立／匯入', value='setup'),
+                                 app_commands.Choice(name='修復分類與權限', value='repair')])
+    async def adventure_space(self, interaction: discord.Interaction, action: str = 'status'):
+        if interaction.guild is None or not interaction.permissions.administrator:
+            await interaction.response.send_message('只有伺服器管理員可以管理冒險區域。', ephemeral=True)
+            return
+        if action not in ('status', 'setup', 'repair'):
+            await interaction.response.send_message('請選擇查看狀態、建立／匯入或修復。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if action == 'setup':
+                message = await self.spaces.setup(interaction.guild)
+            elif action == 'repair':
+                message = await self.spaces.repair(interaction.guild)
+            else:
+                message = self.spaces.status_text(interaction.guild)
+        except CharacterError as exc:
+            message = str(exc)
+        except discord.Forbidden:
+            message = '安安無法調整冒險區域，請確認「管理頻道」、「管理身分組」及身分組順位。'
+        except discord.HTTPException:
+            logging.exception('Adventure space update failed')
+            message = 'Discord 暫時無法更新冒險區域，請稍後再試。'
+        await interaction.followup.send(message, ephemeral=True,
+                                        allowed_mentions=discord.AllowedMentions.none())
 
 
     @app_commands.command(name='生成討伐', description='管理員立即在目前的討伐頻道生成魔物，五分鐘後開戰')

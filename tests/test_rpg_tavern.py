@@ -16,6 +16,7 @@ from core.rpg_monsters import prepare_monster
 from core.rpg_tavern import (BOUNTY_PRICES, DRINK_CLAIM_SECONDS, DRINK_PACKAGES,
                              DRINK_XP_PERCENT, DrinkOfferView, TavernService,
                              TavernStore, TavernView)
+from core.rpg_spaces import AdventureSpace
 from core.settings import RPGSettings
 
 
@@ -174,6 +175,17 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(offer['channel_id'], 88)
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
+
+    async def test_database_managed_tavern_takes_priority_over_environment(self):
+        managed = SimpleNamespace(id=89, send=AsyncMock(return_value=SimpleNamespace(id=100)))
+        original_get_channel = self.guild.get_channel
+        self.guild.get_channel = lambda channel_id: managed if channel_id == 89 else original_get_channel(channel_id)
+        self.cog.spaces = SimpleNamespace(store=SimpleNamespace(
+            get=lambda guild_id: AdventureSpace(guild_id, tavern_channel_id=89)))
+        message, offer = await self.service.buy_round(self.interaction, 'table')
+        self.assertEqual((message.id, offer['channel_id']), (100, 89))
+        managed.send.assert_awaited_once()
+        self.public.send.assert_not_awaited()
 
     async def test_missing_guild_channel_rejects_without_charging(self):
         self.guild.get_channel = lambda channel_id: None

@@ -17,6 +17,7 @@ from core.rpg_divination import Divinations
 from core.rpg_monsters import BALANCE_VERSION
 from core.rpg_raids import HIGH_RAID_KINDS, MID_KINDS, RaidService, RaidSignup, channel_ids
 from core.rpg_raid_store import RaidStore, DROP_TABLES, HIGH_KINDS
+from core.rpg_spaces import AdventureSpace
 from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
@@ -817,6 +818,20 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         for periods in ('12:00', '24:00-01:00', '12:00-12:00'):
             with self.assertRaises(SettingsError):
                 RaidSettings(half_interval_periods=periods)
+
+    async def test_database_managed_channels_are_loaded_with_environment_fallback(self):
+        cog = SimpleNamespace(store=self.store, settings=self.settings, characters=self.characters,
+                              tactics=self.tactics, ai_model='unused', bot=SimpleNamespace(),
+                              spaces=SimpleNamespace(store=SimpleNamespace(all=lambda: [
+                                  AdventureSpace(1, regular_channel_id=20, mid_channel_id=21,
+                                                 high_channel_id=22)])))
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '',
+                                            'RPG_HIGH_RAID_CHANNEL_IDS': ''}):
+            service = RaidService(cog)
+        self.assertEqual(service.channels, {2, 20})
+        self.assertEqual(service.mid_channels, {21})
+        self.assertEqual(service.high_channels, {22})
+        await service.close()
 
     async def test_next_spawn_halves_interval_only_when_drawn_in_configured_period(self):
         self.service.settings = replace(

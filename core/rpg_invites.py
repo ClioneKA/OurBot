@@ -102,16 +102,18 @@ class AdventurerInvitations:
                               message_id=invitation['message_id'])
 
     async def role_for(self, guild):
-        if not self.configured_role_ids:
-            raise CharacterError('尚未設定冒險者身分組，請管理員設定 RPG_ADVENTURER_ROLE_IDS。')
-        role = next((guild.get_role(role_id) for role_id in self.configured_role_ids
+        space = self.cog.spaces.store.get(guild.id) if hasattr(self.cog, 'spaces') else None
+        candidate_ids = ((space.adventurer_role_id,) if space and space.adventurer_role_id else ()) + self.configured_role_ids
+        if not candidate_ids:
+            raise CharacterError('尚未設定冒險者身分組，請管理員使用 /冒險區域 建立，或設定 RPG_ADVENTURER_ROLE_IDS。')
+        role = next((guild.get_role(role_id) for role_id in candidate_ids
                      if guild.get_role(role_id) is not None), None)
         if role is None:
             try:
                 fetched = await guild.fetch_roles()
             except discord.HTTPException as exc:
                 raise CharacterError('無法讀取已設定的冒險者身分組，請稍後再試。') from exc
-            role = next((item for item in fetched if item.id in self.configured_role_ids), None)
+            role = next((item for item in fetched if item.id in candidate_ids), None)
         if role is None:
             raise CharacterError('這個伺服器尚未配置冒險者身分組。')
         if role.managed or role.is_default():

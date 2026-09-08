@@ -279,7 +279,7 @@ class TavernService:
         self.cog, self.store = cog, TavernStore(cog.store)
         self.views = {}
         try:
-            self.channel_ids = tuple(dict.fromkeys(
+            self.environment_channel_ids = tuple(dict.fromkeys(
                 int(value.strip()) for value in
                 os.getenv('RPG_TAVERN_CHANNEL_IDS', '').split(',') if value.strip()))
         except ValueError as exc:
@@ -289,7 +289,10 @@ class TavernService:
         guild = interaction.guild
         if guild is None:
             raise CharacterError('酒館公開功能只能在伺服器內使用。')
-        for channel_id in self.channel_ids:
+        space_store = getattr(getattr(self.cog, 'spaces', None), 'store', None)
+        space = space_store.get(guild.id) if space_store else None
+        managed = (space.tavern_channel_id,) if space and space.tavern_channel_id else ()
+        for channel_id in managed + self.environment_channel_ids:
             channel = guild.get_channel(channel_id)
             if channel is not None and callable(getattr(channel, 'send', None)):
                 return channel
