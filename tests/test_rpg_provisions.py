@@ -4,7 +4,8 @@ import unittest
 
 from core.rpg import RPGStore
 from core.rpg_character import CharacterError, Characters, ITEMS
-from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_XP_PER_QUALITY,
+from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_INITIAL_XP_PERCENT,
+                                 COOKING_XP_PER_QUALITY, DONATION_XP_PERCENT,
                                  FEAST, FORTUNE, GROWTH,
                                  INGREDIENTS, MEAL_CLAIM_SECONDS,
                                  MEAL_EFFECT_SECONDS, NOURISHMENT,
@@ -73,6 +74,23 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(COOKING_XP_PER_QUALITY, 50)
         self.assertEqual((low['grade'], low['cooking_xp']), ('C', 250))
         self.assertEqual((high['grade'], high['cooking_xp']), ('S', 1400))
+        self.assertEqual(COOKING_INITIAL_XP_PERCENT, 25)
+        self.assertEqual((low['initial_cooking_xp'], high['initial_cooking_xp']),
+                         (62, 350))
+
+    def test_donation_is_slightly_better_than_c_grade_initial_xp(self):
+        ingredients = ['fishing:pond:common'] * 5
+        self.grant('fishing:pond:common', 10)
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.assertEqual((meal['data']['grade'], meal['data']['initial_cooking_xp']),
+                         ('C', 62))
+        self.assertEqual(self.characters.inventory_counts(1, 1)['fishing:pond:common'], 5)
+
+        result = self.provisions.donate(1, 1, ingredients)
+        self.assertEqual(DONATION_XP_PERCENT, 30)
+        self.assertEqual(result, {'quantity': 5, 'quality': 5, 'xp': 75})
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 137)
+        self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
 
     def test_cooking_is_atomic_awards_xp_and_seats_cook(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
@@ -91,13 +109,50 @@ class ProvisionTests(unittest.TestCase):
             (meal['id'],)).fetchone()[0]
         self.assertEqual((MEAL_EFFECT_SECONDS, valid_until), (86400, 86500))
         self.assertGreater(data['cooking_xp'], 0)
-        self.assertEqual(self.provisions.state(1, 1)['xp'], data['cooking_xp'])
+        self.assertEqual(self.provisions.state(1, 1)['xp'], data['initial_cooking_xp'])
         self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
         self.assertEqual(self.provisions.claimants(meal['id']), [1])
         active = self.provisions.active_effect(1, 1, now=101)
         self.assertEqual((active['name'], active['remaining'], active['valid_until']),
                          (data['name'], data['duration'], 86500))
         self.assertIsNone(self.provisions.active_effect(1, 1, now=86500))
+
+    def test_first_three_different_guests_unlock_remaining_xp_on_claim(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.publish(meal['id'], 99)
+        full_xp = meal['data']['cooking_xp']
+        self.assertEqual(self.provisions.state(1, 1)['xp'], full_xp * 25 // 100)
+
+        for index, user in enumerate((2, 3, 4), 2):
+            self.provisions.claim(meal['id'], 1, user, now=100 + user)
+            self.assertEqual(self.provisions.state(1, 1)['xp'], full_xp * index // 4)
+        self.provisions.claim(meal['id'], 1, 5, now=105)
+        self.assertEqual(self.provisions.state(1, 1)['xp'], full_xp)
+
+    def test_cook_allows_next_table_when_previous_one_is_full_or_expired(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 9)
+        self.grant('farming:potato', 6)
+        first = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.publish(first['id'], 99)
+        with self.assertRaisesRegex(CharacterError, '尚未客滿'):
+            self.provisions.cook(1, 1, 9, ingredients, now=101)
+
+        for user in (2, 3, 4, 5):
+            self.provisions.claim(first['id'], 1, user, now=100 + user)
+        self.assertEqual(len(self.provisions.claimants(first['id'])), first['capacity'])
+
+        second = self.provisions.cook(1, 1, 9, ingredients, now=106)
+        self.assertNotEqual(first['id'], second['id'])
+        self.provisions.publish(second['id'], 100)
+        with self.assertRaisesRegex(CharacterError, '尚未客滿'):
+            self.provisions.cook(1, 1, 9, ingredients, now=107)
+
+        third = self.provisions.cook(1, 1, 9, ingredients, now=1906)
+        self.assertNotEqual(second['id'], third['id'])
 
     def test_meal_claims_are_idempotent_and_temperance_preserves_charge(self):
         ingredients = ['fishing:pond:rare', 'fishing:lake:rare',

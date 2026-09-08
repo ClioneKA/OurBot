@@ -11,6 +11,10 @@ from core.rpg_character import CharacterError, ITEMS
 
 INGREDIENT_COUNT = 5
 COOKING_XP_PER_QUALITY = 50
+COOKING_INITIAL_XP_PERCENT = 25
+DONATION_XP_PERCENT = 30
+GUEST_XP_PERCENT = 25
+MAX_REWARDED_GUESTS = 3
 MEAL_CLAIM_SECONDS = 30 * 60
 MEAL_EFFECT_SECONDS = 24 * 60 * 60
 
@@ -174,12 +178,14 @@ def evaluate_ingredients(ingredient_ids, cooking_level=1):
         for key, value in _effect(secondary, grade, secondary=True).items():
             effect[key] = effect.get(key, 0) + value
     cooking_xp = quality * COOKING_XP_PER_QUALITY * GRADE_MULTIPLIERS[grade] // 100
+    initial_cooking_xp = cooking_xp * COOKING_INITIAL_XP_PERCENT // 100
     return {
         'ingredients': list(ingredient_ids), 'tag_counts': dict(tags), 'quality': quality,
         'unique': unique, 'pairings': pairing_count, 'score': score, 'grade': grade,
         'primary_tag': primary, 'secondary_tag': secondary, 'aftertaste': aftertaste,
         'total_portions': total_portions, 'duration': duration, 'capacity': capacity,
         'effect': effect, 'cooking_xp': cooking_xp,
+        'initial_cooking_xp': initial_cooking_xp,
         'name': f'{GRADE_NAMES[grade]}{TAG_NAMES[primary]}料理',
     }
 
@@ -268,12 +274,21 @@ class Provisions:
                     primary_tag=data['primary_tag'], secondary_tag=data.get('secondary_tag'),
                     effect=data['effect'])
 
+    def _host_has_open_table(self, guild, user, now):
+        return self.db.execute('''SELECT 1 FROM rpg_meals m
+            WHERE m.guild_id=? AND m.host_id=? AND
+            (m.status='posting' OR (m.status='open' AND m.expires_at>? AND
+             (SELECT COUNT(*) FROM rpg_meal_claims c WHERE c.meal_id=m.id)<m.capacity))
+            LIMIT 1''', (guild, user, now)).fetchone()
+
     def cook(self, guild, user, channel, ingredient_ids, now=None):
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.state(guild, user)
             data = evaluate_ingredients(ingredient_ids, state['level'])
+            if self._host_has_open_table(guild, user, now):
+                raise CharacterError('你已有一桌尚未客滿的公開料理，請等待客滿或開桌時間結束。')
             required = Counter(ingredient_ids)
             counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
                 WHERE guild_id=? AND user_id=?''', (guild, user)))
@@ -288,7 +303,7 @@ class Provisions:
                     AND item_id=? AND quantity=0''', (guild, user, key))
             self.db.execute('''INSERT INTO rpg_cooking_players(guild_id,user_id,xp)
                 VALUES (?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=xp+excluded.xp''',
-                            (guild, user, data['cooking_xp']))
+                            (guild, user, data['initial_cooking_xp']))
             meal_id = uuid.uuid4().hex
             offer = dict(id=meal_id, guild_id=guild, host_id=user, channel_id=channel,
                          message_id=None, data=data, capacity=data['capacity'], created_at=now,
@@ -305,6 +320,30 @@ class Provisions:
                     VALUES (?,?,?,?,?,?)''',
                                 (meal_id, guild, user, now, now + MEAL_EFFECT_SECONDS, data['duration']))
         return offer
+
+    def donate(self, guild, user, ingredient_ids):
+        if not ingredient_ids or any(key not in INGREDIENTS for key in ingredient_ids):
+            raise CharacterError('請至少選擇一份有效的料理素材。')
+        required = Counter(ingredient_ids)
+        quality = sum(INGREDIENTS[key].quality * amount for key, amount in required.items())
+        awarded_xp = quality * COOKING_XP_PER_QUALITY * DONATION_XP_PERCENT // 100
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
+                WHERE guild_id=? AND user_id=?''', (guild, user)))
+            missing = [f'{ITEMS[key].name} {counts.get(key, 0)}/{amount}'
+                       for key, amount in required.items() if counts.get(key, 0) < amount]
+            if missing:
+                raise CharacterError('材料不足：' + '、'.join(missing))
+            for key, amount in required.items():
+                self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
+                    WHERE guild_id=? AND user_id=? AND item_id=?''', (amount, guild, user, key))
+                self.db.execute('''DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=?
+                    AND item_id=? AND quantity=0''', (guild, user, key))
+            self.db.execute('''INSERT INTO rpg_cooking_players(guild_id,user_id,xp)
+                VALUES (?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=xp+excluded.xp''',
+                            (guild, user, awarded_xp))
+        return {'quantity': len(ingredient_ids), 'quality': quality, 'xp': awarded_xp}
 
     def publish(self, meal_id, message_id):
         with self.db:
@@ -330,7 +369,8 @@ class Provisions:
                                     (meal['guild_id'], meal['host_id'], key, amount))
                 self.db.execute('''UPDATE rpg_cooking_players SET xp=max(0,xp-?)
                     WHERE guild_id=? AND user_id=?''',
-                                (meal['data']['cooking_xp'], meal['guild_id'], meal['host_id']))
+                                (meal['data']['initial_cooking_xp'],
+                                 meal['guild_id'], meal['host_id']))
                 self.db.execute('DELETE FROM rpg_meal_claims WHERE meal_id=?', (meal_id,))
         return self.meal(meal_id)
 
@@ -379,6 +419,20 @@ class Provisions:
                 VALUES (?,?,?,?,?,?)''',
                             (meal_id, guild, user, now, now + MEAL_EFFECT_SECONDS,
                              meal['data']['duration']))
+            if user != meal['host_id']:
+                rewarded_count = self.db.execute('''SELECT COUNT(*) FROM rpg_meal_guest_rewards
+                    WHERE meal_id=?''', (meal_id,)).fetchone()[0]
+                if rewarded_count < MAX_REWARDED_GUESTS:
+                    rewarded = self.db.execute('''INSERT OR IGNORE INTO rpg_meal_guest_rewards
+                        (meal_id,user_id) VALUES (?,?)''', (meal_id, user))
+                    if rewarded.rowcount:
+                        before_percent = COOKING_INITIAL_XP_PERCENT + rewarded_count * GUEST_XP_PERCENT
+                        after_percent = before_percent + GUEST_XP_PERCENT
+                        bonus = (meal['data']['cooking_xp'] * after_percent // 100
+                                 - meal['data']['cooking_xp'] * before_percent // 100)
+                        self.db.execute('''UPDATE rpg_cooking_players SET xp=xp+?
+                            WHERE guild_id=? AND user_id=?''',
+                                        (bonus, guild, meal['host_id']))
         return self.meal(meal_id)
 
     def prepare_for_raid(self, raid_id, guild, users, preserve_users=(), now=None):
@@ -411,14 +465,5 @@ class Provisions:
                 if user not in preserve_users:
                     self.db.execute('UPDATE rpg_meal_claims SET remaining=remaining-1 WHERE id=?',
                                     (claim_id,))
-                if user != host_id:
-                    rewarded = self.db.execute('''INSERT OR IGNORE INTO rpg_meal_guest_rewards
-                        (meal_id,user_id) SELECT ?,? WHERE
-                        (SELECT COUNT(*) FROM rpg_meal_guest_rewards WHERE meal_id=?)<4''',
-                                               (meal_id, user, meal_id))
-                    if rewarded.rowcount:
-                        bonus = meal_data['cooking_xp'] * 5 // 100
-                        self.db.execute('''UPDATE rpg_cooking_players SET xp=xp+?
-                            WHERE guild_id=? AND user_id=?''', (bonus, guild, host_id))
                 result[user] = payload
         return result

@@ -64,6 +64,22 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('料理 XP', embed.fields[-1].value)
         self.assertEqual(view.ingredients, [])
 
+    async def test_c_grade_can_open_and_selected_ingredients_can_be_donated(self):
+        self.grant('fishing:pond:common', 6)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        view.ingredients = ['fishing:pond:common'] * 5
+        view.rebuild()
+        cook = next(child for child in view.children if child.label == '完成料理並開桌')
+        self.assertFalse(cook.disabled)
+
+        view.ingredients = ['fishing:pond:common']
+        await view.handle(self.interaction, 'donate')
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 15)
+        self.assertEqual(view.ingredients, [])
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('捐給監獄', embed.fields[-1].value)
+
 
 if __name__ == '__main__':
     unittest.main()

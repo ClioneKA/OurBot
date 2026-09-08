@@ -250,7 +250,8 @@ class MealOfferView(discord.ui.View):
                          f'**{data["primary_tag"]}{secondary}**｜{effect_text(data["effect"])}\n'
                          f'美味度 {data["score"]}｜每人持續 {data["duration"]} 場討伐\n'
                          f'食材：{ingredients}\n\n'
-                         '料理效果保留 24 小時；正式開戰時消耗一場。'))
+                         '料理效果保留 24 小時；正式開戰時消耗一場。\n'
+                         '前三位不同的客人享用時，會各替料理者解鎖 25% 料理 XP。'))
         guest_list = '\n'.join(f'{index}. <@{user_id}>'
                                for index, user_id in enumerate(claimants, 1)) or '尚無人享用'
         embed.add_field(name=f'享用紀錄 {len(claimants)}/{meal["capacity"]} 人',

@@ -54,8 +54,11 @@ class ProvisionView(discord.ui.View):
             options=options or [discord.SelectOption(label='沒有可用食材', value='empty')]))
         self._button('移除最後一份', 'remove', 1, not self.ingredients)
         self._button('重新選擇', 'reset', 1, not self.ingredients)
-        self._button('完成料理並開桌', 'cook', 1, len(self.ingredients) != INGREDIENT_COUNT,
+        self._button('完成料理並開桌', 'cook', 1,
+                     len(self.ingredients) != INGREDIENT_COUNT,
                      discord.ButtonStyle.success)
+        self._button('捐給監獄', 'donate', 1, not self.ingredients,
+                     discord.ButtonStyle.primary)
         self._button('返回酒館', 'tavern', 2)
         self._button('關閉', 'close', 2)
 
@@ -86,7 +89,9 @@ class ProvisionView(discord.ui.View):
                     f'美味度 {data["score"]}｜品質 {data["quality"]}｜多樣性 {data["unique"]}｜搭配 {data["pairings"]}\n'
                     f'主效果：{data["primary_tag"]}{secondary}\n{effect_text(data["effect"])}\n'
                     f'標籤：{tags}\n總效果份數 {data["total_portions"]}｜可入席 {data["capacity"]} 人｜每人持續 {data["duration"]} 場\n'
-                    f'完成取得 {data["cooking_xp"]:,} 料理 XP'), inline=False)
+                    f'潛在料理 XP {data["cooking_xp"]:,}｜完成先取得 '
+                    f'{data["initial_cooking_xp"]:,}，前三位不同客人各解鎖 25%'),
+                    inline=False)
             except CharacterError as exc:
                 embed.add_field(name='料理預覽', value=str(exc), inline=False)
         if notice:
@@ -123,6 +128,12 @@ class ProvisionView(discord.ui.View):
                         self.ingredients.pop()
                 elif action == 'reset':
                     self.ingredients.clear()
+                elif action == 'donate':
+                    result = self.cog.provisions.donate(
+                        self.guild_id, self.owner.id, self.ingredients)
+                    self.ingredients.clear()
+                    notice = (f'已將 {result["quantity"]} 份食材捐給監獄，'
+                              f'取得 {result["xp"]:,} 料理 XP。')
                 elif action == 'cook':
                     if len(self.ingredients) != INGREDIENT_COUNT:
                         raise CharacterError('請先選滿五份食材。')
@@ -142,7 +153,10 @@ class ProvisionView(discord.ui.View):
                     self.ingredients.clear()
                     self.rebuild()
                     await self.origin.edit_original_response(
-                        embed=self.embed(f'完成 {data["name"]}，取得 {data["cooking_xp"]:,} 料理 XP：{message.jump_url}'),
+                        embed=self.embed(
+                            f'完成 {data["name"]}，先取得 {data["initial_cooking_xp"]:,}／'
+                            f'{data["cooking_xp"]:,} 料理 XP；客人享用後可解鎖其餘經驗：'
+                            f'{message.jump_url}'),
                         view=self, allowed_mentions=discord.AllowedMentions.none())
                     return
             except CharacterError as exc:
