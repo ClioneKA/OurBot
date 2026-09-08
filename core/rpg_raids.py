@@ -345,6 +345,11 @@ class RaidService:
                 loot_text += f'；勝利時全隊固定掉落 1 個 {ITEMS[raid["fixed_drop"]].name}，隨機給一名參戰者'
             else:
                 loot_text += f'；勝利每人固定取得 {ITEMS[raid["fixed_drop"]].name}'
+        food_drop = raid.get('food_drop')
+        if food_drop:
+            loot_text += (f'；另獨立以 {food_drop["chance"] * 100:g}% 判定料理食材，'
+                          f'成功時 95% 為 {ITEMS[food_drop["meat"]].name}、'
+                          f'5% 為 {ITEMS[food_drop["seasoning"]].name}')
         scaling = raid.get('reward_scaling')
         if scaling:
             labels = {'victory_xp': '勝利經驗', 'victory_gold': '勝利金幣'}
@@ -410,7 +415,8 @@ class RaidService:
                      + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '')
                      + (f'、{ITEMS[r["chance_item"]].name}' if r.get('chance_item') else '')
                      + ''.join(f'、{ITEMS[item].name}' for item in r.get('chance_items', ()))
-                     + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '') for r in raid['rewards']]
+                     + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '')
+                     + (f'、{ITEMS[r["food_item"]].name}' if r.get('food_item') else '') for r in raid['rewards']]
             embed.add_field(name='獎勵已入帳', value='\n'.join(lines)[:1024], inline=False)
             players = [fighter for fighter in battle.fighters if fighter.team == 0]
             players.sort(key=lambda fighter: (fighter.combat_stats['direct_damage']
@@ -511,7 +517,8 @@ class RaidService:
                 f'{", " + ITEMS[r["fixed_item"]].name if r.get("fixed_item") else ""}'
                 f'{", " + ITEMS[r["chance_item"]].name if r.get("chance_item") else ""}'
                 f'{"".join(", " + ITEMS[item].name for item in r.get("chance_items", ()))}'
-                f'{", " + ITEMS[r["extra_item"]].name if r.get("extra_item") else ""}' for r in raid['rewards'])
+                f'{", " + ITEMS[r["extra_item"]].name if r.get("extra_item") else ""}'
+                f'{", " + ITEMS[r["food_item"]].name if r.get("food_item") else ""}' for r in raid['rewards'])
             await message.edit(embed=self.battle_embed(raid, battle), view=None,
                                attachments=[discord.File(io.BytesIO(report.encode('utf-8')), filename='討伐戰報.txt')],
                                allowed_mentions=discord.AllowedMentions.none())

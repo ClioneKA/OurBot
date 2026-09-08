@@ -566,7 +566,11 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.repo.save(raid)
         custom.result = '勝利'
         result = self.repo.settle(raid['id'], dump_battle(custom), self.settings.raid)
-        self.assertEqual(result['rewards'], [dict(id=1, xp=1000, gold=500, item=None)])
+        reward = result['rewards'][0]
+        self.assertEqual({key: reward[key] for key in ('id', 'xp', 'gold', 'item')},
+                         dict(id=1, xp=1000, gold=500, item=None))
+        if reward.get('food_item'):
+            self.assertTrue(reward['food_item'].startswith('cooking:'))
         self.assertEqual(self.service.settings.victory_xp, 300)
         self.assertEqual(self.service.settings.drop_chance, 0.25)
 
@@ -596,10 +600,15 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         battle = raid_battle(raid['participants'], monster, 1)
         battle.result = '勝利'
         result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
-        self.assertEqual(result['rewards'], [dict(id=1, xp=800, gold=300, item=None)])
+        reward = result['rewards'][0]
+        self.assertEqual({key: reward[key] for key in ('id', 'xp', 'gold', 'item')},
+                         dict(id=1, xp=800, gold=300, item=None))
         self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
         self.assertEqual(self.store.gold(1, 1), 300)
-        self.assertEqual(self.characters.inventory(1, 1), ['starter:club'])
+        inventory = self.characters.inventory(1, 1)
+        self.assertIn('starter:club', inventory)
+        if reward.get('food_item'):
+            self.assertIn(reward['food_item'], inventory)
 
     async def test_slime_defeat_at_full_hp_has_no_rewards(self):
         monster = dict(self.monster, kind='史萊姆群')

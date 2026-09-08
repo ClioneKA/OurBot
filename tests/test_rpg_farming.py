@@ -36,13 +36,16 @@ class FarmingTests(unittest.TestCase):
         self.assertEqual([(plant.name, plant.level) for plant in PLANTS.values()], [
             ('馬鈴薯', 1), ('晨露藥草', 5), ('小麥', 10), ('魔女番茄', 20),
             ('月鈴草', 25), ('火紅辣椒', 30), ('夜色南瓜', 40),
-            ('夢霧草', 45), ('月白米', 50)])
+            ('夢霧草', 45), ('月白米', 50), ('星穗豆', 60),
+            ('霧露菇', 65), ('熔心薑', 70)])
         with self.assertRaises(CharacterError):
             self.farming.plant(1, 1, 'courtyard', 'dew_herb', now=0)
         with self.assertRaisesRegex(CharacterError, '農耕 Lv.20'):
             self.farming.plant(1, 1, 'prison', 'potato', now=0)
         with self.assertRaisesRegex(CharacterError, '農耕 Lv.40'):
             self.farming.plant(1, 1, 'greenhouse', 'potato', now=0)
+        with self.assertRaisesRegex(CharacterError, '農耕 Lv.60'):
+            self.farming.plant(1, 1, 'ruins', 'potato', now=0)
         self.set_level(20)
         self.farming.plant(1, 1, 'courtyard', 'potato', now=0)
         self.farming.plant(1, 1, 'prison', 'potato', now=10)
@@ -53,6 +56,9 @@ class FarmingTests(unittest.TestCase):
         self.farming.plant(1, 1, 'greenhouse', 'night_pumpkin', now=30)
         self.assertEqual(set(self.farming.state(1, 1)['sessions']),
                          {'courtyard', 'prison', 'greenhouse'})
+        self.set_level(60)
+        self.farming.plant(1, 1, 'ruins', 'star_bean', now=40)
+        self.assertEqual(self.farming.state(1, 1)['sessions']['ruins']['plant_id'], 'star_bean')
 
     def test_harvest_is_atomic_exactly_once_and_survives_restart(self):
         self.farming.plant(1, 1, 'courtyard', 'potato', now=100)

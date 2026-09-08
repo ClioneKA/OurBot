@@ -64,7 +64,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('料理 XP', embed.fields[-1].value)
         self.assertEqual(view.ingredients, [])
 
-    async def test_c_grade_can_open_and_selected_ingredients_can_be_donated(self):
+    async def test_d_grade_can_open_and_selected_ingredients_can_be_donated(self):
         self.grant('fishing:pond:common', 6)
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
@@ -84,23 +84,25 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         await view.handle(self.interaction, 'repeat')
         self.assertEqual(view.ingredients, ['fishing:pond:common'])
 
-    async def test_one_seat_meal_is_shown_and_completed_as_private(self):
+    async def test_aftertaste_meal_keeps_public_seats(self):
         self.grant('fishing:waterway:rare', 4)
-        self.grant('farming:moonwhite_rice')
+        self.grant('cooking:seasoning:high')
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
-        view.ingredients = ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice']
+        view.ingredients = ['fishing:waterway:rare'] * 4 + ['cooking:seasoning:high']
         data = self.provisions.preview(view.ingredients, 1, 1)
-        self.assertEqual(data['capacity'], 1)
-        self.tavern.serve_meal.return_value = (None, {'capacity': 1, 'data': data})
+        self.assertEqual((data['duration'], data['capacity']), (3, data['total_portions']))
+        self.tavern.serve_meal.return_value = (
+            SimpleNamespace(jump_url='https://discord.test/meal'),
+            {'capacity': data['capacity'], 'data': data})
 
         view.rebuild()
-        cook = next(child for child in view.children if child.label == '完成私人料理')
+        cook = next(child for child in view.children if child.label == '完成料理並開桌')
         self.assertFalse(cook.disabled)
         await view.handle(self.interaction, 'cook')
 
         embed = self.interaction.edit_original_response.call_args.kwargs['embed']
-        self.assertIn('不發布酒館公告', embed.fields[-1].value)
+        self.assertIn('不同客人', embed.fields[-1].value)
 
     async def test_load_last_recipe_only_fills_selection(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2

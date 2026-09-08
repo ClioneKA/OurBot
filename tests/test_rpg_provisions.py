@@ -10,8 +10,8 @@ from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_INITIAL_XP_PERCENT
                                  INGREDIENTS, MEAL_CLAIM_SECONDS,
                                  MEAL_EFFECT_SECONDS, NOURISHMENT,
                                  PAIRINGS, Provisions,
-                                 VITALITY, evaluate_ingredients,
-                                 guest_reward_target)
+                                 VITALITY, evaluate_ingredients, grade_cap, secondary_percent,
+                                 guest_reward_target, _grade)
 from core.settings import RPGSettings
 
 
@@ -31,17 +31,22 @@ class ProvisionTests(unittest.TestCase):
                 DO UPDATE SET quantity=quantity+excluded.quantity''', (user, key, quantity))
 
     def test_all_fish_crops_weeds_and_herbs_are_cooking_ingredients(self):
-        self.assertEqual(len(INGREDIENTS), 18)
+        self.assertEqual(len(INGREDIENTS), 30)
         tags = {ingredient.tag for ingredient in INGREDIENTS.values()}
-        self.assertEqual(tags, {GROWTH, ASSAULT, VITALITY, FEAST, NOURISHMENT, FORTUNE})
+        self.assertEqual(tags, {None, GROWTH, ASSAULT, VITALITY, FEAST, NOURISHMENT, FORTUNE})
         rare = [key for key, ingredient in INGREDIENTS.items() if ingredient.aftertaste]
-        self.assertEqual(rare, ['fishing:pond:rare', 'fishing:lake:rare',
-                                'fishing:waterway:rare'])
-        self.assertEqual(sum(INGREDIENTS[key].aftertaste for key in rare), 3)
+        self.assertEqual(rare, ['cooking:seasoning:low', 'cooking:seasoning:mid',
+                                'cooking:seasoning:high'])
+        self.assertEqual([INGREDIENTS[key].aftertaste for key in rare], [2, 3, 4])
 
     def test_backpack_descriptions_share_cooking_metadata_format(self):
         for key, ingredient in INGREDIENTS.items():
             description = ITEMS[key].description
+            if ingredient.seasoning:
+                self.assertIn(f'美味度 +{ingredient.score_bonus}', description)
+                self.assertIn(f'餘韻：+{ingredient.aftertaste}', description)
+                self.assertIn('每桌最多一份', description)
+                continue
             self.assertIn(f'料理標籤：{ingredient.tag}', description)
             self.assertIn(f'品質：{ingredient.quality}', description)
             expected_echo = f'+{ingredient.aftertaste}' if ingredient.aftertaste else '—'
@@ -57,11 +62,11 @@ class ProvisionTests(unittest.TestCase):
         data = evaluate_ingredients(ingredients, cooking_level=20)
         self.assertEqual(data['primary_tag'], FORTUNE)
         self.assertEqual(data['secondary_tag'], GROWTH)
-        self.assertEqual(data['duration'], 2)
+        self.assertEqual(data['duration'], 1)
         self.assertEqual(data['total_portions'], 5)
-        self.assertEqual(data['capacity'], 2)
+        self.assertEqual(data['capacity'], 5)
         self.assertEqual(data['pairings'], 1)
-        self.assertIn('drop_points', data['effect'])
+        self.assertEqual(data['effect']['drop_percent'], 30)
         self.assertIn('xp_percent', data['effect'])
 
     def test_five_feast_ingredients_require_an_effect_ingredient(self):
@@ -73,24 +78,24 @@ class ProvisionTests(unittest.TestCase):
         high = evaluate_ingredients(
             ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice'])
         self.assertEqual(COOKING_XP_PER_QUALITY, 50)
-        self.assertEqual((low['grade'], low['cooking_xp']), ('C', 250))
+        self.assertEqual((low['grade'], low['cooking_xp']), ('D', 200))
         self.assertEqual((high['grade'], high['cooking_xp']), ('S', 1400))
         self.assertEqual(COOKING_INITIAL_XP_PERCENT, 25)
         self.assertEqual((low['initial_cooking_xp'], high['initial_cooking_xp']),
-                         (62, 350))
+                         (50, 350))
 
     def test_donation_awards_half_of_ingredient_base_xp(self):
         ingredients = ['fishing:pond:common'] * 5
         self.grant('fishing:pond:common', 10)
         meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
         self.assertEqual((meal['data']['grade'], meal['data']['initial_cooking_xp']),
-                         ('C', 62))
+                         ('D', 50))
         self.assertEqual(self.characters.inventory_counts(1, 1)['fishing:pond:common'], 5)
 
         result = self.provisions.donate(1, 1, ingredients)
         self.assertEqual(DONATION_XP_PERCENT, 50)
         self.assertEqual(result, {'quantity': 5, 'quality': 5, 'xp': 125})
-        self.assertEqual(self.provisions.state(1, 1)['xp'], 187)
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 175)
         self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
 
     def test_cooking_is_atomic_awards_xp_and_seats_cook(self):
@@ -124,9 +129,10 @@ class ProvisionTests(unittest.TestCase):
         for key in two_seat:
             self.grant(key, user=10)
         meal = self.provisions.cook(1, 10, 9, two_seat, now=100)
-        self.assertEqual((meal['capacity'], guest_reward_target(meal['capacity'])), (2, 1))
+        self.assertEqual((meal['capacity'], guest_reward_target(meal['capacity'])), (5, 3))
         self.provisions.publish(meal['id'], 98)
-        self.provisions.claim(meal['id'], 1, 11, now=101)
+        for user in (11, 12, 13):
+            self.provisions.claim(meal['id'], 1, user, now=100 + user)
         self.assertEqual(self.provisions.state(1, 10)['xp'], meal['data']['cooking_xp'])
 
         three_seat = ['fishing:pond:common'] * 5
@@ -163,20 +169,37 @@ class ProvisionTests(unittest.TestCase):
         self.provisions.claim(meal['id'], 1, 5, now=105)
         self.assertEqual(self.provisions.state(1, 1)['xp'], full_xp)
 
-    def test_one_seat_meal_is_private_and_awards_full_xp_immediately(self):
-        ingredients = ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice']
-        self.grant('fishing:waterway:rare', 8)
-        self.grant('farming:moonwhite_rice', 2)
+    def test_aftertaste_only_changes_duration_not_seats(self):
+        base = ['fishing:pond:rare', 'fishing:lake:rare',
+                'fishing:pond:common', 'farming:potato']
+        low = evaluate_ingredients(base + ['cooking:seasoning:low'], cooking_level=20)
+        high = evaluate_ingredients(base + ['cooking:seasoning:high'], cooking_level=80)
+        self.assertEqual((low['duration'], low['capacity']), (2, low['total_portions']))
+        self.assertEqual((high['duration'], high['capacity']), (3, high['total_portions']))
+        with self.assertRaisesRegex(CharacterError, '最多只能使用一份調味料'):
+            evaluate_ingredients(base[:3] + ['cooking:seasoning:low',
+                                             'cooking:seasoning:mid'])
 
-        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+    def test_grade_caps_and_secondary_strength_milestones(self):
+        recipe = ['fishing:bay:rare', 'farming:ember_ginger', 'fishing:bay:common',
+                  'farming:star_bean', 'cooking:seasoning:high']
+        level_one = evaluate_ingredients(recipe, cooking_level=1)
+        level_forty = evaluate_ingredients(recipe, cooking_level=40)
+        level_eighty = evaluate_ingredients(recipe, cooking_level=80)
+        self.assertEqual((level_one['potential_grade'], level_one['grade']), ('SS', 'S'))
+        self.assertEqual((level_forty['potential_grade'], level_forty['grade']), ('SSS', 'SS'))
+        self.assertEqual((level_eighty['potential_grade'], level_eighty['grade']), ('SSS', 'SSS'))
+        self.assertEqual([grade_cap(level) for level in (1, 40, 80)], ['S', 'SS', 'SSS'])
+        self.assertEqual([secondary_percent(level) for level in (19, 20, 40, 60, 80, 100, 120)],
+                         [0, 50, 60, 70, 80, 90, 100])
 
-        self.assertEqual((meal['capacity'], meal['status']), (1, 'private'))
-        self.assertEqual(meal['data']['immediate_cooking_xp'], meal['data']['cooking_xp'])
-        self.assertEqual(self.provisions.state(1, 1)['xp'], meal['data']['cooking_xp'])
-        self.assertEqual(self.provisions.claimants(meal['id']), [1])
-        self.assertEqual(self.provisions.open_meals(now=101), [])
-        with self.assertRaisesRegex(CharacterError, '私人料理'):
-            self.provisions.cook(1, 1, 9, ingredients, now=101)
+    def test_all_grade_boundaries_and_score_cap(self):
+        self.assertEqual([_grade(score) for score in
+                          (44, 45, 54, 55, 69, 70, 84, 85, 99, 100, 114, 115)],
+                         ['D', 'C', 'C', 'B', 'B', 'A', 'A', 'S', 'S', 'SS', 'SS', 'SSS'])
+        recipe = ['fishing:bay:rare', 'farming:ember_ginger', 'fishing:bay:common',
+                  'farming:star_bean', 'cooking:seasoning:high']
+        self.assertLessEqual(evaluate_ingredients(recipe, cooking_level=120)['score'], 130)
 
     def test_last_recipe_only_returns_successfully_completed_meal(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
@@ -216,7 +239,7 @@ class ProvisionTests(unittest.TestCase):
 
     def test_meal_claims_are_idempotent_and_temperance_preserves_charge(self):
         ingredients = ['fishing:pond:rare', 'fishing:lake:rare',
-                       'fishing:pond:common', 'farming:potato', 'farming:wheat']
+                       'fishing:pond:common', 'farming:potato', 'cooking:seasoning:low']
         for key in ingredients:
             self.grant(key)
         meal = self.provisions.cook(1, 1, 9, ingredients, now=100)

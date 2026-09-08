@@ -29,20 +29,22 @@ EFFECT_TAGS = (GROWTH, ASSAULT, VITALITY, NOURISHMENT, FORTUNE)
 
 @dataclass(frozen=True)
 class Ingredient:
-    tag: str
+    tag: str | None
     quality: int
     aftertaste: int = 0
+    score_bonus: int = 0
+    seasoning: bool = False
 
 
 INGREDIENTS = {
     'fishing:pond:common': Ingredient(GROWTH, 1),
-    'fishing:pond:rare': Ingredient(FORTUNE, 2, 1),
+    'fishing:pond:rare': Ingredient(FORTUNE, 2),
     'fishing:pond:weed': Ingredient(NOURISHMENT, 1),
     'fishing:lake:common': Ingredient(ASSAULT, 2),
-    'fishing:lake:rare': Ingredient(FORTUNE, 3, 1),
+    'fishing:lake:rare': Ingredient(FORTUNE, 3),
     'fishing:lake:weed': Ingredient(NOURISHMENT, 2),
     'fishing:waterway:common': Ingredient(GROWTH, 3),
-    'fishing:waterway:rare': Ingredient(FORTUNE, 4, 1),
+    'fishing:waterway:rare': Ingredient(FORTUNE, 4),
     'fishing:waterway:weed': Ingredient(NOURISHMENT, 3),
     'farming:potato': Ingredient(FEAST, 1),
     'farming:dew_herb': Ingredient(VITALITY, 1),
@@ -53,6 +55,18 @@ INGREDIENTS = {
     'farming:night_pumpkin': Ingredient(VITALITY, 3),
     'farming:dreammist_herb': Ingredient(GROWTH, 3),
     'farming:moonwhite_rice': Ingredient(FEAST, 4),
+    'fishing:bay:common': Ingredient(ASSAULT, 4),
+    'fishing:bay:rare': Ingredient(FORTUNE, 5),
+    'fishing:bay:weed': Ingredient(NOURISHMENT, 4),
+    'farming:star_bean': Ingredient(FEAST, 4),
+    'farming:mist_mushroom': Ingredient(VITALITY, 4),
+    'farming:ember_ginger': Ingredient(ASSAULT, 5),
+    'cooking:meat:low': Ingredient(FEAST, 2),
+    'cooking:meat:mid': Ingredient(FEAST, 3),
+    'cooking:meat:high': Ingredient(FEAST, 4),
+    'cooking:seasoning:low': Ingredient(None, 0, 2, 4, True),
+    'cooking:seasoning:mid': Ingredient(None, 0, 3, 8, True),
+    'cooking:seasoning:high': Ingredient(None, 0, 4, 12, True),
 }
 
 PAIRINGS = (
@@ -65,11 +79,17 @@ PAIRINGS = (
     ('fishing:waterway:common', 'farming:night_pumpkin'),
     ('fishing:waterway:rare', 'farming:moonwhite_rice'),
     ('fishing:waterway:weed', 'farming:dreammist_herb'),
+    ('fishing:bay:common', 'farming:star_bean'),
+    ('fishing:bay:rare', 'farming:ember_ginger'),
+    ('fishing:bay:weed', 'farming:mist_mushroom'),
 )
 
-GRADE_MULTIPLIERS = {'C': 100, 'B': 110, 'A': 125, 'S': 140}
-GRADE_EFFECT_INDEX = {'C': 0, 'B': 1, 'A': 2, 'S': 3}
-GRADE_NAMES = {'C': '家常', 'B': '美味', 'A': '精緻', 'S': '極上'}
+GRADE_ORDER = ('D', 'C', 'B', 'A', 'S', 'SS', 'SSS')
+GRADE_MULTIPLIERS = {'D': 80, 'C': 100, 'B': 110, 'A': 125, 'S': 140,
+                     'SS': 160, 'SSS': 185}
+GRADE_EFFECT_INDEX = {grade: index for index, grade in enumerate(GRADE_ORDER)}
+GRADE_NAMES = {'D': '粗製', 'C': '家常', 'B': '美味', 'A': '精緻', 'S': '極上',
+               'SS': '夢幻', 'SSS': '傳說'}
 TAG_NAMES = {
     GROWTH: '冒險者', ASSAULT: '豪快', VITALITY: '豐饒',
     NOURISHMENT: '滋養', FORTUNE: '幸運',
@@ -94,39 +114,60 @@ for tier, ingredients in (
 
 
 def _grade(score):
+    if score >= 115:
+        return 'SSS'
+    if score >= 100:
+        return 'SS'
     if score >= 85:
         return 'S'
     if score >= 70:
         return 'A'
     if score >= 55:
         return 'B'
-    return 'C'
+    if score >= 45:
+        return 'C'
+    return 'D'
 
 
-def _effect(tag, grade, secondary=False):
+def grade_cap(cooking_level):
+    if cooking_level >= 80:
+        return 'SSS'
+    if cooking_level >= 40:
+        return 'SS'
+    return 'S'
+
+
+def secondary_percent(cooking_level):
+    if cooking_level < 20:
+        return 0
+    return min(100, 50 + (min(120, cooking_level) // 20 - 1) * 10)
+
+
+def _scaled(value, percent):
+    return max(1, value * percent // 100) if value else 0
+
+
+def _effect(tag, grade, percent=100):
     index = GRADE_EFFECT_INDEX[grade]
     if tag == GROWTH:
-        value = (5, 8, 11, 15)[index]
-        return {'xp_percent': max(3, value // 2) if secondary else value}
+        value = (3, 5, 8, 11, 15, 18, 22)[index]
+        return {'xp_percent': _scaled(value, percent)}
     if tag == ASSAULT:
-        attack = (4, 6, 8, 11)[index]
-        critical = (2, 3, 4, 5)[index]
-        if secondary:
-            attack, critical = max(2, attack // 2), max(1, critical // 2)
-        return {'attack_percent': attack, 'critical_points': critical}
+        attack = (3, 4, 6, 8, 11, 13, 15)[index]
+        critical = (1, 2, 3, 4, 5, 6, 7)[index]
+        return {'attack_percent': _scaled(attack, percent),
+                'critical_points': _scaled(critical, percent)}
     if tag == VITALITY:
-        value = (4, 6, 8, 11)[index]
-        value = max(2, value // 2) if secondary else value
+        value = _scaled((3, 4, 6, 8, 11, 13, 15)[index], percent)
         return {'hp_percent': value, 'healing_percent': value}
     if tag == NOURISHMENT:
-        value = (2, 3, 4, 5)[index]
-        return {'lifesteal_percent': max(1, value // 2) if secondary else value}
+        value = (1, 2, 3, 4, 5, 6, 7)[index]
+        return {'lifesteal_percent': _scaled(value, percent)}
     if tag == FORTUNE:
-        drop = (2, 3, 4, 5)[index]
-        gold = (5, 8, 11, 15)[index]
-        if secondary:
-            drop, gold = min(2, max(1, drop // 2)), max(3, gold // 2)
-        return {'drop_points': drop, 'gold_percent': gold}
+        drop = (10, 15, 20, 30, 40, 50, 60)[index]
+        gold = (3, 5, 8, 11, 15, 18, 22)[index]
+        return {'drop_percent': _scaled(drop, percent),
+                'gold_percent': _scaled(gold, percent)}
     return {}
 
 
@@ -136,7 +177,8 @@ def effect_text(effect):
         ('xp_percent', '討伐 XP', '%'), ('attack_percent', '攻擊', '%'),
         ('critical_points', '暴擊率', ' 個百分點'), ('hp_percent', '最大 HP', '%'),
         ('healing_percent', '治療量', '%'), ('lifesteal_percent', '直接傷害吸血', '%'),
-        ('drop_points', '掉落率', ' 個百分點'), ('gold_percent', '金幣', '%'),
+        ('drop_percent', '掉落率', '%'), ('drop_points', '掉落率', ' 個百分點'),
+        ('gold_percent', '金幣', '%'),
     )
     for key, label, unit in labels:
         if effect.get(key):
@@ -156,38 +198,51 @@ def evaluate_ingredients(ingredient_ids, cooking_level=1):
     tags = Counter()
     quality = 0
     aftertaste = 0
+    seasoning_bonus = 0
+    seasoning_count = 0
     first_tag = {}
     for index, key in enumerate(ingredient_ids):
         ingredient = INGREDIENTS[key]
-        tags[ingredient.tag] += 1
+        if ingredient.tag:
+            tags[ingredient.tag] += 1
+            first_tag.setdefault(ingredient.tag, index)
         quality += ingredient.quality
         aftertaste += ingredient.aftertaste
-        first_tag.setdefault(ingredient.tag, index)
+        seasoning_bonus += ingredient.score_bonus
+        seasoning_count += int(ingredient.seasoning)
+    if seasoning_count > 1:
+        raise CharacterError('每桌料理最多只能使用一份調味料。')
     candidates = [tag for tag in EFFECT_TAGS if tags[tag]]
     if not candidates:
-        raise CharacterError('至少需要一份能提供料理效果的魚、水草或藥草。')
+        raise CharacterError('至少需要一份能提供料理效果的魚、水草、作物或藥草。')
     ordered = sorted(candidates, key=lambda tag: (-tags[tag], first_tag[tag]))
     primary = ordered[0]
     secondary = ordered[1] if cooking_level >= 20 and len(ordered) > 1 and tags[ordered[1]] >= 2 else None
     unique = len(counts)
     pairing_count = sum(left in counts and right in counts for left, right in PAIRINGS)
     mastery = min(10, max(0, cooking_level) // 10)
-    score = min(100, 30 + quality * 2 + unique * 4 + pairing_count * 8 + mastery)
-    grade = _grade(score)
+    score = min(130, 30 + quality * 2 + unique * 4 + pairing_count * 8
+                + mastery + seasoning_bonus)
+    potential_grade = _grade(score)
+    cap = grade_cap(cooking_level)
+    grade = GRADE_ORDER[min(GRADE_ORDER.index(potential_grade), GRADE_ORDER.index(cap))]
     total_portions = min(8, 3 + tags[FEAST] + (1 if unique >= 4 else 0))
     duration = 3 if aftertaste >= 4 else 2 if aftertaste >= 2 else 1
-    capacity = max(1, total_portions // duration)
+    capacity = total_portions
     effect = _effect(primary, grade)
+    secondary_strength = secondary_percent(cooking_level)
     if secondary:
-        for key, value in _effect(secondary, grade, secondary=True).items():
+        for key, value in _effect(secondary, grade, secondary_strength).items():
             effect[key] = effect.get(key, 0) + value
     cooking_xp = quality * COOKING_XP_PER_QUALITY * GRADE_MULTIPLIERS[grade] // 100
     initial_cooking_xp = cooking_xp * COOKING_INITIAL_XP_PERCENT // 100
-    immediate_cooking_xp = cooking_xp if capacity == 1 else initial_cooking_xp
+    immediate_cooking_xp = initial_cooking_xp
     return {
         'ingredients': list(ingredient_ids), 'tag_counts': dict(tags), 'quality': quality,
         'unique': unique, 'pairings': pairing_count, 'score': score, 'grade': grade,
+        'potential_grade': potential_grade, 'grade_cap': cap,
         'primary_tag': primary, 'secondary_tag': secondary, 'aftertaste': aftertaste,
+        'seasoning_bonus': seasoning_bonus, 'secondary_percent': secondary_strength,
         'total_portions': total_portions, 'duration': duration, 'capacity': capacity,
         'effect': effect, 'cooking_xp': cooking_xp,
         'initial_cooking_xp': initial_cooking_xp,
@@ -321,10 +376,7 @@ class Provisions:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.state(guild, user)
             data = evaluate_ingredients(ingredient_ids, state['level'])
-            is_private = data['capacity'] == 1
-            if is_private and self._active_meal(guild, user, now):
-                raise CharacterError('你已有尚未使用完的料理效果，請先使用完再製作私人料理。')
-            if not is_private and self._host_has_open_table(guild, user, now):
+            if self._host_has_open_table(guild, user, now):
                 raise CharacterError('你已有一桌尚未客滿的公開料理，請等待客滿或開桌時間結束。')
             required = Counter(ingredient_ids)
             counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
@@ -342,7 +394,7 @@ class Provisions:
                 VALUES (?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=xp+excluded.xp''',
                             (guild, user, data['immediate_cooking_xp']))
             meal_id = uuid.uuid4().hex
-            status = 'private' if is_private else 'posting'
+            status = 'posting'
             offer = dict(id=meal_id, guild_id=guild, host_id=user, channel_id=channel,
                          message_id=None, data=data, capacity=data['capacity'], created_at=now,
                          expires_at=now + MEAL_CLAIM_SECONDS, status=status)
@@ -357,8 +409,6 @@ class Provisions:
                     (meal_id,guild_id,user_id,claimed_at,valid_until,remaining)
                     VALUES (?,?,?,?,?,?)''',
                                 (meal_id, guild, user, now, now + MEAL_EFFECT_SECONDS, data['duration']))
-            if is_private:
-                self._remember_recipe(guild, user, ingredient_ids)
         return offer
 
     def donate(self, guild, user, ingredient_ids):

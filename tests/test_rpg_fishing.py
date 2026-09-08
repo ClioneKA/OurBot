@@ -4,7 +4,7 @@ import unittest
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import CharacterError, Characters, ITEMS, item_sell_price
-from core.rpg_fishing import DURATIONS, Fishing, SPOTS, _weighted_pick, fishing_mastery
+from core.rpg_fishing import BIG_FISH, DURATIONS, Fishing, SPOTS, _weighted_pick, fishing_mastery
 from core.settings import RPGSettings
 
 
@@ -36,7 +36,8 @@ class FishingTests(unittest.TestCase):
     def test_rules_and_first_use_grants_one_bound_old_rod(self):
         self.assertEqual([(seconds, catches) for _, seconds, catches in DURATIONS.values()],
                          [(1800, 2), (7200, 6), (28800, 20)])
-        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20, 40])
+        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20, 40, 60])
+        self.assertTrue(all(dict(spot.loot)[spot.rare_item] == 6 for spot in SPOTS.values()))
         self.assertEqual([fishing_mastery(level, SPOTS['pond']) for level in (1, 11, 20, 31, 120)],
                          [0, 10, 10, 30, 30])
         self.assertTrue(all(sum(weight for _, weight in spot.loot) == 100 for spot in SPOTS.values()))
@@ -74,7 +75,7 @@ class FishingTests(unittest.TestCase):
         self.assertEqual(self.fishing.state(1, 1)['rod_id'], 'fishing:rod:simple')
         self.fishing.start(1, 1, 'pond', 'short', now=0)
         # Bonus succeeds; rolls 54.1% and 55% land in the rare-fish interval.
-        self.fishing.rng = SequenceRandom([0.1, 0.541, 0.55, 0.0])
+        self.fishing.rng = SequenceRandom([0.1, 0.9, 0.541, 0.55, 0.0])
         result = self.fishing.claim(1, 1, now=1800)
         self.assertTrue(result['bonus'])
         self.assertEqual(result['catches'], 3)
@@ -165,8 +166,55 @@ class FishingTests(unittest.TestCase):
         counts = self.characters.inventory_counts(1, 1)
         self.assertNotIn('fishing:rod:magic', counts)
         self.assertEqual(counts['fishing:rod:glow'], 1)
+        self.grant('fishing:bay:rod', 'fishing:bay:line', 'fishing:bay:hook')
+        self.fishing.craft_next(1, 1)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertNotIn('fishing:rod:glow', counts)
+        self.assertEqual(counts['fishing:rod:star_tide'], 1)
         with self.assertRaisesRegex(CharacterError, '最高階'):
             self.fishing.craft_next(1, 1)
+
+    def test_big_fish_replaces_rod_bonus_and_saves_best_record(self):
+        self.fishing.state(1, 1)
+        self.grant('fishing:rod:simple')
+        self.fishing.equip(1, 1, 'fishing:rod:simple')
+        self.fishing.start(1, 1, 'pond', 'short', now=0)
+        # Bonus succeeds, the display-fish roll succeeds, then weight rolls 100%.
+        self.fishing.rng = SequenceRandom([0.0, 0.0, 20 / 31, 0.0, 0.0])
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertTrue(result['bonus'])
+        self.assertFalse(result['bonus_catch'])
+        self.assertEqual((result['catches'], result['xp']), (2, 200))
+        self.assertEqual(result['big_fish']['name'], '百年池王鯉')
+        self.assertEqual(result['big_fish']['weight_g'], 6000)
+        record = self.fishing.records(1, 1)[0]
+        self.assertEqual((record['fish_id'], record['best_weight_g'], record['caught_count']),
+                         ('pond', 6000, 1))
+        self.fishing.set_display_fish(1, 1, 'pond')
+        self.assertEqual(self.fishing.display_record(1, 1)['best_weight_g'], 6000)
+        replay = self.fishing.claim(1, 1, now=1801)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(self.fishing.records(1, 1)[0]['caught_count'], 1)
+
+        self.fishing.start(1, 1, 'pond', 'short', now=2000)
+        self.fishing.rng = SequenceRandom([0.0, 0.0, 0.0, 0.0, 0.0])
+        lighter = self.fishing.claim(1, 1, now=3800)
+        self.assertFalse(lighter['big_fish']['is_record'])
+        record = self.fishing.records(1, 1)[0]
+        self.assertEqual((record['best_weight_g'], record['caught_count']), (6000, 2))
+
+    def test_level_sixty_bay_and_all_big_fish_names(self):
+        self.assertEqual([fish.name for fish in BIG_FISH.values()],
+                         ['百年池王鯉', '魔女湖王鱒', '幽淵巨口魚', '月潮巨鮪'])
+        self.fishing.state(1, 1)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(60),))
+        started = self.fishing.start(1, 1, 'bay', 'short', now=0)
+        self.assertEqual(started['spot'].name, '魔女島海灣')
+        self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertEqual((result['items'], result['xp']), ({'fishing:bay:common': 2}, 2000))
 
     def test_exact_sale_prices_transfer_and_notifications(self):
         self.grant('fishing:pond:coin', 'fishing:pond:common')

@@ -23,12 +23,14 @@ LOCATIONS = {
     'courtyard': '中庭花圃',
     'prison': '監獄菜園',
     'greenhouse': '廢棄溫室',
+    'ruins': '遺址種地',
 }
 
 LOCATION_LEVELS = {
     'courtyard': 1,
     'prison': 20,
     'greenhouse': 40,
+    'ruins': 60,
 }
 
 PLANTS = {
@@ -50,6 +52,12 @@ PLANTS = {
                             '成長 Q3｜搭配 夜露水草'),
     'moonwhite_rice': Plant('月白米', 'farming:moonwhite_rice', 50, 4 * 60 * 60, 1, 4800,
                             '盛宴 Q4｜搭配 鏡蝶魚'),
+    'star_bean': Plant('星穗豆', 'farming:star_bean', 60, 60 * 60, 2, 1000,
+                       '盛宴 Q4｜搭配 潮紋旗魚'),
+    'mist_mushroom': Plant('霧露菇', 'farming:mist_mushroom', 65, 2 * 60 * 60, 2, 2000,
+                           '活力 Q4｜搭配 逆潮海帶'),
+    'ember_ginger': Plant('熔心薑', 'farming:ember_ginger', 70, 4 * 60 * 60, 1, 8000,
+                          '猛攻 Q5｜搭配 蝕星龍魚'),
 }
 
 

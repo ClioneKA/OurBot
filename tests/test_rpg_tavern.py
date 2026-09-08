@@ -210,20 +210,21 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
 
-    async def test_one_seat_meal_is_private_and_not_posted(self):
+    async def test_aftertaste_no_longer_reduces_seats_and_meal_is_posted(self):
         with self.store.db:
             self.store.db.execute(
                 "INSERT INTO rpg_inventory VALUES (1,1,'fishing:waterway:rare',4)")
             self.store.db.execute(
-                "INSERT INTO rpg_inventory VALUES (1,1,'farming:moonwhite_rice',1)")
+                "INSERT INTO rpg_inventory VALUES (1,1,'cooking:seasoning:high',1)")
 
         message, meal = await self.service.serve_meal(
             self.interaction,
-            ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice'])
+            ['fishing:waterway:rare'] * 4 + ['cooking:seasoning:high'])
 
-        self.assertIsNone(message)
-        self.assertEqual((meal['capacity'], meal['status']), (1, 'private'))
-        self.public.send.assert_not_awaited()
+        self.assertEqual(message.id, 99)
+        self.assertEqual((meal['capacity'], meal['data']['duration'], meal['status']),
+                         (meal['data']['total_portions'], 3, 'open'))
+        self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
 
     async def test_tavern_panel_shows_active_drink_and_meal(self):

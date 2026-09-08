@@ -339,12 +339,6 @@ class TavernService:
             raise
 
     async def serve_meal(self, interaction, ingredients):
-        preview = self.cog.provisions.preview(
-            ingredients, interaction.guild_id, interaction.user.id)
-        if preview['capacity'] == 1:
-            meal = self.cog.provisions.cook(
-                interaction.guild_id, interaction.user.id, interaction.channel_id, ingredients)
-            return None, self.cog.provisions.meal(meal['id'])
         channel = self.public_channel(interaction)
         meal = self.cog.provisions.cook(interaction.guild_id, interaction.user.id,
                                         channel.id, ingredients)
@@ -402,7 +396,7 @@ class TavernView(discord.ui.View):
                          '**請大家喝一杯**\n公開請客，入席者取得下一場討伐經驗 +5%。'
                          '領取時間 2 小時，效果保留 24 小時且不能囤積；消耗後可再次領取。'
                          '飲料與料理分開計算，可以各持有一份並在同場討伐生效。\n\n'
-                         '**準備料理**\n選擇五份魚、作物、水草或藥草；單人份成為私人料理，其餘依標籤與評分公開開桌。\n\n'
+                         '**準備料理**\n選擇五份魚、作物、水草、藥草、肉類或調味料，依標籤與評分公開開桌。\n\n'
                          f'持有金幣：**{self.cog.store.gold(self.guild_id, self.owner.id):,}**'))
         drink_text = '目前沒有飲料效果。'
         if drink:

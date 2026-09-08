@@ -51,6 +51,30 @@ FIXED_DROPS = {'深淵鐘龍': 'paint:red', '王城傀儡師': 'paint:yellow', '
 CHANCE_DROPS = {
     '城崎諾亞': dict(chance=0.5, rolls=3, pool=tuple(PAINT_ITEMS.values()), mode='single_random'),
 }
+FOOD_DROP_CHANCES = {'普通': 0.35, '精英': 0.50, '首領': 0.75, '傳說': 1.0}
+FOOD_DROP_ITEMS = {
+    'low': ('cooking:meat:low', 'cooking:seasoning:low'),
+    'mid': ('cooking:meat:mid', 'cooking:seasoning:mid'),
+    'high': ('cooking:meat:high', 'cooking:seasoning:high'),
+}
+
+
+def food_drop_for(monster):
+    tier = monster.get('tier')
+    if type(tier) is not int:
+        return None
+    group = 'low' if tier <= 2 else 'mid' if tier <= 4 else 'high'
+    meat, seasoning = FOOD_DROP_ITEMS[group]
+    return dict(chance=FOOD_DROP_CHANCES.get(monster.get('quality', '普通'), 0.35),
+                meat=meat, seasoning=seasoning, seasoning_chance=0.05)
+
+
+def equipment_drop_chance(base_chance, meal=None, fortune=None):
+    """Apply current relative bonuses while preserving old flat-point meal snapshots."""
+    meal, fortune = meal or {}, fortune or {}
+    relative = meal.get('drop_percent', 0) + (40 if fortune.get('id') == 'wheel' else 0)
+    return min(1.0, base_chance * (100 + relative) / 100
+               + meal.get('drop_points', 0) / 100)
 
 
 class RaidStore:
@@ -140,6 +164,7 @@ class RaidStore:
                     drop_version=7, drop_pool=list(DROP_TABLES.get(monster['kind'], ())),
                     fixed_drop=FIXED_DROPS.get(monster['kind']),
                     fixed_drop_mode='single_random', chance_drop=CHANCE_DROPS.get(monster['kind']),
+                    food_drop=food_drop_for(monster),
                     pool=pool, no_dynamic=not use_dynamic)
         if payment_user is not None and payment_gold:
             raid['payment'] = dict(user_id=payment_user, gold=payment_gold, refunded=False)
@@ -304,6 +329,7 @@ class RaidStore:
                 from types import SimpleNamespace
                 settings = SimpleNamespace(**raid['reward_policy'])
             rng = random.Random(raid['seed'])
+            food_rng = random.Random(f'{raid["seed"]}:food')
             enemies = [f for f in battle_data['fighters'] if f['team'] == 1]
             maximum = sum(max(0, f['stats']['HP']) for f in enemies)
             remaining = sum(max(0, min(f['hp'], f['stats']['HP'])) for f in enemies)
@@ -340,9 +366,7 @@ class RaidStore:
                                     + meal.get('xp_percent', 0)) // 100
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
-                drop_chance = min(1.0, settings.drop_chance
-                                  + (0.10 if fortune.get('id') == 'wheel' else 0)
-                                  + meal.get('drop_points', 0) / 100)
+                drop_chance = equipment_drop_chance(settings.drop_chance, meal, fortune)
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < drop_chance:
                     if raid['monster']['kind'] == '城崎諾亞':
                         own = list(NOAH_EQUIPMENT.get(p['state']['job'], ()))
@@ -371,6 +395,12 @@ class RaidStore:
                 if victory and raid['monster']['kind'] == '城崎諾亞' and rng.random() < 0.02:
                     extra_item = 'noah:unfinished'
                     add_owned_item(self.db, raid['guild_id'], p['id'], extra_item)
+                food_item = None
+                food_drop = raid.get('food_drop')
+                if victory and food_drop and food_rng.random() < food_drop['chance']:
+                    food_item = (food_drop['seasoning'] if food_rng.random()
+                                 < food_drop.get('seasoning_chance', 0.05) else food_drop['meat'])
+                    add_owned_item(self.db, raid['guild_id'], p['id'], food_item)
                 reward = dict(id=p['id'], xp=personal_xp, gold=personal_gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
@@ -378,6 +408,8 @@ class RaidStore:
                     reward['chance_items'] = chance_items
                 if extra_item:
                     reward['extra_item'] = extra_item
+                if food_item:
+                    reward['food_item'] = food_item
                 rewards.append(reward)
             # A divination is consumed by completing the raid, regardless of
             # victory.  Keep the daily draw count so later readings cost more.

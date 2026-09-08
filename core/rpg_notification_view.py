@@ -62,6 +62,10 @@ class FishingNotificationView(_NotificationView):
                            + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。')
             if result.get('mastery_bonus'):
                 description += f'\n熟練產量額外取得 {result["mastery_bonus"]} 份物品。'
+            if result.get('big_fish'):
+                fish = result['big_fish']
+                description += (f'\n釣起展示大魚【{fish["name"]}】{fish["weight_g"] / 1000:.1f} kg！'
+                                + ('刷新個人紀錄！' if fish['is_record'] else ''))
             if restart:
                 description += (f'\n\n已再次前往 **{restart["spot"].name}** 釣魚 '
                                 f'({DURATIONS[self.duration_id][0]})，<t:{int(restart["ready_at"])}:R>可以收竿。')

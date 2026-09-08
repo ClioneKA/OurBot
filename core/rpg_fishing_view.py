@@ -1,4 +1,4 @@
-"""Private Discord panel for fishing dispatches and rod progression."""
+"""Discord panel for fishing dispatches, rod progression, and trophy records."""
 import asyncio
 import time
 
@@ -7,7 +7,7 @@ import discord
 from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_fishing import (DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
+from core.rpg_fishing import (BIG_FISH, DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
                               fishing_progress, next_rod)
 from core.rpg_menu import navigate
 
@@ -20,6 +20,7 @@ class FishingView(discord.ui.View):
         level = self.cog.fishing.state(self.guild_id, self.owner.id)['level']
         self.spot_id = next(key for key, spot in reversed(SPOTS.items()) if level >= spot.level)
         self.duration_id = 'short'
+        self.showing_records = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -42,6 +43,17 @@ class FishingView(discord.ui.View):
         if state['level'] < SPOTS[self.spot_id].level:
             self.spot_id = 'pond'
         self.clear_items()
+        if self.showing_records:
+            records = self.cog.fishing.records(self.guild_id, self.owner.id)
+            if records:
+                self.add_item(PanelSelect('display_fish', row=0, placeholder='選擇角色展示漁獲', options=[
+                    discord.SelectOption(label=BIG_FISH[row['fish_id']].name,
+                        value=row['fish_id'], description=f'{row["best_weight_g"] / 1000:.1f} kg',
+                        default=row['fish_id'] == state['display_fish_id']) for row in records]))
+            self._button('返回釣魚', 'records', 1, style=discord.ButtonStyle.primary)
+            self._button('取消展示', 'clear_display', 1, disabled=not state['display_fish_id'])
+            self._button('關閉', 'close', 1)
+            return state
         self.add_item(PanelSelect('spot', row=0, placeholder='選擇釣場', options=[
             discord.SelectOption(label=spot.name, value=key,
                 description=f'釣魚 Lv.{spot.level}｜每次捕獲 {spot.base_xp} XP',
@@ -68,12 +80,33 @@ class FishingView(discord.ui.View):
         self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
         self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
         self._button('返回生活', 'life', 4)
+        self._button('大魚圖鑑', 'records', 4)
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)
         return state
 
     def embed(self, notice=None):
         state = self.cog.fishing.state(self.guild_id, self.owner.id)
+        if self.showing_records:
+            records = {row['fish_id']: row for row in self.cog.fishing.records(
+                self.guild_id, self.owner.id)}
+            embed = discord.Embed(title='安安大冒險｜大魚圖鑑', color=0x0EA5E9,
+                                  description='大魚只供收藏與展示，不可料理、出售或交易。')
+            for fish_id, fish in BIG_FISH.items():
+                row = records.get(fish_id)
+                value = '尚未捕獲'
+                if row:
+                    value = (f'最佳 {row["best_weight_g"] / 1000:.1f} kg｜累計 {row["caught_count"]} 尾\n'
+                             f'<t:{int(row["best_caught_at"])}:d>｜{DURATIONS[row["best_duration_id"]][0]}｜'
+                             f'{ITEMS[row["best_rod_id"]].name}')
+                    if state['display_fish_id'] == fish_id:
+                        value += '\n**目前展示中**'
+                embed.add_field(name=f'{SPOTS[fish_id].name}｜{fish.name}', value=value, inline=False)
+            if len(records) == len(BIG_FISH):
+                embed.set_footer(text='已完成全圖鑑：魔女島釣師')
+            if notice:
+                embed.add_field(name='操作結果', value=notice[:1024], inline=False)
+            return embed
         level, progress, required = fishing_progress(state['xp'])
         if required is None:
             xp_text = f'已達最高等級 Lv.{MAX_LEVEL}｜累積 {state["xp"]:,} XP'
@@ -101,6 +134,9 @@ class FishingView(discord.ui.View):
             counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
             recipe = '\n'.join(f'{ITEMS[key].name}：{counts.get(key, 0)}/1' for key in RECIPES[target])
             embed.add_field(name=f'下一階：{ITEMS[target].name}', value=recipe, inline=False)
+        embed.add_field(name='捕獲機率', value=(
+            '各釣場稀有魚基礎權重皆為 6%；釣竿加成是相對權重，最高 1.2 倍。\n'
+            '成品釣竿追加捕獲發動後，另有機會改為只供收藏與展示的大魚。'), inline=False)
         embed.add_field(name='完成通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
@@ -110,8 +146,12 @@ class FishingView(discord.ui.View):
     def _claim_notice(self, result):
         lines = [f'{ITEMS[key].name} ×{count}' for key, count in result['items'].items()]
         header = f'已從{SPOTS[result["spot_id"]].name}收竿，共捕獲 {result["catches"]} 次。'
-        if result['bonus']:
+        if result.get('bonus_catch', result['bonus']):
             header += '\n釣竿效果發動：追加一次捕獲！'
+        if result.get('big_fish'):
+            fish = result['big_fish']
+            header += (f'\n釣竿效果發動：釣起【{fish["name"]}】{fish["weight_g"] / 1000:.1f} kg！'
+                       + ('刷新個人紀錄！' if fish['is_record'] else ''))
         if result.get('mastery_bonus', 0):
             header += f'\n熟練產量發動：額外獲得 {result["mastery_bonus"]} 份物品！'
         text = header + '\n' + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。'
@@ -133,6 +173,11 @@ class FishingView(discord.ui.View):
                 return
             if action == 'life':
                 await navigate(self, interaction, 'life')
+                return
+            if action == 'records':
+                self.showing_records = not self.showing_records
+                self.rebuild()
+                await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
             if action == 'close':
                 self.closed = True
@@ -168,6 +213,12 @@ class FishingView(discord.ui.View):
                     state = self.cog.fishing.state(self.guild_id, self.owner.id)
                     enabled = self.cog.fishing.set_notify(self.guild_id, self.owner.id, not state['notify'])
                     notice = '釣魚完成時會私訊通知。' if enabled else '已關閉釣魚完成私訊。'
+                elif action == 'display_fish':
+                    self.cog.fishing.set_display_fish(self.guild_id, self.owner.id, value)
+                    notice = f'角色資料將展示 {BIG_FISH[value].name}。'
+                elif action == 'clear_display':
+                    self.cog.fishing.set_display_fish(self.guild_id, self.owner.id, None)
+                    notice = '已取消展示漁獲。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

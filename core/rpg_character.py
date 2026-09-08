@@ -399,7 +399,7 @@ for key, name, category, description, sell_price in (
     ('fishing:pond:common', '池塘鯽魚', '料理素材',
      _cooking_ingredient_description('成長', 1, '馬鈴薯'), 25),
     ('fishing:pond:rare', '七彩錦魚', '料理素材',
-     _cooking_ingredient_description('幸運', 2, '小麥', 1), 50),
+     _cooking_ingredient_description('幸運', 2, '小麥'), 50),
     ('fishing:pond:weed', '青苔水草', '料理素材',
      _cooking_ingredient_description('滋養', 1, '晨露藥草'), 30),
     ('fishing:pond:coin', '許願銅幣', '換金道具', '從許願池撈起的銅幣，可賣給商店換取金幣。', 100),
@@ -409,7 +409,7 @@ for key, name, category, description, sell_price in (
     ('fishing:lake:common', '魔女湖鱒', '料理素材',
      _cooking_ingredient_description('猛攻', 2, '魔女番茄'), 50),
     ('fishing:lake:rare', '星紋魔女鰻', '料理素材',
-     _cooking_ingredient_description('幸運', 3, '火紅辣椒', 1), 100),
+     _cooking_ingredient_description('幸運', 3, '火紅辣椒'), 100),
     ('fishing:lake:weed', '月光水草', '料理素材',
      _cooking_ingredient_description('滋養', 2, '月鈴草'), 60),
     ('fishing:lake:coin', '沉水銀幣', '換金道具', '沉在魔女島湖底的銀幣，可賣給商店換取金幣。', 200),
@@ -419,13 +419,23 @@ for key, name, category, description, sell_price in (
     ('fishing:waterway:common', '幽光盲魚', '料理素材',
      _cooking_ingredient_description('成長', 3, '夜色南瓜'), 100),
     ('fishing:waterway:rare', '鏡蝶魚', '料理素材',
-     _cooking_ingredient_description('幸運', 4, '月白米', 1), 200),
+     _cooking_ingredient_description('幸運', 4, '月白米'), 200),
     ('fishing:waterway:weed', '夜露水草', '料理素材',
      _cooking_ingredient_description('滋養', 3, '夢霧草'), 120),
     ('fishing:waterway:coin', '褪色金幣', '換金道具', '被地下水流沖刷得看不清圖案的舊金幣。', 400),
     ('fishing:waterway:rod', '黑檀漂流木', '製作材料', '質地堅硬、沉著黑亮的高級竿身材料。', 80),
     ('fishing:waterway:line', '月蠶釣線', '製作材料', '由月蠶絲製成、幾乎透明的堅韌釣線。', 80),
     ('fishing:waterway:hook', '黯銀魚鉤', '製作材料', '在黑暗中仍泛著銀光的銳利魚鉤。', 80),
+    ('fishing:bay:common', '潮紋旗魚', '料理素材',
+     _cooking_ingredient_description('猛攻', 4, '星穗豆'), 200),
+    ('fishing:bay:rare', '蝕星龍魚', '料理素材',
+     _cooking_ingredient_description('幸運', 5, '熔心薑'), 400),
+    ('fishing:bay:weed', '逆潮海帶', '料理素材',
+     _cooking_ingredient_description('滋養', 4, '霧露菇'), 240),
+    ('fishing:bay:coin', '星砂古幣', '換金道具', '從魔女島海灣撈起的古幣，可賣給商店換取金幣。', 800),
+    ('fishing:bay:rod', '星木竿胚', '製作材料', '帶有星紋的堅韌木材，適合製作高階竿身。', 160),
+    ('fishing:bay:line', '潮蠶釣線', '製作材料', '以潮蠶絲編成、能承受海灣巨物的釣線。', 160),
+    ('fishing:bay:hook', '星銀魚鉤', '製作材料', '以星銀鍛成、在海霧中仍會發光的魚鉤。', 160),
 ):
     ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
                       description=description, sell_price=sell_price)
@@ -435,6 +445,7 @@ for key, name, description in (
     ('fishing:rod:simple', '簡易釣竿', '收竿時有 20% 機率追加一次捕獲。'),
     ('fishing:rod:magic', '魔力釣竿', '收竿時有 30% 機率追加一次捕獲，稀有魚權重提高 10%。'),
     ('fishing:rod:glow', '幽光釣竿', '收竿時有 40% 機率追加一次捕獲，稀有魚權重提高 20%。'),
+    ('fishing:rod:star_tide', '星潮釣竿', '收竿時有 50% 機率追加一次捕獲，稀有魚權重提高 20%。'),
 ):
     ITEMS[key] = Item(name, '釣竿', '', 0, (0, 0, 0, 0, 0), category='釣竿',
                       description=description, transferable=False)
@@ -458,9 +469,33 @@ for key, name, category, description, sell_price in (
      _cooking_ingredient_description('成長', 3, '夜露水草'), 120),
     ('farming:moonwhite_rice', '月白米', '料理素材',
      _cooking_ingredient_description('盛宴', 4, '鏡蝶魚'), 200),
+    ('farming:star_bean', '星穗豆', '料理素材',
+     _cooking_ingredient_description('盛宴', 4, '潮紋旗魚'), 200),
+    ('farming:mist_mushroom', '霧露菇', '料理素材',
+     _cooking_ingredient_description('活力', 4, '逆潮海帶'), 240),
+    ('farming:ember_ginger', '熔心薑', '料理素材',
+     _cooking_ingredient_description('猛攻', 5, '蝕星龍魚'), 400),
 ):
     ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
                       description=description, sell_price=sell_price)
+
+for key, name, quality, description, sell_price in (
+    ('cooking:meat:low', '鮮獸肉', 2, '討伐取得的鮮肉。', 60),
+    ('cooking:meat:mid', '魔獸里肌', 3, '蘊含魔力的厚實里肌。', 120),
+    ('cooking:meat:high', '星露霜肉', 4, '覆著星露薄霜的高階肉品。', 240),
+):
+    ITEMS[key] = Item(name, '料理素材', '', 0, (0, 0, 0, 0, 0), category='料理素材',
+                      description=(f'{description}料理標籤：盛宴｜品質：{quality}｜餘韻：—｜推薦搭配：—。'),
+                      sell_price=sell_price)
+
+for key, name, score, aftertaste, description, sell_price in (
+    ('cooking:seasoning:low', '粗磨岩鹽', 4, 2, '帶有礦物香氣的粗鹽。', 100),
+    ('cooking:seasoning:mid', '魔女香料', 8, 3, '魔女島流傳的複合香料。', 200),
+    ('cooking:seasoning:high', '星砂香料', 12, 4, '在星光下研磨完成的珍稀香料。', 400),
+):
+    ITEMS[key] = Item(name, '料理素材', '', 0, (0, 0, 0, 0, 0), category='料理素材',
+                      description=(f'{description}調味料｜美味度 +{score}｜餘韻：+{aftertaste}｜每桌最多一份。'),
+                      sell_price=sell_price)
 
 for key, name, description, sell_price in (
     ('food:pond:common', '鯽魚馬鈴薯湯', 'HP 首次降至 40% 以下時回復最大 HP 的 15%。', 50),

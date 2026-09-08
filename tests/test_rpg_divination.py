@@ -129,10 +129,10 @@ class DivinationTests(unittest.TestCase):
         battle.hit(enemy, attacker, precise=True)
         self.assertEqual(attacker.hp, 0)
 
-    def test_settlement_adds_xp_drop_bonus_and_clears_card(self):
+    def test_settlement_adds_xp_and_clears_card(self):
         divinations = Divinations(self.store)
         repo = RaidStore(self.store)
-        policy = dict(victory_xp=100, victory_gold=0, drop_chance=0.0)
+        policy = dict(victory_xp=100, victory_gold=0, drop_chance=1.0)
         raid = repo.create(1, 10, {'kind': '巨獸', 'strength': 1}, 0, policy)
         raid.update(status='running', seed=31,
                     participants=[dict(id=1, state={'job': '民兵', 'level': 1},
