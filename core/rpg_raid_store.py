@@ -13,6 +13,7 @@ from core.rpg_monsters import TIER_VICTORY_XP
 MID_RAID_MIN_LEVEL = 30
 HIGH_RAID_MIN_LEVEL = 50
 HIGH_KINDS = {'熔爐鎧獸', '迷霧菌后', '星蝕巨神', '逆潮聖骸'}
+RAID_PROOFS_BY_POOL = {'regular': 1, 'mid': 3, 'high': 5}
 
 
 def raid_min_level(raid):
@@ -401,6 +402,13 @@ class RaidStore:
                     food_item = (food_drop['seasoning'] if food_rng.random()
                                  < food_drop.get('seasoning_chance', 0.05) else food_drop['meat'])
                     add_owned_item(self.db, raid['guild_id'], p['id'], food_item)
+                raid_proofs = 0
+                if (victory and raid.get('source') != 'admin'
+                        and raid.get('pool') != 'special'):
+                    raid_proofs = RAID_PROOFS_BY_POOL.get(raid.get('pool', 'regular'), 0)
+                    if raid_proofs:
+                        add_owned_item(self.db, raid['guild_id'], p['id'],
+                                       'proof:raid', raid_proofs)
                 reward = dict(id=p['id'], xp=personal_xp, gold=personal_gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
@@ -410,6 +418,8 @@ class RaidStore:
                     reward['extra_item'] = extra_item
                 if food_item:
                     reward['food_item'] = food_item
+                if raid_proofs:
+                    reward['raid_proofs'] = raid_proofs
                 rewards.append(reward)
             # A divination is consumed by completing the raid, regardless of
             # victory.  Keep the daily draw count so later readings cost more.

@@ -21,7 +21,8 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(combat_from_stats(stats, '民兵')['攻擊'], 60)
 
     def test_noah_paint_set_and_socket_variants(self):
-        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'paint:set', 'noah:unfinished'):
+        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'paint:set', 'noah:unfinished',
+                    'proof:raid', 'painting:balloon'):
             self.assertEqual((ITEMS[key].slot, ITEMS[key].category), ('', '製作材料'))
         self.level(45)
         self.characters.change_job(1, 1, '弓兵')
@@ -56,6 +57,21 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(ITEMS['noah:archer:suit:blue'].evasion, 5)
         self.assertFalse(item_sellable(ITEMS['noah:unfinished']))
         self.assertEqual(self.store.gold(1, 1), 5000 - DYE_PRICE * 2)
+
+    def test_raid_proofs_exchange_atomically_for_transferable_balloon_painting(self):
+        self.characters.grant_item(1, 1, 'proof:raid', 30)
+        item = self.characters.exchange_balloon_painting(1, 1)
+        self.assertEqual(item.name, '《氣球》的畫作')
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts.get('proof:raid', 0), 0)
+        self.assertEqual(counts['painting:balloon'], 1)
+        self.assertFalse(ITEMS['proof:raid'].transferable)
+        self.assertTrue(ITEMS['painting:balloon'].transferable)
+        self.assertFalse(item_sellable(ITEMS['proof:raid']))
+        self.assertFalse(item_sellable(ITEMS['painting:balloon']))
+        with self.assertRaises(CharacterError):
+            self.characters.exchange_balloon_painting(1, 1)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['painting:balloon'], 1)
 
     def test_duplicate_equipment_has_independent_socket_and_affixes(self):
         self.level(45)

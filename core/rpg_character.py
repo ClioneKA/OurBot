@@ -1,5 +1,6 @@
 """Character rules and transactional equipment storage; no Discord dependency."""
 from dataclasses import dataclass, replace
+import json
 import math
 import time
 
@@ -101,8 +102,11 @@ class Item:
     socket_base: str = ''
     paint_color: str = ''
     embroidery_slots: int = 0
+    crystal_slots: tuple = ()
     set_id: str = ''
     first_skill_cooldown_reduction: int = 0
+    critical_points: int = 0
+    healing_received_percent: int = 0
 
 
 @dataclass(frozen=True)
@@ -316,6 +320,46 @@ for key, item in {
 }.items():
     ITEMS[key] = item
 
+# T60 Painted Witch elite equipment.  The combined naked weapon + suit budget
+# is approximately 35% of the relevant Lv.60 combat values.  Its long-term
+# identity comes from three typed crystal sockets rather than a fixed set bonus.
+ELITE_CRYSTAL_SLOTS = ('outline', 'color', 'source')
+for key, item in {
+    'maze:infantry:weapon': Item(
+        '未竟戰繪・斷彩戰斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+        (137, 171, 28, 0), STABILITY['裝甲步兵'], required_level=60,
+        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:infantry:suit': Item(
+        '未竟戰繪・重彩戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+        (547, 29, 114, 0), required_level=60, sell_price=8000,
+        crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:knight:weapon': Item(
+        '未竟守望・界框劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
+        (257, 136, 59, 0), STABILITY['騎士'], required_level=60,
+        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:knight:suit': Item(
+        '未竟守望・定框重甲', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
+        (616, 0, 141, 0), required_level=60, sell_price=8000,
+        crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:archer:weapon': Item(
+        '未竟追彩・流彩長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
+        (0, 129, 0, 0), STABILITY['弓兵'], required_level=60,
+        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:archer:suit': Item(
+        '未竟追彩・風描獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
+        (494, 37, 86, 0), required_level=60, sell_price=8000,
+        crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:monk:weapon': Item(
+        '未竟聖像・調色聖杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
+        (0, 136, 0, 142), STABILITY['僧侶'], required_level=60,
+        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+    'maze:monk:suit': Item(
+        '未竟聖像・祈彩法衣', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
+        (494, 0, 86, 114), required_level=60, sell_price=8000,
+        crystal_slots=ELITE_CRYSTAL_SLOTS),
+}.items():
+    ITEMS[key] = item
+
 ITEMS['cycle:emblem'] = Item(
     '循環徽記', '飾品', '', 2, (3, 3, 3, 3, 3), required_level=60,
     embroidery_slots=1, first_skill_cooldown_reduction=1)
@@ -334,6 +378,15 @@ ITEMS['paint:set'] = Item(
 ITEMS['noah:unfinished'] = Item(
     '未完成的魔女畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='城崎諾亞留下的未完成畫作，未來可用於召喚繪畫魔女．城崎諾亞。')
+ITEMS['proof:raid'] = Item(
+    '討伐之證', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    description='一至三階討伐的勝利證明；可在商店累積兌換《氣球》的畫作。',
+    transferable=False)
+ITEMS['painting:balloon'] = Item(
+    '《氣球》的畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    description='可開啟繪境迷廊的繪畫之影路線；不會遭遇繪畫魔女，也不會掉落菁英裝備。')
+
+BALLOON_PAINTING_PROOF_COST = 30
 
 PAINT_ITEMS = {'red': 'paint:red', 'yellow': 'paint:yellow', 'blue': 'paint:blue'}
 PAINT_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
@@ -624,6 +677,9 @@ def item_text(item):
         parts.append('受到直接攻擊時，將最近一次由防禦擋下的傷害轉為下一次攻擊的額外攻擊力')
     if item.embroidery_slots:
         parts.append(f'刺繡格 {item.embroidery_slots} 格')
+    if item.crystal_slots:
+        names = {'outline': '輪廓', 'color': '色彩', 'source': '源色'}
+        parts.append('鑲嵌格：' + '／'.join(names[slot] for slot in item.crystal_slots))
     if item.set_id:
         set_name, set_effect = SET_BONUSES[item.set_id]
         parts.append(f'{set_name}套裝（2 件）：{set_effect}')
@@ -851,6 +907,20 @@ class Characters:
                                 'vulnerable_percent', 'healing_share',
                                 'alternating_damage_percent', 'defense_conversion'):
                 changes[effect_key] = changes.get(effect_key, getattr(item, effect_key)) + value
+        crystal_table = self.db.execute("""SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='rpg_crystal_instances'""").fetchone()
+        if crystal_table:
+            rows = self.db.execute('''SELECT effect_keys,rolled_values
+                FROM rpg_crystal_instances WHERE equipment_instance_id=? ORDER BY socket_index''',
+                (instance.instance_id,)).fetchall()
+            for effects_json, values_json in rows:
+                for effect_key, value in zip(json.loads(effects_json), json.loads(values_json)):
+                    if effect_key in COMBAT_NAMES:
+                        combat[COMBAT_NAMES.index(effect_key)] += value
+                    elif effect_key in ('speed', 'accuracy', 'evasion', 'lifesteal',
+                                        'critical_points', 'healing_received_percent'):
+                        changes[effect_key] = changes.get(
+                            effect_key, getattr(item, effect_key)) + value
         return replace(item, stats=tuple(stats), combat=tuple(combat), **changes)
 
     def _resolve_instance(self, guild_id, user_id, reference):
@@ -1021,18 +1091,47 @@ class Characters:
                 combat['治療量'] = combat['治療量'] * 106 // 100
         combat['閃避率'] += sum(item.evasion for item in resolved.values())
         combat['命中率'] += sum(item.accuracy for item in resolved.values())
+        combat['暴擊率'] = min(100, combat['暴擊率']
+                           + sum(item.critical_points for item in resolved.values()))
         speed = max(1, min(100, BASE_SPEED.get(job, 50) + sum(item.speed for item in resolved.values())))
         combat['速度'] = speed
         stability = weapon.stability if weapon else (100, 100)
         stability_bonus = {'molten_vein': 15, 'starforged': 25}.get(active_set, 0)
         if stability_bonus:
             stability = (min(stability[1], stability[0] + stability_bonus), stability[1])
+        crystal_effects = []
+        crystal_table = self.db.execute("""SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='rpg_crystal_instances'""").fetchone()
+        if crystal_table and equipped_instances:
+            placeholders = ','.join('?' for _ in equipped_instances)
+            rows = self.db.execute(f'''SELECT crystal_type,affix_id,effect_keys,rolled_values,job,
+                equipment_instance_id FROM rpg_crystal_instances
+                WHERE equipment_instance_id IN ({placeholders}) ORDER BY equipment_instance_id,socket_index''',
+                tuple(equipped_instances.values())).fetchall()
+            unique_affixes = set()
+            additive = {'HP', '攻擊', '防禦', '治療量', 'accuracy', 'critical_points',
+                        'evasion_points', 'speed', 'lifesteal_percent',
+                        'healing_received_percent'}
+            for crystal_type, affix_id, effects_json, values_json, crystal_job, equipment_id in rows:
+                effects = tuple(json.loads(effects_json))
+                values = tuple(json.loads(values_json))
+                if crystal_type == 'source' and crystal_job != job:
+                    raise CharacterError('已鑲嵌的源色結晶與目前職業不符。')
+                if any(effect not in additive for effect in effects):
+                    if affix_id in unique_affixes:
+                        raise CharacterError('穿戴中的裝備含有重複的唯一結晶效果。')
+                    unique_affixes.add(affix_id)
+                crystal_effects.append(dict(
+                    type=crystal_type, affix_id=affix_id, effects=effects, values=values,
+                    job=crystal_job, equipment_instance_id=equipment_id))
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
                     equipped_instances=equipped_instances,
                     combat_bonus=combat_bonus, stability=stability, speed=speed,
-                    lifesteal=weapon.lifesteal if weapon else 0,
+                    lifesteal=sum(item.lifesteal for item in resolved.values()),
+                    healing_received_percent=sum(
+                        item.healing_received_percent for item in resolved.values()),
                     damage_guard_chance=min(100, sum(item.damage_guard_chance for item in resolved.values())),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
                     vulnerable_percent=weapon.vulnerable_percent if weapon else 0,
@@ -1043,7 +1142,8 @@ class Characters:
                     first_skill_cooldown_reduction=max(
                         (item.first_skill_cooldown_reduction for item in resolved.values()), default=0),
                     active_set=active_set, set_bonus_text=set_bonus_text,
-                    critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job])
+                    critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job],
+                    crystal_effects=crystal_effects)
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
@@ -1170,6 +1270,31 @@ class Characters:
                 if not 1 <= accessory_slot <= state['capacity']:
                     raise CharacterError(f'目前只有 {state["capacity"]} 個飾品格。')
                 slot = f'飾品{accessory_slot}'
+            crystal_table = self.db.execute("""SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='rpg_crystal_instances'""").fetchone()
+            if crystal_table:
+                additive = {'HP', '攻擊', '防禦', '治療量', 'accuracy',
+                            'critical_points', 'evasion_points', 'speed',
+                            'lifesteal_percent', 'healing_received_percent'}
+
+                def unique_affixes(instance_ids):
+                    if not instance_ids:
+                        return set()
+                    placeholders = ','.join('?' for _ in instance_ids)
+                    rows = self.db.execute(f'''SELECT affix_id,effect_keys
+                        FROM rpg_crystal_instances
+                        WHERE equipment_instance_id IN ({placeholders})''', tuple(instance_ids))
+                    return {affix_id for affix_id, effects_json in rows
+                            if any(effect not in additive for effect in json.loads(effects_json))}
+
+                candidate = unique_affixes([instance.instance_id])
+                other_ids = [row[0] for row in self.db.execute('''SELECT instance_id
+                    FROM rpg_equipment WHERE guild_id=? AND user_id=? AND slot<>?''',
+                    (guild_id, user_id, slot))]
+                duplicates = candidate & unique_affixes(other_ids)
+                if duplicates:
+                    raise CharacterError(
+                        '這件裝備與目前穿戴裝備含有重複的唯一結晶效果；請先更換或拆除其中一顆。')
             # Moving the same instance never duplicates its bonus. Accessories
             # retain the existing rule that the same definition cannot occupy
             # multiple accessory slots even when several copies are owned.
@@ -1204,6 +1329,23 @@ class Characters:
                 raise CharacterError(f'金幣不足，需要 {item.price:,} 金幣。')
             self._insert_instance(guild_id, user_id, item_id)
         return item
+
+    def exchange_balloon_painting(self, guild_id, user_id):
+        """Exchange bound raid proofs for one transferable Balloon painting."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
+                WHERE guild_id=? AND user_id=? AND item_id='proof:raid' AND quantity>=?''',
+                (BALLOON_PAINTING_PROOF_COST, guild_id, user_id,
+                 BALLOON_PAINTING_PROOF_COST))
+            if not paid.rowcount:
+                raise CharacterError(
+                    f'討伐之證不足，需要 {BALLOON_PAINTING_PROOF_COST} 個。')
+            self.db.execute('''DELETE FROM rpg_inventory
+                WHERE guild_id=? AND user_id=? AND item_id='proof:raid' AND quantity=0''',
+                (guild_id, user_id))
+            add_owned_item(self.db, guild_id, user_id, 'painting:balloon')
+        return ITEMS['painting:balloon']
 
     def unequip(self, guild_id, user_id, slot):
         if slot not in ('武器', '套裝', '飾品1', '飾品2', '飾品3', '飾品4', '飾品5'):
@@ -1358,7 +1500,16 @@ class Characters:
                     self.db.executemany('''UPDATE rpg_equipment_instances SET user_id=?
                         WHERE instance_id=? AND guild_id=? AND user_id=?''',
                         [(recipient, instance.instance_id, guild, user) for instance in selected])
+                    if self.db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                        AND name='rpg_crystal_instances'""").fetchone():
+                        self.db.executemany('''UPDATE rpg_crystal_instances SET user_id=?
+                            WHERE equipment_instance_id=?''',
+                            [(recipient, instance.instance_id) for instance in selected])
                     return 0
+                if self.db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                    AND name='rpg_crystal_instances'""").fetchone():
+                    self.db.executemany('DELETE FROM rpg_crystal_instances WHERE equipment_instance_id=?',
+                                        [(instance.instance_id,) for instance in selected])
                 self.db.executemany('DELETE FROM rpg_instance_sockets WHERE instance_id=?',
                                     [(instance.instance_id,) for instance in selected])
                 self.db.executemany('DELETE FROM rpg_instance_affixes WHERE instance_id=?',

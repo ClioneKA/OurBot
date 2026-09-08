@@ -25,6 +25,9 @@ from core.rpg_tavern import TavernService
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 from core.rpg_invites import AdventurerInvitations, AdventurerInvitationView
 from core.rpg_spaces import AdventureSpaceService
+from core.rpg_painted_maze import MODE_NAME, PAINTING_STAGES
+from core.rpg_painted_maze_service import PaintedMazeService
+from core.rpg_crystals import CRYSTAL_REMOVAL_PRICE, CRYSTAL_TYPES, crystal_affix_name, crystal_effect_text
 
 
 class RPG(commands.Cog):
@@ -48,6 +51,7 @@ class RPG(commands.Cog):
         self.raids = RaidService(self)
         self.tavern = TavernService(self)
         self.total_raids = TotalRaidService(self)
+        self.painted_maze = PaintedMazeService(self)
 
     async def cog_load(self):
         self.invitations.restore_views()
@@ -65,6 +69,7 @@ class RPG(commands.Cog):
         self.raids.start()
         self.tavern.start()
         self.total_raids.start()
+        self.painted_maze.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
@@ -73,6 +78,7 @@ class RPG(commands.Cog):
         await self.raids.close()
         self.tavern.close()
         await self.total_raids.close()
+        self.painted_maze.close()
         for view in tuple(self.menu_views):
             view.closed = True
             view.stop()
@@ -197,6 +203,164 @@ class RPG(commands.Cog):
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.command(name='開啟繪境迷廊', description='使用一張畫作建立 1～8 人的自動戰鬥 Rogue 房間')
+    @app_commands.guild_only()
+    @app_commands.rename(painting='畫作')
+    @app_commands.choices(painting=[
+        app_commands.Choice(name='未完成的畫作（城崎諾亞路線）', value='noah:unfinished'),
+        app_commands.Choice(name='《氣球》的畫作（繪畫之影路線）', value='painting:balloon'),
+    ])
+    async def open_painted_maze(self, interaction: discord.Interaction,
+                                painting: app_commands.Choice[str]):
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message('請先接受邀請函，正式成為冒險者。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            room = await self.painted_maze.create(interaction, painting.value)
+        except (CharacterError, discord.HTTPException) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        await interaction.followup.send(
+            f'已建立 **{MODE_NAME} #{room["number"]}** 與私人討論串。', ephemeral=True)
+
+    @app_commands.command(name='迷廊首通裝備', description='領取首次擊敗繪畫魔女的 T60 菁英裝備')
+    @app_commands.guild_only()
+    @app_commands.rename(kind='類型')
+    @app_commands.choices(kind=[app_commands.Choice(name='武器', value='weapon'),
+                               app_commands.Choice(name='套裝', value='suit')])
+    async def claim_painted_maze_gear(self, interaction: discord.Interaction,
+                                      kind: app_commands.Choice[str]):
+        pending = self.painted_maze.rewards.latest_pending(
+            interaction.guild_id, interaction.user.id)
+        if not pending:
+            await interaction.response.send_message('目前沒有待自選的諾亞首通裝備。', ephemeral=True)
+            return
+        item_id = next(item for item in pending['choices'] if item.endswith(':' + kind.value))
+        try:
+            self.painted_maze.rewards.choose_noah_gear(
+                pending['room_id'],
+                interaction.guild_id, interaction.user.id, item_id)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f'已領取【{ITEMS[item_id].name}】。', ephemeral=True)
+
+    @app_commands.command(name='結束繪境迷廊', description='管理員強制結束目前私人討論串的迷廊房間')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def end_painted_maze(self, interaction: discord.Interaction):
+        room = self.painted_maze.repo.by_thread(interaction.channel_id)
+        if not room:
+            await interaction.response.send_message('目前頻道不是進行中的繪境迷廊房間。', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await self.painted_maze.close_room(room['id'], interaction.user, administrator=True)
+        except CharacterError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        await interaction.followup.send('已強制結束並封存這個房間。', ephemeral=True)
+
+    @app_commands.command(name='顏料結晶', description='查看自己持有的繪境迷廊顏料結晶')
+    @app_commands.guild_only()
+    async def pigment_crystals(self, interaction: discord.Interaction):
+        crystals = self.painted_maze.crystals.inventory(interaction.guild_id, interaction.user.id)
+        if not crystals:
+            await interaction.response.send_message('你還沒有顏料結晶。', ephemeral=True)
+            return
+        lines = []
+        for crystal in crystals:
+            location = (f'已鑲嵌於裝備 #{crystal.equipment_instance_id}'
+                        if crystal.equipment_instance_id else '未鑲嵌')
+            job = f'｜{crystal.job}限定' if crystal.job else ''
+            painting_names = {painting['id']: painting['name']
+                              for stage in PAINTING_STAGES for painting in stage}
+            source = painting_names.get(crystal.source_painting_id, '繪畫之影')
+            lines.append(f'`#{crystal.instance_id}` **{crystal.name}**{job}\n'
+                         f'{crystal_affix_name(crystal)}：{crystal_effect_text(crystal)}｜{location}\n'
+                         f'來源：第 {crystal.source_stage} 幕・{source}')
+        embed = discord.Embed(title='顏料結晶', color=0xA855F7)
+        chunks, current = [], ''
+        for line in lines:
+            if len(current) + len(line) + 2 > 1000:
+                chunks.append(current)
+                current = line
+            else:
+                current = f'{current}\n\n{line}'.strip()
+        if current:
+            chunks.append(current)
+        for index, chunk in enumerate(chunks[:10], 1):
+            embed.add_field(name='結晶清單' if index == 1 else f'結晶清單（{index}）',
+                            value=chunk, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name='鑲嵌顏料結晶', description='將顏料結晶免費鑲嵌到對應的 T60 菁英裝備槽')
+    @app_commands.guild_only()
+    @app_commands.rename(crystal_id='結晶編號', equipment_id='裝備編號', replace_existing='覆蓋')
+    async def socket_pigment_crystal(
+            self, interaction: discord.Interaction,
+            crystal_id: app_commands.Range[int, 1], equipment_id: app_commands.Range[int, 1],
+            replace_existing: bool = False):
+        try:
+            crystal = self.painted_maze.crystals.socket(
+                interaction.guild_id, interaction.user.id, crystal_id, equipment_id,
+                replace_existing=replace_existing)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f'已鑲嵌【{crystal.name}・{crystal_affix_name(crystal)}】。', ephemeral=True)
+
+    @app_commands.command(name='拆除顏料結晶', description=f'花費 {CRYSTAL_REMOVAL_PRICE} 金幣完整拆除一顆顏料結晶')
+    @app_commands.guild_only()
+    @app_commands.rename(equipment_id='裝備編號', crystal_type='槽位')
+    @app_commands.choices(crystal_type=[
+        app_commands.Choice(name=name, value=key) for key, name in CRYSTAL_TYPES.items()])
+    async def remove_pigment_crystal(
+            self, interaction: discord.Interaction,
+            equipment_id: app_commands.Range[int, 1], crystal_type: app_commands.Choice[str]):
+        try:
+            crystal = self.painted_maze.crystals.remove(
+                interaction.guild_id, interaction.user.id, equipment_id, crystal_type.value)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f'已花費 {CRYSTAL_REMOVAL_PRICE:,} 金幣拆除【{crystal.name}】。', ephemeral=True)
+
+    @app_commands.command(name='出售顏料結晶', description='出售一顆未鑲嵌的顏料結晶')
+    @app_commands.guild_only()
+    @app_commands.rename(crystal_id='結晶編號')
+    async def sell_pigment_crystal(self, interaction: discord.Interaction,
+                                   crystal_id: app_commands.Range[int, 1]):
+        try:
+            price = self.painted_maze.crystals.sell(
+                interaction.guild_id, interaction.user.id, crystal_id)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(f'已出售結晶，獲得 {price:,} 金幣。', ephemeral=True)
+
+    @app_commands.command(name='給予顏料結晶', description='將一顆未鑲嵌的顏料結晶給予其他冒險者')
+    @app_commands.guild_only()
+    @app_commands.rename(crystal_id='結晶編號', member='成員')
+    async def give_pigment_crystal(self, interaction: discord.Interaction,
+                                   crystal_id: app_commands.Range[int, 1], member: discord.Member):
+        if member.bot or not self.store.has_player(interaction.guild_id, member.id):
+            await interaction.response.send_message('對方不是可收取結晶的冒險者。', ephemeral=True)
+            return
+        try:
+            crystal = self.painted_maze.crystals.transfer(
+                interaction.guild_id, interaction.user.id, crystal_id, member.id)
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f'已將【{crystal.name}・{crystal_affix_name(crystal)}】給予 {member.mention}。',
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     def character_embed(self, guild_id, member):
         xp = self.store.xp(guild_id, member.id)
         level = level_for(xp)
@@ -245,8 +409,16 @@ class RPG(commands.Cog):
         embed.add_field(name='武器穩定度', value=(f'{state["stability"][0]}–{state["stability"][1]}% 傷害'
                         if '武器' in state['equipped'] else '未裝備武器，無法造成傷害'))
         embed.add_field(name=f'裝備欄・飾品 {state["capacity"]} 格', value='\n'.join(
-            f'{slot}：{ITEMS[state["equipped"][slot]].name if slot in state["equipped"] else "空"}'
+            (f'{slot}：{ITEMS[state["equipped"][slot]].name} '
+             f'`#{state["equipped_instances"][slot]}`' if slot in state['equipped'] else f'{slot}：空')
             for slot in state['slots']), inline=False)
+        equipped_ids = set(state.get('equipped_instances', {}).values())
+        socketed = [crystal for crystal in self.painted_maze.crystals.inventory(guild_id, member.id)
+                    if crystal.equipment_instance_id in equipped_ids]
+        if socketed:
+            embed.add_field(name='已鑲嵌顏料結晶', value='\n'.join(
+                f'裝備 `#{crystal.equipment_instance_id}`｜{crystal_affix_name(crystal)}：'
+                f'{crystal_effect_text(crystal)}' for crystal in socketed)[:1024], inline=False)
         if state['job'] == '民兵':
             embed.description = 'Lv.10 起可使用 `/冒險 → 轉職` 選擇職業。'
         elif state['stage'] < 3:
@@ -473,7 +645,8 @@ class RPG(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         try:
             message = await self.raids.spawn(interaction.channel, kind=kind, name=name, strength=strength,
-                                            victory_xp=victory_xp, victory_gold=victory_gold, drop_percent=drop_percent)
+                                            victory_xp=victory_xp, victory_gold=victory_gold,
+                                            drop_percent=drop_percent, source='admin')
         except CharacterError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
             return

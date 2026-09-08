@@ -11,6 +11,7 @@ SPACE_CHANNELS = {
     'mid_channel_id': ('中階討伐', '中階討伐'),
     'high_channel_id': ('高階討伐', '高階討伐'),
     'tavern_channel_id': ('冒險者酒館', '冒險者酒館'),
+    'maze_channel_id': ('繪境迷廊', '🎨・繪境迷廊'),
 }
 
 
@@ -23,6 +24,7 @@ class AdventureSpace:
     high_channel_id: int | None = None
     tavern_channel_id: int | None = None
     adventurer_role_id: int | None = None
+    maze_channel_id: int | None = None
 
 
 class AdventureSpaceStore:
@@ -36,7 +38,11 @@ class AdventureSpaceStore:
                 mid_channel_id INTEGER,
                 high_channel_id INTEGER,
                 tavern_channel_id INTEGER,
-                adventurer_role_id INTEGER)''')
+                adventurer_role_id INTEGER,
+                maze_channel_id INTEGER)''')
+            columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_adventure_spaces)')}
+            if 'maze_channel_id' not in columns:
+                self.db.execute('ALTER TABLE rpg_adventure_spaces ADD COLUMN maze_channel_id INTEGER')
 
     @staticmethod
     def _from_row(row):
@@ -44,27 +50,31 @@ class AdventureSpaceStore:
 
     def get(self, guild_id):
         return self._from_row(self.db.execute('''SELECT guild_id,category_id,regular_channel_id,
-            mid_channel_id,high_channel_id,tavern_channel_id,adventurer_role_id
+            mid_channel_id,high_channel_id,tavern_channel_id,adventurer_role_id,maze_channel_id
             FROM rpg_adventure_spaces WHERE guild_id=?''', (guild_id,)).fetchone())
 
     def all(self):
         return [self._from_row(row) for row in self.db.execute('''SELECT guild_id,category_id,
-            regular_channel_id,mid_channel_id,high_channel_id,tavern_channel_id,adventurer_role_id
+            regular_channel_id,mid_channel_id,high_channel_id,tavern_channel_id,
+            adventurer_role_id,maze_channel_id
             FROM rpg_adventure_spaces''').fetchall()]
 
     def save(self, space):
         with self.db:
-            self.db.execute('''INSERT INTO rpg_adventure_spaces VALUES (?,?,?,?,?,?,?)
+            self.db.execute('''INSERT INTO rpg_adventure_spaces
+                (guild_id,category_id,regular_channel_id,mid_channel_id,high_channel_id,
+                 tavern_channel_id,adventurer_role_id,maze_channel_id) VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                 category_id=excluded.category_id,
                 regular_channel_id=excluded.regular_channel_id,
                 mid_channel_id=excluded.mid_channel_id,
                 high_channel_id=excluded.high_channel_id,
                 tavern_channel_id=excluded.tavern_channel_id,
-                adventurer_role_id=excluded.adventurer_role_id''', (
+                adventurer_role_id=excluded.adventurer_role_id,
+                maze_channel_id=excluded.maze_channel_id''', (
                     space.guild_id, space.category_id, space.regular_channel_id,
                     space.mid_channel_id, space.high_channel_id, space.tavern_channel_id,
-                    space.adventurer_role_id))
+                    space.adventurer_role_id, space.maze_channel_id))
         return space
 
     def player_ids(self, guild_id):
@@ -99,6 +109,7 @@ class AdventureSpaceService:
             'mid_channel_id': raids.environment_mid_channels,
             'high_channel_id': raids.environment_high_channels,
             'tavern_channel_id': self.cog.tavern.environment_channel_ids,
+            'maze_channel_id': (),
         }
         result = {}
         for field, configured in channel_sets.items():
@@ -162,10 +173,13 @@ class AdventureSpaceService:
             if not channel:
                 continue
             tavern = field == 'tavern_channel_id'
+            maze = field == 'maze_channel_id'
             checks.extend(((channel, guild.default_role, 'view_channel', False),
                            (channel, role, 'view_channel', True),
                            (channel, role, 'send_messages', tavern),
-                           (channel, guild.me, 'send_messages', True)))
+                           (channel, role, 'send_messages_in_threads', tavern or maze),
+                           (channel, guild.me, 'send_messages', True),
+                           (channel, guild.me, 'manage_threads', maze)))
         issues = []
         for subject, target, permission, expected in checks:
             overwrite = subject.overwrites_for(target)
@@ -211,7 +225,8 @@ class AdventureSpaceService:
             raise CharacterError('安安的最高身分組必須高於冒險者身分組，才能自動指派成員。')
         self.store.save(AdventureSpace(
             guild.id, current.category_id, values['regular_channel_id'], values['mid_channel_id'],
-            values['high_channel_id'], values['tavern_channel_id'], role.id))
+            values['high_channel_id'], values['tavern_channel_id'], role.id,
+            values['maze_channel_id']))
 
         category = self._valid_category(guild, current.category_id)
         existing_channels = [self._valid_channel(guild, values[field]) for field in SPACE_CHANNELS]
@@ -227,7 +242,8 @@ class AdventureSpaceService:
         def save_progress():
             return self.store.save(AdventureSpace(
                 guild.id, category.id, values['regular_channel_id'], values['mid_channel_id'],
-                values['high_channel_id'], values['tavern_channel_id'], role.id))
+                values['high_channel_id'], values['tavern_channel_id'], role.id,
+                values['maze_channel_id']))
 
         # Persist each Discord object before creating the next one, so a failed
         # Discord request can be retried without duplicating earlier creations.
@@ -237,9 +253,13 @@ class AdventureSpaceService:
         for field, (label, name) in SPACE_CHANNELS.items():
             if self._valid_channel(guild, values[field]) is not None:
                 continue
-            overwrites = self._channel_overwrites(guild, role, tavern=field == 'tavern_channel_id')
+            overwrites = self._channel_overwrites(guild, role, field=field)
             channel = await guild.create_text_channel(name, category=category, overwrites=overwrites,
-                                                       reason=f'建立{label}頻道')
+                                                       reason=f'建立{label}頻道',
+                                                       **({'topic': ('使用未完成的畫作或《氣球》的畫作建立 '
+                                                                      '1～8 人、Lv.50+ 的全自動 Rogue 連戰；'
+                                                                      '開房不消耗，正式開始才消耗畫作。')}
+                                                          if field == 'maze_channel_id' else {}))
             values[field] = channel.id
             created.append(label)
             save_progress()
@@ -266,17 +286,21 @@ class AdventureSpaceService:
         }
 
     @staticmethod
-    def _channel_overwrites(guild, role, *, tavern):
+    def _channel_overwrites(guild, role, *, field):
+        tavern = field == 'tavern_channel_id'
+        maze = field == 'maze_channel_id'
         return {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             role: discord.PermissionOverwrite(
                 view_channel=True, read_message_history=True, use_application_commands=True,
                 send_messages=tavern, embed_links=tavern, attach_files=tavern,
                 add_reactions=tavern, create_public_threads=tavern,
-                create_private_threads=False, send_messages_in_threads=tavern),
+                create_private_threads=False, send_messages_in_threads=tavern or maze),
             guild.me: discord.PermissionOverwrite(
                 view_channel=True, read_message_history=True, send_messages=True,
-                embed_links=True, attach_files=True, manage_messages=True),
+                embed_links=True, attach_files=True, manage_messages=True,
+                create_private_threads=maze, send_messages_in_threads=maze,
+                manage_threads=maze),
         }
 
     async def repair(self, guild):
@@ -296,7 +320,7 @@ class AdventureSpaceService:
             if channel.category_id != category.id:
                 await channel.edit(category=category, sync_permissions=False,
                                    reason=f'將{label}移入冒險分類')
-            overwrites = self._channel_overwrites(guild, role, tavern=field == 'tavern_channel_id')
+            overwrites = self._channel_overwrites(guild, role, field=field)
             for target, overwrite in overwrites.items():
                 await channel.set_permissions(target, overwrite=overwrite,
                                               reason=f'修復{label}必要權限')

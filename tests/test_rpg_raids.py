@@ -704,6 +704,41 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report['monsters'][0][:3], ('巨獸', 1, 1))
         self.assertEqual(report['jobs'][0][:3], ('民兵', 1, 1))
 
+    async def test_tiers_one_to_three_award_raid_proofs_but_admin_raids_do_not(self):
+        from core.rpg_monsters import prepare_monster
+
+        cases = (('月影妖狐', 'regular', 1),
+                 ('深淵鐘龍', 'mid', 3),
+                 ('星蝕巨神', 'high', 5))
+        for uid, (kind, pool, expected) in enumerate(cases, 10):
+            monster = prepare_monster(
+                dict(kind=kind, name=kind, description='測試'), quality='普通')
+            participant = self.participant(uid)
+            raid = self.repo.create(1, 2, monster, 100 + uid,
+                                    asdict(replace(self.settings.raid, drop_chance=0)), pool=pool)
+            raid.update(status='running', participants=[participant], members=[uid])
+            self.repo.save(raid)
+            battle = raid_battle([participant], monster, uid)
+            battle.result = '勝利'
+            settled = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            self.assertEqual(settled['rewards'][0]['raid_proofs'], expected)
+            self.assertEqual(self.characters.inventory_counts(1, uid)['proof:raid'], expected)
+            self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+            self.assertEqual(self.characters.inventory_counts(1, uid)['proof:raid'], expected)
+
+        monster = prepare_monster(
+            dict(kind='深淵鐘龍', name='深淵鐘龍', description='管理員測試'), quality='普通')
+        participant = self.participant(99)
+        raid = self.repo.create(1, 2, monster, 999,
+                                asdict(replace(self.settings.raid, drop_chance=0)))
+        raid.update(status='running', participants=[participant], members=[99], source='admin')
+        self.repo.save(raid)
+        battle = raid_battle([participant], monster, 99)
+        battle.result = '勝利'
+        settled = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
+        self.assertNotIn('raid_proofs', settled['rewards'][0])
+        self.assertEqual(self.characters.inventory_counts(1, 99).get('proof:raid', 0), 0)
+
     async def test_deadline_repeat_capacity_exit_and_guild_checks(self):
         raid = self.lobby()
         self.assertEqual(raid['deadline'], 400)
@@ -773,14 +808,14 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         state = self.repo.settle(raid['id'], dump_battle(battle), policy)
         item = state['rewards'][0]['item']
         self.assertTrue(item.startswith('raid:'))
-        self.assertEqual(self.characters.inventory(1, 1), [item, 'starter:club'])
+        self.assertEqual(self.characters.inventory(1, 1), ['proof:raid', item, 'starter:club'])
         self.repo.settle(raid['id'], dump_battle(battle), policy)
         self.assertEqual(self.store.xp(1, 1), policy.victory_xp)
         self.assertEqual(self.store.gold(1, 1), 100)
         self.assertEqual(state['rewards'][0]['gold'], 100)
         self.assertEqual(self.store.gold(2, 1), 0)
         self.assertEqual(self.store.gold(1, 2), 0)
-        self.assertEqual(self.characters.inventory(1, 1), [item, 'starter:club'])
+        self.assertEqual(self.characters.inventory(1, 1), ['proof:raid', item, 'starter:club'])
         self.assertEqual(self.characters.inventory(2, 1), ['starter:club'])
 
     async def test_failure_rewards_and_retry_after_delivery_failure(self):

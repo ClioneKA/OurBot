@@ -57,3 +57,15 @@ class ShopViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'buy')
         self.assertEqual(self.store.gold(1, 1), 1000)
         self.assertNotIn('弓兵:1:武器', self.characters.inventory(1, 1))
+
+    async def test_exchange_balloon_painting_with_raid_proofs(self):
+        self.characters.grant_item(1, 1, 'proof:raid', 30)
+        await self.view.handle(self.interaction, 'item', 'painting:balloon')
+        self.assertEqual(self.view.buy_button.label, '兌換（30 證）')
+        self.assertFalse(self.view.buy_button.disabled)
+        await self.view.handle(self.interaction, 'buy')
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts.get('proof:raid', 0), 0)
+        self.assertEqual(counts['painting:balloon'], 1)
+        self.assertEqual(self.store.gold(1, 1), 1000)
+        self.assertTrue(self.view.buy_button.disabled)

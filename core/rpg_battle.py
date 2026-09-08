@@ -416,7 +416,8 @@ class Battle:
         return max(10, actor.stats['命中率'] + self.accuracy_bonus(actor) - evasion)
 
     def critical_bonus(self, actor):
-        return 0
+        calibration = actor.status_stacks.get('crystal_heart_calibration', 0)
+        return actor.passive_state.get('crystal_calibration', 0) * calibration
 
     def critical_chance(self, actor):
         return max(0, min(100, actor.stats['暴擊率'] + self.critical_bonus(actor)))
@@ -424,8 +425,130 @@ class Battle:
     def damage_dealt_multiplier(self, actor):
         return (100 + actor.damage_dealt_percent) / 100
 
+    @staticmethod
+    def direct_damage_multiplier(actor):
+        return (100 + actor.status_stacks.get('maze_direct_damage_percent', 0)) / 100
+
+    def debuff_damage_multiplier(self, actor, target):
+        """Optional encounter bonus against targets carrying a cleanseable debuff."""
+        percent = actor.status_stacks.get('maze_violet_percent', 0)
+        if not percent:
+            return 1.0
+        affected = (any(target.has(effect, self.round)
+                        for effect in ('poison', 'break', 'stun', 'weak', 'vulnerable'))
+                    or target.status_stacks.get('corruption', 0)
+                    or target.status_stacks.get('drowning_mark', 0)
+                    or target.status_stacks.get('poison_arrows'))
+        return (100 + percent) / 100 if affected else 1.0
+
+    def crystal_damage_multiplier(self, actor, target):
+        percent = 0
+        if target.has('poison', self.round) or target.status_stacks.get('poison_arrows'):
+            percent += actor.status_stacks.get('crystal_poison_damage_percent', 0)
+        if target.has('break', 10**9):
+            percent += actor.status_stacks.get('crystal_break_damage_percent', 0)
+        if target.hp * 100 <= target.stats['HP'] * 30:
+            percent += actor.status_stacks.get('crystal_low_enemy_damage_percent', 0)
+        if actor.hp * 100 >= actor.stats['HP'] * 80:
+            percent += actor.status_stacks.get('crystal_high_hp_damage_percent', 0)
+        return (100 + percent) / 100
+
+    def _maze_final_hit(self, actor, target, target_hp_before, actual_damage):
+        if not actual_damage or not self.mechanics.get('maze_final'):
+            return
+        contracts = self.mechanics.get('maze_final_contracts', {})
+        boss = next((fighter for fighter in self.living(1) if fighter.is_boss), None)
+        if actor.team == 0 and target.team == 1 and target.is_boss:
+            azure = contracts.get('azure', 0)
+            if target.hp > 0:
+                triggered = self.mechanics.setdefault('maze_final_phases', [])
+                for threshold in (70, 35):
+                    if (threshold not in triggered
+                            and target_hp_before * 100 > target.stats['HP'] * threshold
+                            and target.hp * 100 <= target.stats['HP'] * threshold):
+                        triggered.append(threshold)
+                        if azure:
+                            shield = max(1, target.stats['HP'] * azure * 3 // 100)
+                            self.mechanics['maze_final_shield'] = (
+                                self.mechanics.get('maze_final_shield', 0) + shield)
+                            self.log.append(
+                                f'{target.name} 在 {threshold}% 構圖轉換時展開畫幕護盾 {shield}。')
+                        if threshold == 70:
+                            self.clear_negative_effects(target)
+                            self.mechanics['maze_final_phase'] = 2
+                            self.log.append(f'{target.name} 進入【源色改寫】，洗去短期負面狀態。')
+                            if self.mechanics.get('maze_final_route') == 'noah':
+                                stats = dict(target.stats)
+                                stats.update(HP=max(1, target.stats['HP'] * 10 // 100),
+                                             攻擊=max(1, target.stats['攻擊'] * 45 // 100),
+                                             防禦=max(1, target.stats['防禦'] * 55 // 100),
+                                             暴擊率=0)
+                                paint = Fighter('未乾色塊', 1, '未乾色塊', stats, 35, [],
+                                                is_boss=False, mechanic_priority=2)
+                                paint.effects['mechanic_target'] = self.round + 3
+                                self.fighters.append(paint)
+                                self.mechanics['maze_wet_paint_round'] = self.round
+                                self.log.append('【未乾色塊】出現；若不及時擊倒將強化色彩技能。')
+                        elif threshold == 35:
+                            self.mechanics.update(maze_final_phase=3,
+                                                  noah_draft_charging=False,
+                                                  noah_final_charging=False,
+                                                  noah_final_cycle=0)
+                            for add in self.living(1):
+                                if add.job == '未乾色塊':
+                                    add.hp = 0
+                            self.log.append(f'{target.name} 進入【完成畫作】：最後一筆已經展開。')
+            crimson = contracts.get('crimson', 0)
+            if crimson and actor.hp > 0 and target.hp > 0:
+                hits = self.mechanics.get('maze_final_direct_hits', 0) + 1
+                threshold = max(5, 11 - crimson * 2)
+                if hits >= threshold:
+                    hits = 0
+                    retaliation = max(1, target.stats['攻擊'] * (30 + crimson * 8) // 100)
+                    taken, _, _ = self.apply_damage(actor, retaliation)
+                    self.log.append(f'{target.name} 以【緋紅回筆】反擊 {actor.name}，造成 {taken} 傷害。')
+                self.mechanics['maze_final_direct_hits'] = hits
+        elif actor.team == 1 and actor.is_boss and target.team == 0:
+            violet = contracts.get('violet', 0)
+            if violet and target.hp > 0 and not target.has('immunity', self.round):
+                before = target.status_stacks.get('corruption', 0)
+                target.status_stacks['corruption'] = min(3, before + 1)
+                self.log.append(
+                    f'{target.name} 受到紫蝕侵染，腐敗變為 {target.status_stacks["corruption"]}/3 層。')
+
+    def _maze_final_round_end(self):
+        if not self.mechanics.get('maze_final') or self.result:
+            return
+        contracts = self.mechanics.get('maze_final_contracts', {})
+        boss = next((fighter for fighter in self.living(1) if fighter.is_boss), None)
+        if boss is None:
+            return
+        verdant = contracts.get('verdant', 0)
+        if verdant and self.round % 3 == 0:
+            healing = boss.stats['HP'] * verdant // 100
+            if boss.has('break', self.round):
+                healing //= 2
+            amount = self.restore(boss, healing)
+            if amount:
+                self.log.append(f'{boss.name} 的【翠綠回生】恢復 {amount} HP。')
+        if contracts.get('black', 0) >= 3 and self.round % 5 == 0 and self.living(0):
+            self.log.append(f'{boss.name} 的【極黑共鳴】追加一次行動！')
+            self.act(boss)
+            self.check_end()
+        wet_round = self.mechanics.get('maze_wet_paint_round')
+        wet = next((fighter for fighter in self.living(1) if fighter.job == '未乾色塊'), None)
+        if wet is not None and wet_round is not None and self.round >= wet_round + 2:
+            boss.damage_dealt_percent += 10
+            wet.hp = 0
+            self.mechanics.pop('maze_wet_paint_round', None)
+            self.log.append(f'{boss.name} 吸收【未乾色塊】，後續傷害 +10%。')
+
     def damage_taken_multiplier(self, target):
         percent = target.damage_taken_percent
+        percent -= (target.passive_state.get('crystal_wall', 0)
+                    * target.status_stacks.get('crystal_immovable_wall', 0))
+        if target.hp * 100 <= target.stats['HP'] * 30:
+            percent -= target.status_stacks.get('crystal_low_hp_reduction_percent', 0)
         if target.has('fortune_hermit_guard', self.round):
             percent -= 25
         return max(0, 100 + percent) / 100
@@ -445,9 +568,92 @@ class Battle:
         damaging = basic or effect in DAMAGE_EFFECTS
         context = dict(actor=actor, skill=skill, target=target, basic=basic, damaging=damaging,
                        multiplier=1.0, force_hit=False, hits=0, actual_damage=0, heals=[],
+                       critical_hits=0,
                        cleansed=0, hymn_bless=False, suppress_insight=False,
                        chain_broken=set())
         state = actor.passive_state
+
+        def crystal(effect_name):
+            return actor.status_stacks.get(f'crystal_{effect_name}', 0)
+
+        # Source crystals are intentionally kept in passive_state: each raid_battle
+        # creates fresh fighters, so their stacks reset for every painting.
+        if damaging:
+            value = crystal('tempered_embers')
+            if value and skill is not None:
+                last = state.get('crystal_embers_last')
+                stacks = state.get('crystal_embers', 0)
+                stacks = min(5, stacks + 1) if last != effect else max(0, stacks - 2)
+                state.update(crystal_embers_last=effect, crystal_embers=stacks)
+                context['multiplier'] *= 1 + stacks * value / 100
+                if stacks == 5:
+                    self.log.append(f'{actor.name} 的【百鍊餘火】達到 5 層。')
+            value = crystal('formation_breaker')
+            if value and target is not None and target.has('break', self.round):
+                stacks = min(5, state.get('crystal_formation', 0) + 1)
+                state['crystal_formation'] = stacks
+                context['multiplier'] *= 1 + stacks * value / 100
+            value = crystal('blooded_blade')
+            stacks = state.pop('crystal_blooded', 0) if value else 0
+            if stacks:
+                context['multiplier'] *= 1 + stacks * value / 100
+                self.log.append(f'{actor.name} 消耗 {stacks} 層【浴血鋒刃】。')
+            value = crystal('endless_offense')
+            if value and state.pop('crystal_offense_ready', False):
+                context['multiplier'] *= 1 + value / 100
+            value = crystal('heavy_suppression')
+            if value:
+                context['multiplier'] *= 1 + max(1, actor.hp * 4 // actor.stats['HP']) * value / 100
+            value = crystal('vengeance_mark')
+            stacks = state.pop('crystal_vengeance', 0) if value else 0
+            if stacks:
+                context['multiplier'] *= 1 + stacks * value / 100
+                self.log.append(f'{actor.name} 消耗 {stacks} 層【復仇刻痕】。')
+            for source, required in (('guardian_oath', 'shield_bash'),
+                                     ('steel_echo', 'knight_charge'),
+                                     ('life_lance', 'knight_charge')):
+                value = crystal(source)
+                stacks = state.pop(f'crystal_{source}_stacks', 0) if value and effect == required else 0
+                if stacks:
+                    context['multiplier'] *= 1 + stacks * value / 100
+                    self.log.append(f'{actor.name} 消耗 {stacks} 層源色刻印。')
+            for source, state_key in (('endless_arrow', 'crystal_arrows'),
+                                      ('focused_shot', 'crystal_focus'),
+                                      ('venom_amplifier', 'crystal_venom')):
+                value = crystal(source)
+                if value:
+                    context['multiplier'] *= 1 + state.get(state_key, 0) * value / 100
+            value = crystal('hunting_rhythm')
+            if value and state.get('crystal_hunt', 0) >= 3:
+                state['crystal_hunt'] = 0
+                context['multiplier'] *= 1 + value * 3 / 100
+                self.log.append(f'{actor.name} 消耗滿層【狩獵節奏】。')
+            value = crystal('holy_afterglow')
+            stacks = state.pop('crystal_afterglow', 0) if value else 0
+            if stacks:
+                context['multiplier'] *= 1 + stacks * value / 100
+                self.log.append(f'{actor.name} 消耗 {stacks} 層【聖光餘韻】。')
+            value = crystal('pure_faith')
+            if value and effect == 'holy_light':
+                context['multiplier'] *= 1 + state.get('crystal_faith', 0) * value / 100
+        if effect in HEALING_EFFECTS:
+            bonus = 0
+            for source, state_key in (('grace_reserve', 'crystal_grace'),
+                                      ('suffering_prayer', 'crystal_suffering'),
+                                      ('pure_faith', 'crystal_faith')):
+                bonus += state.get(state_key, 0) * crystal(source)
+                if source != 'pure_faith' and state.get(state_key, 0):
+                    state.pop(state_key, None)
+                    self.log.append(f'{actor.name} 消耗源色治療刻印。')
+            if bonus:
+                context['healing_multiplier'] = context.get('healing_multiplier', 1) * (1 + bonus / 100)
+        ready = state.pop('crystal_threefold_ready', False)
+        if ready:
+            value = crystal('threefold_cast')
+            context['multiplier'] *= 1 + value / 100
+            context['healing_multiplier'] = context.get('healing_multiplier', 1) * (1 + value / 100)
+            context['threefold_cooldown'] = True
+            self.log.append(f'{actor.name} 消耗【三重詠唱】完成構圖。')
 
         # Buff granted by a completed Threefold Hymn affects one damage action.
         if damaging and actor.has('hymn_strike', self.round):
@@ -548,6 +754,67 @@ class Battle:
         actor, skill = context['actor'], context['skill']
         effect = skill.effect if skill is not None else None
         state = actor.passive_state
+
+        def crystal(effect_name):
+            return actor.status_stacks.get(f'crystal_{effect_name}', 0)
+
+        if skill is not None and skill.timing == PREPARATION_TIMING and crystal('endless_offense'):
+            state['crystal_offense_ready'] = True
+        if context['hits']:
+            if crystal('endless_arrow'):
+                state['crystal_arrows'] = min(10, state.get('crystal_arrows', 0) + context['hits'])
+                if state['crystal_arrows'] == 10:
+                    self.log.append(f'{actor.name} 的【無盡箭痕】達到 10 層。')
+            if crystal('focused_shot') and context.get('target') is not None:
+                target_key = id(context['target'])
+                if state.get('crystal_focus_target') == target_key:
+                    state['crystal_focus'] = min(5, state.get('crystal_focus', 0) + 1)
+                else:
+                    state.update(crystal_focus_target=target_key, crystal_focus=1)
+            if crystal('venom_amplifier') and context.get('target') is not None:
+                target = context['target']
+                if target.status_stacks.get('poison_arrows'):
+                    state['crystal_venom'] = min(5, state.get('crystal_venom', 0) + 1)
+            if crystal('hunting_rhythm') and context['critical_hits']:
+                state['crystal_hunt'] = min(3, state.get('crystal_hunt', 0)
+                                            + context['critical_hits'])
+                if state['crystal_hunt'] == 3:
+                    self.log.append(f'{actor.name} 的【狩獵節奏】達到 3 層。')
+            if crystal('heart_calibration'):
+                if context['critical_hits']:
+                    state['crystal_calibration'] = 0
+                else:
+                    state['crystal_calibration'] = min(5, state.get('crystal_calibration', 0)
+                                                       + context['hits'])
+            if crystal('steel_echo') and actor.has('taunt', self.round):
+                state['crystal_steel_echo_stacks'] = min(
+                    5, state.get('crystal_steel_echo_stacks', 0) + 1)
+        if context['heals']:
+            if crystal('grace_reserve'):
+                state['crystal_grace'] = min(3, state.get('crystal_grace', 0) + 1)
+                if state['crystal_grace'] == 3:
+                    self.log.append(f'{actor.name} 的【恩典積累】達到 3 層。')
+            if crystal('holy_afterglow'):
+                state['crystal_afterglow'] = min(5, state.get('crystal_afterglow', 0) + 1)
+        if crystal('pure_faith') and context.get('cleansed'):
+            state['crystal_faith'] = min(5, state.get('crystal_faith', 0)
+                                         + context['cleansed'])
+        if crystal('threefold_cast') and effect in ('heal', 'group_heal', 'bless', 'cleanse'):
+            expected = ('heal', 'bless', 'cleanse')
+            normalized = 'heal' if effect == 'group_heal' else effect
+            sequence = state.get('crystal_threefold_sequence', [])
+            sequence = sequence + [normalized] if normalized == expected[len(sequence)] else (
+                [normalized] if normalized == 'heal' else [])
+            if len(sequence) == 3:
+                state['crystal_threefold_ready'] = True
+                sequence = []
+                self.log.append(f'{actor.name} 完成【三重詠唱】。')
+            state['crystal_threefold_sequence'] = sequence
+        if context.get('threefold_cooldown') and skill is not None:
+            slot = next((rule.slot for rule in actor.rules
+                         if rule_skill(actor.job, rule) == skill), None)
+            if slot is not None and slot in actor.ready:
+                actor.ready[slot] = max(self.round + 1, actor.ready[slot] - 1)
 
         if context.get('consume_hymn_strike'):
             actor.effects.pop('hymn_strike', None)
@@ -650,6 +917,9 @@ class Battle:
                     self.log.append(f'{target.name} 的【雙生護符】使 {ally.name} 恢復 {shared} HP。')
         if amount and passive_trigger and context is not None:
             context['heals'].append((target, passive_base, amount))
+        if amount and actor.status_stacks.get('crystal_life_lance') and target is actor:
+            actor.passive_state['crystal_life_lance_stacks'] = min(
+                5, actor.passive_state.get('crystal_life_lance_stacks', 0) + 1)
         return amount
 
     @staticmethod
@@ -662,7 +932,8 @@ class Battle:
 
     def _gain_watch(self, protected):
         for knight in self.living(protected.team):
-            if (knight is protected or not self.passive(knight, '騎士', 2)
+            source_watch = knight.status_stacks.get('crystal_guardian_oath', 0)
+            if (knight is protected or not (self.passive(knight, '騎士', 2) or source_watch)
                     or not protected.has('guard', self.round)):
                 continue
             source_id = protected.effect_sources.get('guard')
@@ -678,11 +949,32 @@ class Battle:
             state['watch'] = min(2, before + 1)
             if state['watch'] != before:
                 self.log.append(f'{knight.name} 的守望增加至 {state["watch"]}/2 層。')
+            if source_watch:
+                state['crystal_guardian_oath_stacks'] = min(
+                    3, state.get('crystal_guardian_oath_stacks', 0) + 1)
 
     def _direct_damage_taken(self, target, actual):
         if not actual or target.team != 0:
             return
         state = target.passive_state
+        for source, key in (('blooded_blade', 'crystal_blooded'),
+                            ('vengeance_mark', 'crystal_vengeance')):
+            if target.status_stacks.get(f'crystal_{source}'):
+                round_key = f'{key}_round'
+                if state.get(round_key) != self.round:
+                    state[round_key] = self.round
+                    state[key] = min(5, state.get(key, 0) + 1)
+        if target.status_stacks.get('crystal_immovable_wall'):
+            state['crystal_wall'] = max(0, state.get('crystal_wall', 0) - 2)
+        for monk in self.living(target.team):
+            if (monk.status_stacks.get('crystal_suffering_prayer')
+                    and target.hp * 100 <= target.stats['HP'] * 40):
+                seen = monk.passive_state.setdefault('crystal_suffering_seen', [])
+                key = target.user_id if target.user_id is not None else id(target)
+                if key not in seen:
+                    seen.append(key)
+                    monk.passive_state['crystal_suffering'] = min(
+                        3, monk.passive_state.get('crystal_suffering', 0) + 1)
         if self.passive(target, '裝甲步兵', 3) and state.get('blood_round') != self.round:
             state['blood_round'] = self.round
             state['blood_rage'] = min(5, state.get('blood_rage', 0) + 2)
@@ -714,7 +1006,31 @@ class Battle:
 
         def apply_one(victim, requested):
             before = victim.hp
+            crystal_shield = victim.status_stacks.get('crystal_shield', 0)
+            if crystal_shield > 0:
+                absorbed = min(crystal_shield, max(0, int(requested)))
+                victim.status_stacks['crystal_shield'] -= absorbed
+                requested -= absorbed
+                if absorbed:
+                    self.log.append(f'{victim.name} 的底色護幕吸收 {absorbed} 傷害。')
+            if (victim.team == 1 and victim.is_boss
+                    and self.mechanics.get('maze_final')
+                    and self.mechanics.get('maze_final_shield', 0) > 0):
+                shield = self.mechanics['maze_final_shield']
+                absorbed = min(shield, max(0, int(requested)))
+                self.mechanics['maze_final_shield'] -= absorbed
+                requested -= absorbed
+                if absorbed:
+                    self.log.append(
+                        f'{victim.name} 的畫幕護盾吸收 {absorbed} 傷害，剩餘 '
+                        f'{self.mechanics["maze_final_shield"]}。')
             actual = min(before, max(0, int(requested)))
+            if (actual >= before and before > 1
+                    and victim.status_stacks.get('crystal_survive_fatal_once')
+                    and not victim.status_stacks.get('crystal_survive_fatal_used')):
+                actual = before - 1
+                victim.status_stacks['crystal_survive_fatal_used'] = 1
+                self.log.append(f'{victim.name} 的【留白保命】保留 1 HP。')
             if (actual >= before and before > 0 and victim.fortune_card == 'judgement'
                     and not victim.effects.get('fortune_judgement_used')):
                 actual = max(0, before - 1)
@@ -776,6 +1092,10 @@ class Battle:
         """Apply a cleansable debuff unless Guard currently grants immunity."""
         if target.job == '逆潮法陣' and effect in ('poison', 'stun'):
             self.log.append(f'{target.name} 免疫{"中毒" if effect == "poison" else "暈眩"}。')
+            return False
+        if (effect == 'break' and target.is_boss and self.mechanics.get('maze_final')
+                and self.mechanics.get('maze_final_shield', 0) > 0):
+            self.log.append(f'{target.name} 的畫幕護盾阻止了破甲。')
             return False
         if target.has('immunity', self.round):
             self.log.append(f'{target.name} 受到【護衛】保護，免疫負面狀態。')
@@ -904,7 +1224,8 @@ class Battle:
     def is_charging(self, fighter):
         return (fighter.has('charging', self.round) or fighter.has('charged_punch', self.round) or
                 (fighter.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
-                (fighter.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) or
+                (fighter.job == '城崎諾亞' and (self.mechanics.get('noah_draft_charging')
+                                                        or self.mechanics.get('noah_final_charging'))) or
                 (fighter.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')) or
                 (fighter.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging')) or
                 (fighter.job == '熔爐鎧獸' and self.mechanics.get('furnace_charging')) or
@@ -1031,6 +1352,9 @@ class Battle:
         chance = self.hit_chance(actor, target)
         if not precise and not force_hit and self.rng.random() * 100 >= chance:
             actor.combat_stats['misses'] += 1
+            if actor.status_stacks.get('crystal_endless_arrow'):
+                actor.passive_state['crystal_arrows'] = max(
+                    0, actor.passive_state.get('crystal_arrows', 0) - 2)
             if tempo is not None:
                 actor.passive_state['arrow_tempo'] = 0
                 self.log.append(f'{actor.name} 的箭勢因未命中而歸零。')
@@ -1045,7 +1369,10 @@ class Battle:
         base_attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
         base_attack *= 0.8 if actor.has('weak', self.round) else 1
         blessed = actor.has('bless', self.round)
-        paint_attack = base_attack * self.damage_dealt_multiplier(actor)
+        paint_attack = (base_attack * self.damage_dealt_multiplier(actor)
+                        * self.direct_damage_multiplier(actor)
+                        * self.debuff_damage_multiplier(actor, target)
+                        * self.crystal_damage_multiplier(actor, target))
         attack = paint_attack * (1.25 if blessed else 1)
         base_defense = target.stats['防禦']
         if target.has('guard', self.round):
@@ -1065,7 +1392,9 @@ class Battle:
             value = max(1, int(attack_value * power - defense_value * defense_effectiveness))
             value = max(1, value * stability // 100)
             if critical:
-                value = max(1, value * actor.critical_damage_percent // 100)
+                calibration = (actor.passive_state.get('crystal_calibration', 0)
+                               * actor.status_stacks.get('crystal_heart_calibration', 0))
+                value = max(1, value * (actor.critical_damage_percent + calibration) // 100)
             if target.has('stance', self.round):
                 multiplier = {'民兵': 0.8}.get(target.job, 0.65)
                 value = max(1, int(value * multiplier))
@@ -1106,11 +1435,15 @@ class Battle:
         break_assist = max(0, broken_actual - base_actual) if broken else 0
         bless_assist = max(0, pre_vulnerable_actual - broken_actual) if blessed else 0
         vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
+        target_hp_before = target.hp
         target_actual, partner, partner_actual = self.apply_damage(target, damage)
         actual_damage = target_actual + partner_actual
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
+        if context is not None:
+            context['critical_hits'] += int(critical)
         actor.combat_stats['damage_dealt'] += actual_damage
+        self._maze_final_hit(actor, target, target_hp_before, actual_damage)
         remaining_credit = actual_damage
         for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor),
                                          ('vulnerable', vulnerable_assist, target)):
@@ -1125,6 +1458,12 @@ class Battle:
                 source.combat_stats['support_damage'] += amount
         actor.combat_stats['direct_damage'] += remaining_credit
         actor.combat_stats['knockouts'] += int(target_actual and target.hp == 0)
+        if target_actual and target.hp == 0:
+            kill_heal = actor.status_stacks.get('crystal_kill_heal_percent', 0)
+            if kill_heal:
+                restored = self.restore(actor, actor.stats['HP'] * kill_heal // 100)
+                if restored:
+                    self.log.append(f'{actor.name} 的【終筆回生】恢復 {restored} HP。')
         if partner is not None:
             actor.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
         self.log.append(f'{actor.name} → {target.name}：{damage} 傷害{"（暴擊）" if critical else ""}'
@@ -1561,6 +1900,32 @@ class Battle:
 
     def noah_act(self, actor):
         """Resolve Noah's announced colour and the below-70% composition loop."""
+        if self.mechanics.get('maze_final_phase') == 3:
+            if self.mechanics.get('noah_final_charging'):
+                self.mechanics['noah_final_charging'] = False
+                self.record_skill(actor, '最後一筆')
+                self.log.append(f'{actor.name} 完成【最後一筆】：對全隊造成 190% 傷害！')
+                for enemy in self.living(0):
+                    self.hit(actor, enemy, 1.9, attack_scope='group')
+                return
+            cycle = self.mechanics.get('noah_final_cycle', 0) + 1
+            self.mechanics['noah_final_cycle'] = cycle
+            charge_every = (2 if self.mechanics.get('maze_final_contracts', {}).get('gold', 0) >= 2
+                            else 3)
+            if cycle % charge_every == 0:
+                self.mechanics['noah_final_charging'] = True
+                self.log.append(f'{actor.name} 正在蓄力【最後一筆】；下一次行動前可打斷。')
+                return
+            if cycle % 2:
+                target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+                self.log.append(f'{actor.name} 使用【完稿重描】。')
+                if target:
+                    self.hit(actor, target, 1.25)
+            else:
+                self.log.append(f'{actor.name} 使用【全幅侵蝕】。')
+                for enemy in self.living(0):
+                    self.hit(actor, enemy, .7, attack_scope='group')
+            return
         if actor.hp * 100 <= actor.stats['HP'] * 70 and not self.mechanics.get('noah_phase_two'):
             self.mechanics.update(noah_phase_two=True, noah_color_index=0,
                                   noah_composition=0, noah_draft_charging=False)
@@ -1576,6 +1941,18 @@ class Battle:
             return
 
         phase_two = self.mechanics.get('noah_phase_two', False)
+        if phase_two and self.mechanics.get('maze_final'):
+            self.shadow_act(actor)
+            composition = self.mechanics.get('noah_composition', 0) + 1
+            self.mechanics['noah_composition'] = composition
+            required = (2 if self.mechanics.get('maze_final_contracts', {}).get('gold', 0) >= 2
+                        else 3)
+            self.log.append(f'{actor.name} 的【源色構圖】進度 {composition}/{required}。')
+            if composition >= required:
+                self.mechanics['noah_composition'] = 0
+                self.mechanics['noah_draft_charging'] = True
+                self.log.append(f'{actor.name} 正在替【未完成稿】收尾。')
+            return
         colors = ('red', 'yellow', 'blue')
         color = colors[self.mechanics.get('noah_color_index', 0)] if phase_two else self.mechanics['noah_primary_color']
         color_name = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}[color]
@@ -1607,10 +1984,40 @@ class Battle:
             composition = self.mechanics.get('noah_composition', 0) + 1
             self.mechanics['noah_composition'] = composition
             self.mechanics['noah_color_index'] = (self.mechanics.get('noah_color_index', 0) + 1) % 3
-            self.log.append(f'{actor.name} 的【未完成構圖】進度 {composition}/3。')
-            if composition >= 3:
+            required = (2 if self.mechanics.get('maze_final_contracts', {}).get('gold', 0) >= 2
+                        else 3)
+            self.log.append(f'{actor.name} 的【未完成構圖】進度 {composition}/{required}。')
+            if composition >= required:
                 self.mechanics['noah_draft_charging'] = True
                 self.log.append(f'{actor.name} 正在替【未完成稿】收尾；下一次行動將對全隊造成 180% 傷害！')
+
+    def shadow_act(self, actor):
+        skills = self.mechanics.get('maze_final_skills') or ['black']
+        index = self.mechanics.get('maze_shadow_skill_index', 0)
+        color = skills[index % len(skills)]
+        self.mechanics['maze_shadow_skill_index'] = index + 1
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        if color == 'crimson':
+            self.log.append(f'{actor.name} 使用【緋紅影擊】。')
+            self.hit(actor, target, 1.4)
+        elif color == 'azure':
+            shield = max(1, actor.stats['HP'] * 2 // 100)
+            self.mechanics['maze_final_shield'] += shield
+            self.log.append(f'{actor.name} 展開【蒼藍影幕】 {shield} 點。')
+        elif color == 'gold':
+            self.log.append(f'{actor.name} 使用【金黃連寫】。')
+            for enemy in self.living(0):
+                self.hit(actor, enemy, .6, attack_scope='group')
+        elif color == 'verdant':
+            amount = self.restore(actor, actor.stats['HP'] * 3 // 200)
+            self.log.append(f'{actor.name} 使用【翠綠回影】，恢復 {amount} HP。')
+        elif color == 'violet':
+            self.log.append(f'{actor.name} 使用【紫蝕波紋】。')
+            for enemy in self.living(0):
+                self.hit(actor, enemy, .55, attack_scope='group')
+        else:
+            self.log.append(f'{actor.name} 使用【漆黑壓筆】。')
+            self.hit(actor, target, 1.1)
 
     def act(self, actor):
         if actor.team == 1 and actor.job == '熔爐鎧獸':
@@ -1632,6 +2039,9 @@ class Battle:
             self.whale_act(actor)
             return
         if actor.team == 1 and actor.job == '城崎諾亞':
+            if self.mechanics.get('maze_final_route') == 'shadow':
+                self.shadow_act(actor)
+                return
             self.noah_act(actor)
             return
         if actor.team == 1 and actor.job == '深淵鐘龍':
@@ -1796,6 +2206,11 @@ class Battle:
             removed += bool(target.status_stacks.get('source_erosion'))
             if self._passive_action is not None:
                 self._passive_action['cleansed'] = removed
+            cleanse_heal = actor.status_stacks.get('crystal_cleanse_heal_percent', 0)
+            if removed and cleanse_heal:
+                amount = self.heal(actor, target, target.stats['HP'] * cleanse_heal // 100,
+                                   passive_trigger=False)
+                self.log.append(f'{target.name} 因【洗彩療癒】恢復 {amount} HP。')
             self.log.append(f'移除 {target.name} 的負面狀態')
         elif effect == 'guard':
             bonus = max(1, actor.stats['防禦'])
@@ -1846,7 +2261,8 @@ class Battle:
                     attack = actor.stats['攻擊']
                     attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
                     attack *= 0.8 if actor.has('weak', self.round) else 1
-                    attack *= self.damage_dealt_multiplier(actor)
+                    attack *= (self.damage_dealt_multiplier(actor)
+                               * self.debuff_damage_multiplier(actor, target))
                     attack *= 1.25 if actor.has('bless', self.round) else 1
                     target.status_stacks.setdefault('poison_arrows', []).append({
                         'source_id': actor.user_id, 'damage': max(1, int(attack * 0.7)),
@@ -1896,10 +2312,15 @@ class Battle:
                     self.log.append(f'{target.name} 免疫暈眩；只有黑色能使她停止行動。')
                     return
                 if target.job == '城崎諾亞':
-                    if status == 'stun' and self.mechanics.get('noah_draft_charging'):
-                        self.mechanics.update(noah_draft_charging=False, noah_composition=0, noah_color_index=0)
+                    if status == 'stun' and (self.mechanics.get('noah_draft_charging')
+                                             or self.mechanics.get('noah_final_charging')):
+                        final = self.mechanics.get('noah_final_charging')
+                        self.mechanics.update(noah_draft_charging=False,
+                                              noah_final_charging=False,
+                                              noah_composition=0, noah_color_index=0)
                         target.effects['break'] = self.round + 1
-                        self.log.append(f'{target.name} 的【未完成稿】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
+                        name = '最後一筆' if final else '未完成稿'
+                        self.log.append(f'{target.name} 的【{name}】被打斷；構圖歸零並遭破甲至第 {self.round + 1} 回合結束。')
                     else:
                         self.log.append(f'{target.name} 免疫暈眩；盾擊只能在未完成稿蓄力時打斷構圖。')
                     return
@@ -1981,6 +2402,7 @@ class Battle:
             self.act(actor)
             if self.check_end():
                 break
+        self._maze_final_round_end()
         if not self.result:
             for fighter in list(self.living(0)):
                 marks = fighter.status_stacks.get('drowning_mark', 0)
@@ -2020,6 +2442,7 @@ def raid_battle(participants, monster, seed):
                         [Rule(**r) for r in p['rules']],
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         lifesteal=p['state'].get('lifesteal', 0),
+                        healing_received_percent=p['state'].get('healing_received_percent', 0),
                         damage_guard_chance=p['state'].get('damage_guard_chance', 0),
                         vulnerable_chance=p['state'].get('vulnerable_chance', 0),
                         vulnerable_percent=p['state'].get('vulnerable_percent', 0),
@@ -2032,6 +2455,21 @@ def raid_battle(participants, monster, seed):
                         armed=bool(p['state'].get('equipped', {}).get('武器')),
                         passive_id=p.get('passive_id'),
                         user_id=p.get('id')) for p in participants]
+    for fighter, participant in zip(fighters, participants):
+        for crystal in participant['state'].get('crystal_effects', ()):
+            for effect, value in zip(crystal.get('effects', ()), crystal.get('values', ())):
+                if effect in ('HP', '攻擊', '防禦', '治療量', 'accuracy',
+                              'critical_points', 'evasion_points', 'speed',
+                              'lifesteal_percent', 'healing_received_percent'):
+                    continue
+                fighter.status_stacks[f'crystal_{effect}'] = value
+        shield = fighter.status_stacks.get('crystal_opening_shield_percent', 0)
+        if shield:
+            fighter.status_stacks['crystal_shield'] = fighter.stats['HP'] * shield // 100
+        if fighter.status_stacks.get('crystal_survive_fatal_once'):
+            fighter.status_stacks['crystal_survive_fatal_once'] = 1
+        if fighter.status_stacks.get('crystal_immovable_wall'):
+            fighter.passive_state['crystal_wall'] = 3
     badge_logs = []
     passive_logs = []
     for fighter in fighters:
