@@ -75,10 +75,28 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
 
         view.ingredients = ['fishing:pond:common']
         await view.handle(self.interaction, 'donate')
-        self.assertEqual(self.provisions.state(1, 1)['xp'], 15)
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 25)
         self.assertEqual(view.ingredients, [])
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('捐給監獄', embed.fields[-1].value)
+
+    async def test_one_seat_meal_is_shown_and_completed_as_private(self):
+        self.grant('fishing:waterway:rare', 4)
+        self.grant('farming:moonwhite_rice')
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        view.ingredients = ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice']
+        data = self.provisions.preview(view.ingredients, 1, 1)
+        self.assertEqual(data['capacity'], 1)
+        self.tavern.serve_meal.return_value = (None, {'capacity': 1, 'data': data})
+
+        view.rebuild()
+        cook = next(child for child in view.children if child.label == '完成私人料理')
+        self.assertFalse(cook.disabled)
+        await view.handle(self.interaction, 'cook')
+
+        embed = self.interaction.edit_original_response.call_args.kwargs['embed']
+        self.assertIn('不發布酒館公告', embed.fields[-1].value)
 
 
 if __name__ == '__main__':

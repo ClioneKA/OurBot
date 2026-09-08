@@ -7,7 +7,8 @@ import discord
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
-from core.rpg_provisions import INGREDIENT_COUNT, INGREDIENTS, effect_text
+from core.rpg_provisions import (INGREDIENT_COUNT, INGREDIENTS, effect_text,
+                                 guest_reward_target)
 
 
 class ProvisionView(discord.ui.View):
@@ -54,7 +55,15 @@ class ProvisionView(discord.ui.View):
             options=options or [discord.SelectOption(label='沒有可用食材', value='empty')]))
         self._button('移除最後一份', 'remove', 1, not self.ingredients)
         self._button('重新選擇', 'reset', 1, not self.ingredients)
-        self._button('完成料理並開桌', 'cook', 1,
+        cook_label = '完成料理並開桌'
+        if len(self.ingredients) == INGREDIENT_COUNT:
+            try:
+                if self.cog.provisions.preview(
+                        self.ingredients, self.guild_id, self.owner.id)['capacity'] == 1:
+                    cook_label = '完成私人料理'
+            except CharacterError:
+                pass
+        self._button(cook_label, 'cook', 1,
                      len(self.ingredients) != INGREDIENT_COUNT,
                      discord.ButtonStyle.success)
         self._button('捐給監獄', 'donate', 1, not self.ingredients,
@@ -73,7 +82,7 @@ class ProvisionView(discord.ui.View):
         embed = discord.Embed(
             title='安安大冒險｜酒館料理', color=0xF59E0B,
             description=('選擇五份魚、作物、水草或藥草完成料理。食材可以重複；'
-                         '品質、搭配與多樣性決定評分，完成後會在酒館專用頻道公開開桌。'))
+                         '品質、搭配與多樣性決定評分。單人份為私人料理，其餘會在酒館公開開桌。'))
         embed.add_field(name='料理技能', value=(
             f'Lv.{state["level"]}｜累積 {state["xp"]:,} XP'
             + (f'｜距離下一級 {state["next_xp"] - state["level_xp"]:,} XP'
@@ -84,19 +93,36 @@ class ProvisionView(discord.ui.View):
                 data = self.cog.provisions.preview(self.ingredients, self.guild_id, self.owner.id)
                 tags = '、'.join(f'{tag} {amount}' for tag, amount in data['tag_counts'].items())
                 secondary = f'／副效果：{data["secondary_tag"]}' if data['secondary_tag'] else ''
+                if data['capacity'] == 1:
+                    xp_text = (f'私人料理｜完成直接取得全部 '
+                               f'{data["cooking_xp"]:,} 料理 XP，不發布公開餐桌')
+                else:
+                    reward_guests = guest_reward_target(data['capacity'])
+                    xp_text = (f'潛在料理 XP {data["cooking_xp"]:,}｜完成先取得 '
+                               f'{data["initial_cooking_xp"]:,}，前 {reward_guests} 位不同客人'
+                               '享用後共同解鎖其餘 75%')
                 embed.add_field(name='料理預覽', value=(
                     f'**{data["grade"]} 級｜{data["name"]}**\n'
                     f'美味度 {data["score"]}｜品質 {data["quality"]}｜多樣性 {data["unique"]}｜搭配 {data["pairings"]}\n'
                     f'主效果：{data["primary_tag"]}{secondary}\n{effect_text(data["effect"])}\n'
                     f'標籤：{tags}\n總效果份數 {data["total_portions"]}｜可入席 {data["capacity"]} 人｜每人持續 {data["duration"]} 場\n'
-                    f'潛在料理 XP {data["cooking_xp"]:,}｜完成先取得 '
-                    f'{data["initial_cooking_xp"]:,}，前三位不同客人各解鎖 25%'),
+                    f'{xp_text}'),
                     inline=False)
             except CharacterError as exc:
                 embed.add_field(name='料理預覽', value=str(exc), inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
-        embed.set_footer(text='料理公開領取 30 分鐘；取得的效果保留 24 小時，每次正式開戰消耗一場。')
+        private_preview = False
+        if len(self.ingredients) == INGREDIENT_COUNT:
+            try:
+                private_preview = self.cog.provisions.preview(
+                    self.ingredients, self.guild_id, self.owner.id)['capacity'] == 1
+            except CharacterError:
+                pass
+        embed.set_footer(text=(
+            '私人料理不發布公告；效果保留 24 小時，每次正式開戰消耗一場。'
+            if private_preview else
+            '料理公開領取 30 分鐘；取得的效果保留 24 小時，每次正式開戰消耗一場。'))
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -152,11 +178,16 @@ class ProvisionView(discord.ui.View):
                     data = meal['data']
                     self.ingredients.clear()
                     self.rebuild()
+                    if message is None:
+                        notice = (f'完成私人料理 {data["name"]}，直接取得全部 '
+                                  f'{data["cooking_xp"]:,} 料理 XP；不發布酒館公告。')
+                    else:
+                        reward_guests = guest_reward_target(meal['capacity'])
+                        notice = (f'完成 {data["name"]}，先取得 {data["initial_cooking_xp"]:,}／'
+                                  f'{data["cooking_xp"]:,} 料理 XP；前 {reward_guests} 位不同客人'
+                                  f'享用後共同解鎖其餘經驗：{message.jump_url}')
                     await self.origin.edit_original_response(
-                        embed=self.embed(
-                            f'完成 {data["name"]}，先取得 {data["initial_cooking_xp"]:,}／'
-                            f'{data["cooking_xp"]:,} 料理 XP；客人享用後可解鎖其餘經驗：'
-                            f'{message.jump_url}'),
+                        embed=self.embed(notice),
                         view=self, allowed_mentions=discord.AllowedMentions.none())
                     return
             except CharacterError as exc:
