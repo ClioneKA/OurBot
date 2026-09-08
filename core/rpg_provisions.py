@@ -207,6 +207,9 @@ class Provisions:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_cooking_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, xp INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(guild_id,user_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_cooking_last_recipes (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, ingredients TEXT NOT NULL,
+                PRIMARY KEY(guild_id,user_id))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_meals (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, host_id INTEGER NOT NULL,
                 channel_id INTEGER NOT NULL, message_id INTEGER, data TEXT NOT NULL,
@@ -261,6 +264,13 @@ class Provisions:
         return evaluate_ingredients(ingredient_ids, level)
 
     def last_recipe(self, guild, user):
+        saved = self.db.execute('''SELECT ingredients FROM rpg_cooking_last_recipes
+            WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
+        if saved:
+            ingredients = json.loads(saved[0])
+            if (isinstance(ingredients, list) and 1 <= len(ingredients) <= INGREDIENT_COUNT
+                    and all(key in INGREDIENTS for key in ingredients)):
+                return ingredients
         row = self.db.execute('''SELECT data FROM rpg_meals
             WHERE guild_id=? AND host_id=? AND status IN ('open','private')
             ORDER BY created_at DESC,rowid DESC LIMIT 1''', (guild, user)).fetchone()
@@ -271,6 +281,12 @@ class Provisions:
                 or any(key not in INGREDIENTS for key in ingredients)):
             return None
         return ingredients
+
+    def _remember_recipe(self, guild, user, ingredient_ids):
+        self.db.execute('''INSERT INTO rpg_cooking_last_recipes(guild_id,user_id,ingredients)
+            VALUES (?,?,?) ON CONFLICT(guild_id,user_id)
+            DO UPDATE SET ingredients=excluded.ingredients''',
+                        (guild, user, json.dumps(list(ingredient_ids), separators=(',', ':'))))
 
     def _active_meal(self, guild, user, now):
         return self.db.execute('''SELECT 1 FROM rpg_meal_claims
@@ -341,6 +357,8 @@ class Provisions:
                     (meal_id,guild_id,user_id,claimed_at,valid_until,remaining)
                     VALUES (?,?,?,?,?,?)''',
                                 (meal_id, guild, user, now, now + MEAL_EFFECT_SECONDS, data['duration']))
+            if is_private:
+                self._remember_recipe(guild, user, ingredient_ids)
         return offer
 
     def donate(self, guild, user, ingredient_ids):
@@ -365,6 +383,7 @@ class Provisions:
             self.db.execute('''INSERT INTO rpg_cooking_players(guild_id,user_id,xp)
                 VALUES (?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=xp+excluded.xp''',
                             (guild, user, awarded_xp))
+            self._remember_recipe(guild, user, ingredient_ids)
         return {'quantity': len(ingredient_ids), 'quality': quality, 'xp': awarded_xp}
 
     def publish(self, meal_id, message_id):
@@ -373,6 +392,8 @@ class Provisions:
                                       "WHERE id=? AND status='posting'", (message_id, meal_id))
             if not changed.rowcount:
                 raise CharacterError('這桌料理已經失效。')
+            meal = self.meal(meal_id)
+            self._remember_recipe(meal['guild_id'], meal['host_id'], meal['data']['ingredients'])
         return self.meal(meal_id)
 
     def cancel(self, meal_id, refund=False):

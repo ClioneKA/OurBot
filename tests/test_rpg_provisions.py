@@ -188,6 +188,10 @@ class ProvisionTests(unittest.TestCase):
         self.provisions.publish(meal['id'], 99)
         self.assertEqual(self.provisions.last_recipe(1, 1), ingredients)
 
+        donated = ['fishing:pond:common', 'farming:potato']
+        self.provisions.donate(1, 1, donated)
+        self.assertEqual(self.provisions.last_recipe(1, 1), donated)
+
     def test_cook_allows_next_table_when_previous_one_is_full_or_expired(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
         self.grant('fishing:pond:common', 9)

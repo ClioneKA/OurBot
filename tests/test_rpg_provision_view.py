@@ -79,6 +79,10 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.ingredients, [])
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('捐給監獄', embed.fields[-1].value)
+        load = next(child for child in view.children if child.label == '載入上一份配方')
+        self.assertFalse(load.disabled)
+        await view.handle(self.interaction, 'repeat')
+        self.assertEqual(view.ingredients, ['fishing:pond:common'])
 
     async def test_one_seat_meal_is_shown_and_completed_as_private(self):
         self.grant('fishing:waterway:rare', 4)
@@ -98,26 +102,24 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         embed = self.interaction.edit_original_response.call_args.kwargs['embed']
         self.assertIn('不發布酒館公告', embed.fields[-1].value)
 
-    async def test_repeat_last_meal_is_enabled_only_with_enough_ingredients(self):
+    async def test_load_last_recipe_only_fills_selection(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
         self.grant('fishing:pond:common', 6)
         self.grant('farming:potato', 4)
         previous = self.provisions.cook(1, 1, 9, ingredients, now=100)
         self.provisions.publish(previous['id'], 99)
-        data = self.provisions.preview(ingredients, 1, 1)
-        self.tavern.serve_meal.return_value = (
-            SimpleNamespace(jump_url='https://discord.test/repeated'),
-            {'capacity': data['capacity'], 'data': data})
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
 
-        repeat = next(child for child in view.children if child.label == '重複上一份料理')
+        repeat = next(child for child in view.children if child.label == '載入上一份配方')
         self.assertFalse(repeat.disabled)
         await view.handle(self.interaction, 'repeat')
 
-        self.tavern.serve_meal.assert_awaited_once_with(self.interaction, ingredients)
-        embed = self.interaction.edit_original_response.call_args.kwargs['embed']
-        self.assertIn('repeated', embed.fields[-1].value)
+        self.assertEqual(view.ingredients, ingredients)
+        self.tavern.serve_meal.assert_not_awaited()
+        self.interaction.response.defer.assert_not_awaited()
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('已載入上一份配方', embed.fields[-1].value)
 
     async def test_repeat_last_meal_is_disabled_when_ingredients_are_insufficient(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
@@ -128,7 +130,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
 
-        repeat = next(child for child in view.children if child.label == '重複上一份料理')
+        repeat = next(child for child in view.children if child.label == '載入上一份配方')
         self.assertTrue(repeat.disabled)
 
 
