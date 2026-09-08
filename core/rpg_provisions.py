@@ -10,6 +10,7 @@ from core.rpg_character import CharacterError, ITEMS
 
 
 INGREDIENT_COUNT = 5
+COOKING_PRESET_SLOTS = 3
 COOKING_XP_PER_QUALITY = 50
 COOKING_INITIAL_XP_PERCENT = 25
 DONATION_XP_PERCENT = 50
@@ -265,6 +266,11 @@ class Provisions:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_cooking_last_recipes (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, ingredients TEXT NOT NULL,
                 PRIMARY KEY(guild_id,user_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_cooking_presets (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, slot INTEGER NOT NULL,
+                name TEXT NOT NULL, ingredients TEXT NOT NULL,
+                PRIMARY KEY(guild_id,user_id,slot),
+                CHECK(slot >= 1))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_meals (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, host_id INTEGER NOT NULL,
                 channel_id INTEGER NOT NULL, message_id INTEGER, data TEXT NOT NULL,
@@ -317,6 +323,73 @@ class Provisions:
     def preview(self, ingredient_ids, guild=None, user=None):
         level = self.state(guild, user)['level'] if guild is not None and user is not None else 1
         return evaluate_ingredients(ingredient_ids, level)
+
+    @staticmethod
+    def _preset_slot(slot):
+        if type(slot) is not int or not 1 <= slot <= COOKING_PRESET_SLOTS:
+            raise CharacterError('無效的料理配方格。')
+        return slot
+
+    @staticmethod
+    def _preset_name(name):
+        name = ' '.join(str(name).split()).strip()
+        if not name:
+            raise CharacterError('配方名稱不能空白。')
+        if len(name) > 20:
+            raise CharacterError('配方名稱最多 20 個字。')
+        return name
+
+    def preset(self, guild, user, slot):
+        slot = self._preset_slot(slot)
+        row = self.db.execute('''SELECT name,ingredients FROM rpg_cooking_presets
+            WHERE guild_id=? AND user_id=? AND slot=?''', (guild, user, slot)).fetchone()
+        if not row:
+            return dict(slot=slot, name=f'配方 {slot}', ingredients=None)
+        try:
+            ingredients = json.loads(row[1])
+        except (TypeError, json.JSONDecodeError):
+            ingredients = None
+        if (not isinstance(ingredients, list) or len(ingredients) != INGREDIENT_COUNT
+                or any(key not in INGREDIENTS for key in ingredients)):
+            ingredients = None
+        return dict(slot=slot, name=row[0], ingredients=ingredients)
+
+    def presets(self, guild, user):
+        return [self.preset(guild, user, slot)
+                for slot in range(1, COOKING_PRESET_SLOTS + 1)]
+
+    def save_preset(self, guild, user, slot, ingredient_ids):
+        slot = self._preset_slot(slot)
+        evaluate_ingredients(ingredient_ids, self.state(guild, user)['level'])
+        existing = self.db.execute('''SELECT name FROM rpg_cooking_presets
+            WHERE guild_id=? AND user_id=? AND slot=?''', (guild, user, slot)).fetchone()
+        name = existing[0] if existing else f'配方 {slot}'
+        with self.db:
+            self.db.execute('''INSERT INTO rpg_cooking_presets
+                (guild_id,user_id,slot,name,ingredients) VALUES (?,?,?,?,?)
+                ON CONFLICT(guild_id,user_id,slot) DO UPDATE SET
+                name=excluded.name,ingredients=excluded.ingredients''',
+                (guild, user, slot, name,
+                 json.dumps(list(ingredient_ids), separators=(',', ':'))))
+        return self.preset(guild, user, slot)
+
+    def rename_preset(self, guild, user, slot, name):
+        slot = self._preset_slot(slot)
+        name = self._preset_name(name)
+        current = self.preset(guild, user, slot)
+        ingredients = json.dumps(current['ingredients'], separators=(',', ':'))
+        with self.db:
+            self.db.execute('''INSERT INTO rpg_cooking_presets
+                (guild_id,user_id,slot,name,ingredients) VALUES (?,?,?,?,?)
+                ON CONFLICT(guild_id,user_id,slot) DO UPDATE SET name=excluded.name''',
+                (guild, user, slot, name, ingredients))
+        return self.preset(guild, user, slot)
+
+    def clear_preset(self, guild, user, slot):
+        slot = self._preset_slot(slot)
+        with self.db:
+            self.db.execute('''DELETE FROM rpg_cooking_presets
+                WHERE guild_id=? AND user_id=? AND slot=?''', (guild, user, slot))
 
     def last_recipe(self, guild, user):
         saved = self.db.execute('''SELECT ingredients FROM rpg_cooking_last_recipes

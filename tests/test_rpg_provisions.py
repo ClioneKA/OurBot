@@ -5,7 +5,7 @@ import unittest
 from core.rpg import RPGStore
 from core.rpg_character import CharacterError, Characters, ITEMS
 from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_INITIAL_XP_PERCENT,
-                                 COOKING_XP_PER_QUALITY, DONATION_XP_PERCENT,
+                                 COOKING_PRESET_SLOTS, COOKING_XP_PER_QUALITY, DONATION_XP_PERCENT,
                                  FEAST, FORTUNE, GROWTH,
                                  INGREDIENTS, MEAL_CLAIM_SECONDS,
                                  MEAL_EFFECT_SECONDS, NOURISHMENT,
@@ -214,6 +214,28 @@ class ProvisionTests(unittest.TestCase):
         donated = ['fishing:pond:common', 'farming:potato']
         self.provisions.donate(1, 1, donated)
         self.assertEqual(self.provisions.last_recipe(1, 1), donated)
+
+    def test_cooking_presets_can_be_saved_named_and_cleared(self):
+        recipe = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.assertEqual(COOKING_PRESET_SLOTS, 3)
+        self.assertEqual(
+            [preset['name'] for preset in self.provisions.presets(1, 1)],
+            ['配方 1', '配方 2', '配方 3'])
+
+        saved = self.provisions.save_preset(1, 1, 2, recipe)
+        self.assertEqual(saved['ingredients'], recipe)
+        renamed = self.provisions.rename_preset(1, 1, 2, '  成長   宴席  ')
+        self.assertEqual((renamed['name'], renamed['ingredients']), ('成長 宴席', recipe))
+
+        with self.assertRaisesRegex(CharacterError, '恰好 5'):
+            self.provisions.save_preset(1, 1, 1, recipe[:2])
+        with self.assertRaisesRegex(CharacterError, '最多 20'):
+            self.provisions.rename_preset(
+                1, 1, 1, '這是一個超過二十個中文字的料理配方名稱不能保存')
+
+        self.provisions.clear_preset(1, 1, 2)
+        self.assertEqual(self.provisions.preset(1, 1, 2),
+                         {'slot': 2, 'name': '配方 2', 'ingredients': None})
 
     def test_cook_allows_next_table_when_previous_one_is_full_or_expired(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2

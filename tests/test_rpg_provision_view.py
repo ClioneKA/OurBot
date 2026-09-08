@@ -28,7 +28,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.interaction = SimpleNamespace(
             guild_id=1, channel_id=9, user=SimpleNamespace(id=1),
             response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(),
-                                    defer=AsyncMock()),
+                                    defer=AsyncMock(), send_modal=AsyncMock()),
             edit_original_response=AsyncMock())
 
     def grant(self, key, quantity=1):
@@ -134,6 +134,35 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
 
         repeat = next(child for child in view.children if child.label == '載入上一份配方')
         self.assertTrue(repeat.disabled)
+
+    async def test_recipe_presets_save_rename_select_load_and_clear(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        view.ingredients = list(ingredients)
+        view.rebuild()
+
+        await view.handle(self.interaction, 'preset_save')
+        self.assertEqual(self.provisions.preset(1, 1, 1)['ingredients'], ingredients)
+        await view.handle(self.interaction, 'preset_rename_value', '成長宴席')
+        self.assertEqual(view.current_preset()['name'], '成長宴席')
+
+        await view.handle(self.interaction, 'reset')
+        await view.handle(self.interaction, 'preset_load')
+        self.assertEqual(view.ingredients, ingredients)
+        self.assertIn('尚未消耗素材',
+                      self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+
+        await view.handle(self.interaction, 'preset_slot', '2')
+        self.assertEqual(view.preset_slot, 2)
+        self.assertTrue(next(child for child in view.children
+                             if getattr(child, 'label', '') == '載入配方').disabled)
+        await view.handle(self.interaction, 'preset_slot', '1')
+        await view.handle(self.interaction, 'preset_clear')
+        self.assertIsNone(view.current_preset()['ingredients'])
+        self.assertLessEqual(len(view.to_components()), 5)
 
 
 if __name__ == '__main__':

@@ -7,8 +7,21 @@ import discord
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
-from core.rpg_provisions import (INGREDIENT_COUNT, INGREDIENTS, effect_text,
-                                 guest_reward_target)
+from core.rpg_provisions import (COOKING_PRESET_SLOTS, INGREDIENT_COUNT, INGREDIENTS,
+                                 effect_text, guest_reward_target)
+
+
+class RenameRecipePresetModal(discord.ui.Modal):
+    def __init__(self, panel):
+        super().__init__(title='重新命名料理配方')
+        self.panel = panel
+        self.name = discord.ui.TextInput(
+            label='配方名稱', default=panel.current_preset()['name'],
+            min_length=1, max_length=20)
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction):
+        await self.panel.handle(interaction, 'preset_rename_value', self.name.value)
 
 
 class ProvisionView(discord.ui.View):
@@ -18,6 +31,7 @@ class ProvisionView(discord.ui.View):
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.ingredients = []
         self.ingredient_page = 0
+        self.preset_slot = 1
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -37,6 +51,17 @@ class ProvisionView(discord.ui.View):
 
         button.callback = callback
         self.add_item(button)
+
+    def current_preset(self):
+        return self.cog.provisions.preset(
+            self.guild_id, self.owner.id, self.preset_slot)
+
+    @staticmethod
+    def _recipe_text(ingredients):
+        if not ingredients:
+            return '尚未保存'
+        return '、'.join(f'{ITEMS[key].name} ×{amount}'
+                        for key, amount in Counter(ingredients).items())
 
     def rebuild(self):
         counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
@@ -77,6 +102,26 @@ class ProvisionView(discord.ui.View):
         self._button('上一頁食材', 'ingredient_prev', 2, self.ingredient_page == 0)
         self._button('下一頁食材', 'ingredient_next', 2, self.ingredient_page + 1 >= page_count)
         self._button('關閉', 'close', 2)
+        presets = self.cog.provisions.presets(self.guild_id, self.owner.id)
+        self.add_item(PanelSelect(
+            'preset_slot', row=3, placeholder='選擇料理配方', options=[
+                discord.SelectOption(
+                    label=preset['name'], value=str(preset['slot']),
+                    description=self._recipe_text(preset['ingredients'])[:100],
+                    default=preset['slot'] == self.preset_slot)
+                for preset in presets]))
+        preset = self.current_preset()
+        can_load_preset = bool(preset['ingredients']) and all(
+            counts.get(key, 0) >= amount
+            for key, amount in Counter(preset['ingredients'] or ()).items())
+        self._button('保存目前配方', 'preset_save', 4,
+                     len(self.ingredients) != INGREDIENT_COUNT,
+                     discord.ButtonStyle.success)
+        self._button('載入配方', 'preset_load', 4, not can_load_preset,
+                     discord.ButtonStyle.primary)
+        self._button('重新命名', 'preset_rename', 4)
+        self._button('清空配方', 'preset_clear', 4, not preset['ingredients'],
+                     discord.ButtonStyle.danger)
 
     def embed(self, notice=None):
         state = self.cog.provisions.state(self.guild_id, self.owner.id)
@@ -97,6 +142,9 @@ class ProvisionView(discord.ui.View):
             + (f'｜距離下一級 {state["next_xp"] - state["level_xp"]:,} XP'
                if state['next_xp'] is not None else '｜已達最高等級')), inline=False)
         embed.add_field(name='已選食材', value=selection, inline=False)
+        preset = self.current_preset()
+        embed.add_field(name=f'目前配方格｜{preset["name"]}',
+                        value=self._recipe_text(preset['ingredients']), inline=False)
         if len(self.ingredients) == INGREDIENT_COUNT:
             try:
                 data = self.cog.provisions.preview(self.ingredients, self.guild_id, self.owner.id)
@@ -142,6 +190,9 @@ class ProvisionView(discord.ui.View):
                 self.stop()
                 await interaction.response.edit_message(content='料理面板已關閉。', embed=None, view=None)
                 return
+            if action == 'preset_rename':
+                await interaction.response.send_modal(RenameRecipePresetModal(self))
+                return
             notice = None
             try:
                 if action == 'ingredient' and value in INGREDIENTS:
@@ -160,6 +211,36 @@ class ProvisionView(discord.ui.View):
                     self.ingredient_page = max(0, self.ingredient_page - 1)
                 elif action == 'ingredient_next':
                     self.ingredient_page += 1
+                elif action == 'preset_slot':
+                    if (not isinstance(value, str) or not value.isdigit()
+                            or not 1 <= int(value) <= COOKING_PRESET_SLOTS):
+                        raise CharacterError('無效的料理配方格。')
+                    self.preset_slot = int(value)
+                elif action == 'preset_save':
+                    preset = self.cog.provisions.save_preset(
+                        self.guild_id, self.owner.id, self.preset_slot, self.ingredients)
+                    notice = f'已將目前選擇保存至「{preset["name"]}」。'
+                elif action == 'preset_load':
+                    preset = self.current_preset()
+                    if not preset['ingredients']:
+                        raise CharacterError('這個料理配方格尚未保存內容。')
+                    counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
+                    missing = [f'{ITEMS[key].name} {counts.get(key, 0)}/{amount}'
+                               for key, amount in Counter(preset['ingredients']).items()
+                               if counts.get(key, 0) < amount]
+                    if missing:
+                        raise CharacterError('素材不足：' + '、'.join(missing))
+                    self.ingredients = list(preset['ingredients'])
+                    notice = f'已載入「{preset["name"]}」，尚未消耗素材。'
+                elif action == 'preset_rename_value':
+                    preset = self.cog.provisions.rename_preset(
+                        self.guild_id, self.owner.id, self.preset_slot, value)
+                    notice = f'配方已重新命名為「{preset["name"]}」。'
+                elif action == 'preset_clear':
+                    name = self.current_preset()['name']
+                    self.cog.provisions.clear_preset(
+                        self.guild_id, self.owner.id, self.preset_slot)
+                    notice = f'已清空「{name}」。'
                 elif action == 'donate':
                     result = self.cog.provisions.donate(
                         self.guild_id, self.owner.id, self.ingredients)
