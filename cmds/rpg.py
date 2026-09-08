@@ -13,6 +13,7 @@ from core.settings import get_settings
 from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, item_text, stage_level
 from core.rpg_battle import Tactics, TARGETS, FIXED_TARGETS, condition_text, rule_skill, skill_description
+from core.rpg_loadouts import Loadouts
 from core.rpg_raids import RaidService
 from core.rpg_total_raids import TotalRaidService, TOTAL_RAID_BOSSES
 from core.rpg_total_battle import TotalRaidError
@@ -40,6 +41,7 @@ class RPG(commands.Cog):
         self.menu_views = WeakSet()
         self.notification_views = WeakSet()
         self.tactics = Tactics(self.store)
+        self.loadouts = Loadouts(self.store, self.characters, self.tactics)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)
         self.tavern = TavernService(self)

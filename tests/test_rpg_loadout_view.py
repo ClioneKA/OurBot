@@ -1,0 +1,63 @@
+from pathlib import Path
+from types import SimpleNamespace
+from weakref import WeakSet
+import tempfile
+import unittest
+from unittest.mock import AsyncMock
+
+import discord
+
+from core.rpg import RPGStore, level_floor
+from core.rpg_battle import Tactics
+from core.rpg_character import Characters
+from core.rpg_loadouts import Loadouts
+from core.rpg_loadout_view import LoadoutView
+from core.rpg_menu import AdventureView
+from core.settings import RPGSettings
+
+
+class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.store = RPGStore(Path(directory.name) / 'rpg.db')
+        self.addCleanup(self.store.close)
+        settings = RPGSettings()
+        characters = Characters(self.store, settings)
+        tactics = Tactics(self.store)
+        loadouts = Loadouts(self.store, characters, tactics)
+        self.store.award_voice([(1, 1, level_floor(50))])
+        characters.change_job(1, 1, '僧侶')
+        self.cog = SimpleNamespace(characters=characters, tactics=tactics, loadouts=loadouts,
+                                   settings=settings, menu_views=WeakSet(),
+                                   character_embed=lambda *args: discord.Embed(title='角色'))
+        self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(),
+                                     send_modal=AsyncMock()),
+            edit_original_response=AsyncMock())
+        self.view = LoadoutView(self.cog, self.interaction)
+        self.addCleanup(self.view.stop)
+
+    async def test_save_select_rename_apply_and_clear(self):
+        self.assertTrue(next(child for child in self.view.children
+                             if getattr(child, 'label', '') == '套用配置').disabled)
+        await self.view.handle(self.interaction, 'save')
+        self.assertIn('已將目前', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+        await self.view.handle(self.interaction, 'rename_value', '治療配置')
+        self.assertEqual(self.view.current()['name'], '治療配置')
+        self.cog.characters.change_job(1, 1, '弓兵')
+        await self.view.handle(self.interaction, 'apply')
+        self.assertEqual(self.cog.characters.job(1, 1), '僧侶')
+        await self.view.handle(self.interaction, 'clear')
+        self.assertIsNone(self.view.current()['data'])
+        self.assertLessEqual(len(self.view.to_components()), 5)
+
+    async def test_main_menu_navigates_to_loadouts(self):
+        menu = AdventureView(self.cog, self.interaction)
+        self.addCleanup(menu.stop)
+        labels = [child.label for child in menu.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('出戰配置', labels)
+        await menu.handle(self.interaction, 'loadouts')
+        panel = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(panel.stop)
+        self.assertIsInstance(panel, LoadoutView)
