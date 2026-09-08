@@ -324,27 +324,41 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
                 description=f'以{PAINT_NAMES[color]}噴漆染色，可再次改色；原顏料不返還。')
 
 
+def _cooking_ingredient_description(tag, quality, pairing, aftertaste=0):
+    echo = f'+{aftertaste}' if aftertaste else '—'
+    return f'料理標籤：{tag}｜品質：{quality}｜餘韻：{echo}｜推薦搭配：{pairing}。'
+
+
 # Fishing items use the existing stackable inventory while remaining separate from
 # combat equipment.  sell_price is the exact shop payout; legacy equipment keeps
 # using 20% of its value.
 for key, name, category, description, sell_price in (
-    ('fishing:pond:common', '池塘鯽魚', '料理素材', '中庭許願池常見的魚，可作為料理素材。', 25),
-    ('fishing:pond:rare', '七彩錦魚', '料理素材', '閃著七彩光澤的稀有魚，可作為高級料理素材。', 50),
-    ('fishing:pond:weed', '青苔水草', '料理素材', '生長在許願池底的水草，帶有滋養風味。', 30),
+    ('fishing:pond:common', '池塘鯽魚', '料理素材',
+     _cooking_ingredient_description('成長', 1, '馬鈴薯'), 25),
+    ('fishing:pond:rare', '七彩錦魚', '料理素材',
+     _cooking_ingredient_description('幸運', 2, '小麥', 1), 50),
+    ('fishing:pond:weed', '青苔水草', '料理素材',
+     _cooking_ingredient_description('滋養', 1, '晨露藥草'), 30),
     ('fishing:pond:coin', '許願銅幣', '換金道具', '從許願池撈起的銅幣，可賣給商店換取金幣。', 100),
     ('fishing:pond:rod', '濕潤木枝', '製作材料', '適合削成釣竿竿身的木枝。', 20),
     ('fishing:pond:line', '廢棄釣線', '製作材料', '纏在池底、仍可重新利用的釣線。', 20),
     ('fishing:pond:hook', '生鏽魚鉤', '製作材料', '清理後還能使用的舊魚鉤。', 20),
-    ('fishing:lake:common', '魔女湖鱒', '料理素材', '棲息在魔女島湖泊的鱒魚，可作為料理素材。', 50),
-    ('fishing:lake:rare', '星紋魔女鰻', '料理素材', '身上帶有星形紋路的稀有鰻魚。', 100),
-    ('fishing:lake:weed', '月光水草', '料理素材', '吸收月光魔力生長、帶有滋養風味的水草。', 60),
+    ('fishing:lake:common', '魔女湖鱒', '料理素材',
+     _cooking_ingredient_description('猛攻', 2, '魔女番茄'), 50),
+    ('fishing:lake:rare', '星紋魔女鰻', '料理素材',
+     _cooking_ingredient_description('幸運', 3, '火紅辣椒', 1), 100),
+    ('fishing:lake:weed', '月光水草', '料理素材',
+     _cooking_ingredient_description('滋養', 2, '月鈴草'), 60),
     ('fishing:lake:coin', '沉水銀幣', '換金道具', '沉在魔女島湖底的銀幣，可賣給商店換取金幣。', 200),
     ('fishing:lake:rod', '魔力漂流木', '製作材料', '帶有微弱魔力、適合製作竿身的木材。', 40),
     ('fishing:lake:line', '魔力釣線', '製作材料', '能承受魔力魚掙扎的堅韌釣線。', 40),
     ('fishing:lake:hook', '魔力魚鉤', '製作材料', '刻有簡單魔法紋路的魚鉤。', 40),
-    ('fishing:waterway:common', '幽光盲魚', '料理素材', '棲息在監獄地下水路、會發出微光的盲魚。', 100),
-    ('fishing:waterway:rare', '鏡蝶魚', '料理素材', '鱗片如鏡面、尾鰭似蝶翼的稀有魚。', 200),
-    ('fishing:waterway:weed', '夜露水草', '料理素材', '在地下水路吸收魔力露水生長、帶有滋養風味的水草。', 120),
+    ('fishing:waterway:common', '幽光盲魚', '料理素材',
+     _cooking_ingredient_description('成長', 3, '夜色南瓜'), 100),
+    ('fishing:waterway:rare', '鏡蝶魚', '料理素材',
+     _cooking_ingredient_description('幸運', 4, '月白米', 1), 200),
+    ('fishing:waterway:weed', '夜露水草', '料理素材',
+     _cooking_ingredient_description('滋養', 3, '夢霧草'), 120),
     ('fishing:waterway:coin', '褪色金幣', '換金道具', '被地下水流沖刷得看不清圖案的舊金幣。', 400),
     ('fishing:waterway:rod', '黑檀漂流木', '製作材料', '質地堅硬、沉著黑亮的高級竿身材料。', 80),
     ('fishing:waterway:line', '月蠶釣線', '製作材料', '由月蠶絲製成、幾乎透明的堅韌釣線。', 80),
@@ -363,15 +377,24 @@ for key, name, description in (
                       description=description, transferable=False)
 
 for key, name, category, description, sell_price in (
-    ('farming:potato', '馬鈴薯', '料理素材', '農耕 Lv.1 解鎖，可搭配池塘鯽魚。', 25),
-    ('farming:dew_herb', '晨露藥草', '料理素材', '農耕 Lv.5 解鎖，能為料理帶來活力。', 30),
-    ('farming:wheat', '小麥', '料理素材', '農耕 Lv.10 解鎖，可搭配七彩錦魚。', 50),
-    ('farming:witch_tomato', '魔女番茄', '料理素材', '農耕 Lv.20 解鎖，可搭配魔女湖鱒。', 50),
-    ('farming:moonbell', '月鈴草', '料理素材', '農耕 Lv.25 解鎖，能為料理帶來猛攻效果。', 60),
-    ('farming:chili', '火紅辣椒', '料理素材', '農耕 Lv.30 解鎖，可搭配星紋魔女鰻。', 100),
-    ('farming:night_pumpkin', '夜色南瓜', '料理素材', '農耕 Lv.40 解鎖，可搭配幽光盲魚。', 100),
-    ('farming:dreammist_herb', '夢霧草', '料理素材', '農耕 Lv.45 解鎖，能為料理帶來成長效果。', 120),
-    ('farming:moonwhite_rice', '月白米', '料理素材', '農耕 Lv.50 解鎖，可搭配鏡蝶魚。', 200),
+    ('farming:potato', '馬鈴薯', '料理素材',
+     _cooking_ingredient_description('盛宴', 1, '池塘鯽魚'), 25),
+    ('farming:dew_herb', '晨露藥草', '料理素材',
+     _cooking_ingredient_description('活力', 1, '青苔水草'), 30),
+    ('farming:wheat', '小麥', '料理素材',
+     _cooking_ingredient_description('盛宴', 2, '七彩錦魚'), 50),
+    ('farming:witch_tomato', '魔女番茄', '料理素材',
+     _cooking_ingredient_description('活力', 2, '魔女湖鱒'), 50),
+    ('farming:moonbell', '月鈴草', '料理素材',
+     _cooking_ingredient_description('猛攻', 2, '月光水草'), 60),
+    ('farming:chili', '火紅辣椒', '料理素材',
+     _cooking_ingredient_description('猛攻', 3, '星紋魔女鰻'), 100),
+    ('farming:night_pumpkin', '夜色南瓜', '料理素材',
+     _cooking_ingredient_description('活力', 3, '幽光盲魚'), 100),
+    ('farming:dreammist_herb', '夢霧草', '料理素材',
+     _cooking_ingredient_description('成長', 3, '夜露水草'), 120),
+    ('farming:moonwhite_rice', '月白米', '料理素材',
+     _cooking_ingredient_description('盛宴', 4, '鏡蝶魚'), 200),
 ):
     ITEMS[key] = Item(name, category, '', 0, (0, 0, 0, 0, 0), category=category,
                       description=description, sell_price=sell_price)

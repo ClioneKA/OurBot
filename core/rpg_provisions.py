@@ -10,6 +10,7 @@ from core.rpg_character import CharacterError, ITEMS
 
 
 INGREDIENT_COUNT = 5
+COOKING_XP_PER_QUALITY = 50
 MEAL_CLAIM_SECONDS = 10 * 60
 MEAL_EFFECT_SECONDS = 7 * 24 * 60 * 60
 
@@ -172,7 +173,7 @@ def evaluate_ingredients(ingredient_ids, cooking_level=1):
     if secondary:
         for key, value in _effect(secondary, grade, secondary=True).items():
             effect[key] = effect.get(key, 0) + value
-    cooking_xp = quality * 200 * GRADE_MULTIPLIERS[grade] // 100
+    cooking_xp = quality * COOKING_XP_PER_QUALITY * GRADE_MULTIPLIERS[grade] // 100
     return {
         'ingredients': list(ingredient_ids), 'tag_counts': dict(tags), 'quality': quality,
         'unique': unique, 'pairings': pairing_count, 'score': score, 'grade': grade,

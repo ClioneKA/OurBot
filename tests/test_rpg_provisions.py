@@ -3,9 +3,10 @@ import tempfile
 import unittest
 
 from core.rpg import RPGStore
-from core.rpg_character import CharacterError, Characters
-from core.rpg_provisions import (AFTERTASTE, ASSAULT, FEAST, FORTUNE, GROWTH,
-                                 INGREDIENTS, NOURISHMENT, Provisions,
+from core.rpg_character import CharacterError, Characters, ITEMS
+from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_XP_PER_QUALITY,
+                                 FEAST, FORTUNE, GROWTH,
+                                 INGREDIENTS, NOURISHMENT, PAIRINGS, Provisions,
                                  VITALITY, evaluate_ingredients)
 from core.settings import RPGSettings
 
@@ -34,6 +35,18 @@ class ProvisionTests(unittest.TestCase):
                                 'fishing:waterway:rare'])
         self.assertEqual(sum(INGREDIENTS[key].aftertaste for key in rare), 3)
 
+    def test_backpack_descriptions_share_cooking_metadata_format(self):
+        for key, ingredient in INGREDIENTS.items():
+            description = ITEMS[key].description
+            self.assertIn(f'料理標籤：{ingredient.tag}', description)
+            self.assertIn(f'品質：{ingredient.quality}', description)
+            expected_echo = f'+{ingredient.aftertaste}' if ingredient.aftertaste else '—'
+            self.assertIn(f'餘韻：{expected_echo}', description)
+            self.assertIn('推薦搭配：', description)
+        for left, right in PAIRINGS:
+            self.assertIn(ITEMS[right].name, ITEMS[left].description)
+            self.assertIn(ITEMS[left].name, ITEMS[right].description)
+
     def test_evaluation_uses_quality_diversity_pairings_feast_and_aftertaste(self):
         ingredients = ['fishing:pond:rare', 'fishing:lake:rare',
                        'fishing:pond:common', 'fishing:waterway:common', 'farming:potato']
@@ -50,6 +63,14 @@ class ProvisionTests(unittest.TestCase):
     def test_five_feast_ingredients_require_an_effect_ingredient(self):
         with self.assertRaisesRegex(CharacterError, '至少需要'):
             evaluate_ingredients(['farming:potato'] * 5)
+
+    def test_cooking_xp_scales_from_250_to_1400(self):
+        low = evaluate_ingredients(['fishing:pond:common'] * 5)
+        high = evaluate_ingredients(
+            ['fishing:waterway:rare'] * 4 + ['farming:moonwhite_rice'])
+        self.assertEqual(COOKING_XP_PER_QUALITY, 50)
+        self.assertEqual((low['grade'], low['cooking_xp']), ('C', 250))
+        self.assertEqual((high['grade'], high['cooking_xp']), ('S', 1400))
 
     def test_cooking_is_atomic_awards_xp_and_seats_cook(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
