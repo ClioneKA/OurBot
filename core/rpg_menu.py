@@ -6,7 +6,7 @@ import discord
 from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_sellable, item_text
 
 
-BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '煉金素材', '製作材料', '換金道具', '釣竿', '料理', '藥水')
+BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '製作材料', '換金道具', '釣竿')
 
 
 def add_back(view, row):
@@ -39,9 +39,6 @@ async def navigate(view, interaction, page='home'):
     elif page == 'provisions':
         from core.rpg_provision_view import ProvisionView
         next_view = ProvisionView(view.cog, view.origin)
-    elif page == 'provision_loadout':
-        from core.rpg_provision_view import ProvisionLoadoutView
-        next_view = ProvisionLoadoutView(view.cog, view.origin)
     elif page == 'use_items':
         from core.rpg_item_use_view import ItemUseView
         next_view = ItemUseView(view.cog, view.origin)
@@ -98,7 +95,6 @@ class AdventureView(discord.ui.View):
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
             self.button('農耕', 'farming', 0)
-            self.button('料理／煉金', 'provisions', 0)
         elif self.page == 'travel':
             self.button('瑪格的占卜室', 'divination', 0)
             self.button('冒險者酒館', 'tavern', 0)
@@ -154,10 +150,10 @@ class AdventureView(discord.ui.View):
                                   description='\n\n'.join(lines) or '目前沒有此類物品。', color=0x8B5CF6)
         elif self.page == 'life':
             embed = discord.Embed(title='安安大冒險｜生活', description=
-                '透過生活技能取得料理、煉金與製作素材。\n\n'
+                '透過生活技能取得料理與製作素材。\n\n'
                 '**釣魚**：選擇釣場與時間開始釣魚，完成後收竿取得漁獲並提升獨立的釣魚等級。\n'
                 '**農耕**：中庭花圃自 Lv.1 開放，監獄菜園／廢棄溫室自 Lv.20／40 開放；可種植已解鎖植物，等級越高收成越多。\n'
-                '**料理／煉金**：使用釣魚與農耕素材製作料理及藥水；攜帶設定在裝備／能力的討伐補給。', color=0x38BDF8)
+                '魚、作物、水草與藥草都能帶到冒險者酒館，選擇五份食材製作公開料理。', color=0x38BDF8)
         elif self.page == 'travel':
             embed = discord.Embed(title='安安大冒險｜移動', description=
                 '**瑪格的占卜室**\n'
@@ -187,9 +183,9 @@ class AdventureView(discord.ui.View):
                 '集齊紅、黃、藍色噴漆罐後，可在背包組成噴漆罐套組並直接使用；中階討伐空閒時會消耗套組，在中階頻道召喚固定四階「城崎諾亞」並自動報名，且不重排正常中階討伐時間。諾亞裝備可在漢娜的裁縫所消耗單色噴漆並付費染色。\n\n'
                 '討伐頻道動態難度：勝利緩慢增加，平手或戰敗依削減 HP 大幅下降，範圍 1–2.5 倍；HP／攻擊／防禦分別套用 100%／40%／10% 幅度。取消不調整，下一場套用；勝利經驗與金幣隨動態難度增加，掉落率不變。\n\n'
                 '背包可依物品用途分類，並可給予同伺服器真人物品；商店收購一般裝備及生活物品。木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。穿戴中的那一件需先卸下。\n\n'
-                '生活頁可選擇時間開始釣魚，也能在已解鎖農地種植；Lv.40 可前往監獄地下水路，並解鎖第三塊農地廢棄溫室。釣魚與農耕都可設定完成私訊。魚與作物可製成自動回血料理，水草與藥草可製成整場增益藥水。\n\n'
+                '生活頁可選擇時間開始釣魚，也能在已解鎖農地種植；Lv.40 可前往監獄地下水路，並解鎖第三塊農地廢棄溫室。釣魚與農耕都可設定完成私訊。所有魚、作物、水草與藥草都能在酒館選取五份製成料理。\n\n'
                 '移動頁可前往瑪格的占卜室；每天可不限次數支付逐次提高的金幣抽牌，為下一場討伐取得特殊效果與 10% 額外經驗。\n\n'
-                '移動頁也可前往冒險者酒館，支付金幣張貼不發金幣且不影響正常排程的額外懸賞，或公開請最多 5／10／20 人喝一杯，使下一場討伐經驗 +5%。\n\n'
+                '移動頁也可前往冒險者酒館，製作並分享料理、公開請最多 5／10／20 人喝一杯，或支付金幣張貼不發金幣且不影響正常排程的額外懸賞。料理與請客會發布到伺服器設定的酒館頻道。\n\n'
                 '漢娜的裁縫所可消耗噴漆罐與 1,000 金幣替諾亞裝備染色；目前的討伐飾品各有一格刺繡格，可支付 500 金幣縫製一項基礎能力 +2 的刺繡，免費初始飾品無法刺繡。\n\n'
                 '使用 /討伐通知 分別領取一般或中階出怪通知，也可一次操作全部。使用 /排行榜 查看排名，各功能由主選單開啟。' + ('\n目前暫停聊天與語音經驗。' if not s.enabled else ''), color=0x8B5CF6)
             embed.add_field(name='基礎能力效果（含飾品加成）', value=

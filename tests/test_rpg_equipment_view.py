@@ -32,7 +32,8 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.view.children[1].disabled)
         self.assertTrue(self.view.wear.disabled)
         self.assertFalse(self.view.remove.disabled)
-        self.assertEqual(self.view.provisions.label, '討伐補給')
+        self.assertFalse(any(child.label == '討伐補給' for child in self.view.children
+                             if isinstance(child, discord.ui.Button)))
         self.assertLessEqual(len(self.view.to_components()), 5)
         stranger = SimpleNamespace(user=SimpleNamespace(id=2), guild_id=1,
                                    response=SimpleNamespace(send_message=AsyncMock()))

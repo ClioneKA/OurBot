@@ -3,8 +3,10 @@ import tempfile
 import unittest
 
 from core.rpg import RPGStore
-from core.rpg_character import CharacterError, Characters, ITEMS
-from core.rpg_provisions import FOODS, POTIONS, Provisions
+from core.rpg_character import CharacterError, Characters
+from core.rpg_provisions import (AFTERTASTE, ASSAULT, FEAST, FORTUNE, GROWTH,
+                                 INGREDIENTS, NOURISHMENT, Provisions,
+                                 VITALITY, evaluate_ingredients)
 from core.settings import RPGSettings
 
 
@@ -17,84 +19,106 @@ class ProvisionTests(unittest.TestCase):
         self.characters = Characters(self.store, RPGSettings())
         self.provisions = Provisions(self.store)
 
-    def grant(self, key, quantity=1):
+    def grant(self, key, quantity=1, user=1):
         with self.store.db:
             self.store.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
-                VALUES (1,1,?,?) ON CONFLICT(guild_id,user_id,item_id)
-                DO UPDATE SET quantity=quantity+excluded.quantity''', (key, quantity))
+                VALUES (1,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
+                DO UPDATE SET quantity=quantity+excluded.quantity''', (user, key, quantity))
 
-    def test_recipe_catalog_has_six_foods_and_seven_types_per_tier(self):
-        self.assertEqual(len(FOODS), 6)
-        self.assertEqual(len(POTIONS), 21)
-        self.assertEqual({key.split(':')[2] for key in POTIONS},
-                         {'hp', 'attack', 'defense', 'healing', 'hit', 'evasion', 'critical'})
-        self.assertTrue(all(key in ITEMS for key in (*FOODS, *POTIONS)))
-        self.assertEqual(POTIONS['potion:3:attack']['amount'], 11)
-        self.assertEqual(POTIONS['potion:3:evasion']['amount'], 4)
-        self.assertEqual(FOODS['food:waterway:rare']['regen_permille'], 100)
+    def test_all_fish_crops_weeds_and_herbs_are_cooking_ingredients(self):
+        self.assertEqual(len(INGREDIENTS), 18)
+        tags = {ingredient.tag for ingredient in INGREDIENTS.values()}
+        self.assertEqual(tags, {GROWTH, ASSAULT, VITALITY, FEAST, NOURISHMENT, FORTUNE})
+        rare = [key for key, ingredient in INGREDIENTS.items() if ingredient.aftertaste]
+        self.assertEqual(rare, ['fishing:pond:rare', 'fishing:lake:rare',
+                                'fishing:waterway:rare'])
+        self.assertEqual(sum(INGREDIENTS[key].aftertaste for key in rare), 3)
 
-    def test_crafting_is_atomic(self):
-        key = 'food:pond:common'
-        fish, crop = FOODS[key]['ingredients']
-        self.grant(fish)
+    def test_evaluation_uses_quality_diversity_pairings_feast_and_aftertaste(self):
+        ingredients = ['fishing:pond:rare', 'fishing:lake:rare',
+                       'fishing:pond:common', 'fishing:waterway:common', 'farming:potato']
+        data = evaluate_ingredients(ingredients, cooking_level=20)
+        self.assertEqual(data['primary_tag'], FORTUNE)
+        self.assertEqual(data['secondary_tag'], GROWTH)
+        self.assertEqual(data['duration'], 2)
+        self.assertEqual(data['total_portions'], 5)
+        self.assertEqual(data['capacity'], 2)
+        self.assertEqual(data['pairings'], 1)
+        self.assertIn('drop_points', data['effect'])
+        self.assertIn('xp_percent', data['effect'])
+
+    def test_five_feast_ingredients_require_an_effect_ingredient(self):
+        with self.assertRaisesRegex(CharacterError, '至少需要'):
+            evaluate_ingredients(['farming:potato'] * 5)
+
+    def test_cooking_is_atomic_awards_xp_and_seats_cook(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
         before = self.characters.inventory_counts(1, 1)
         with self.assertRaises(CharacterError):
-            self.provisions.craft(1, 1, key)
+            self.provisions.cook(1, 1, 9, ingredients + ['farming:potato'], now=100)
         self.assertEqual(self.characters.inventory_counts(1, 1), before)
-        self.grant(crop)
-        self.provisions.craft(1, 1, key)
+
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        data = meal['data']
+        self.assertGreater(data['cooking_xp'], 0)
+        self.assertEqual(self.provisions.state(1, 1)['xp'], data['cooking_xp'])
+        self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
+        self.assertEqual(self.provisions.claimants(meal['id']), [1])
+
+    def test_meal_claims_are_idempotent_and_temperance_preserves_charge(self):
+        ingredients = ['fishing:pond:rare', 'fishing:lake:rare',
+                       'fishing:pond:common', 'farming:potato', 'farming:wheat']
+        for key in ingredients:
+            self.grant(key)
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.publish(meal['id'], 99)
+        self.provisions.claim(meal['id'], 1, 2, now=101)
+
+        first = self.provisions.prepare_for_raid('raid-a', 1, [2], preserve_users=[2], now=102)
+        self.assertEqual(first[2]['kind'], 'meal')
+        self.assertEqual(self.provisions.prepare_for_raid(
+            'raid-a', 1, [2], preserve_users=[2], now=102), first)
+        remaining = self.store.db.execute(
+            'SELECT remaining FROM rpg_meal_claims WHERE meal_id=? AND user_id=2',
+            (meal['id'],)).fetchone()[0]
+        self.assertEqual(remaining, 2)
+
+        self.provisions.prepare_for_raid('raid-b', 1, [2], now=103)
+        remaining = self.store.db.execute(
+            'SELECT remaining FROM rpg_meal_claims WHERE meal_id=? AND user_id=2',
+            (meal['id'],)).fetchone()[0]
+        self.assertEqual(remaining, 1)
+
+    def test_failed_publish_refunds_ingredients_and_xp(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.cancel(meal['id'], refund=True)
         counts = self.characters.inventory_counts(1, 1)
-        self.assertNotIn(fish, counts)
-        self.assertNotIn(crop, counts)
-        self.assertEqual(counts[key], 1)
+        self.assertEqual((counts['fishing:pond:common'], counts['farming:potato']), (3, 2))
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 0)
 
-    def test_batch_crafting_five_all_and_insufficient_rollback(self):
-        key = 'food:pond:common'
-        fish, crop = FOODS[key]['ingredients']
-        self.grant(fish, 8)
-        self.grant(crop, 6)
-        self.assertEqual(self.provisions.max_craftable(1, 1, key), 6)
-        self.provisions.craft(1, 1, key, 5)
-        counts = self.characters.inventory_counts(1, 1)
-        self.assertEqual((counts[fish], counts[crop], counts[key]), (3, 1, 5))
-        before = counts.copy()
-        with self.assertRaisesRegex(CharacterError, '材料不足'):
-            self.provisions.craft(1, 1, key, 2)
-        self.assertEqual(self.characters.inventory_counts(1, 1), before)
-        remaining = self.provisions.max_craftable(1, 1, key)
-        self.provisions.craft(1, 1, key, remaining)
-        counts = self.characters.inventory_counts(1, 1)
-        self.assertEqual(counts[key], 6)
-        self.assertEqual(self.provisions.max_craftable(1, 1, key), 0)
-
-    def test_batch_quantity_must_be_positive_integer(self):
-        for quantity in (0, -1, 1.5, True):
-            with self.subTest(quantity=quantity), self.assertRaises(CharacterError):
-                self.provisions.craft(1, 1, 'food:pond:common', quantity)
-
-    def test_loadout_consumes_once_and_freezes_effect(self):
-        food, potion = 'food:pond:rare', 'potion:1:attack'
-        self.grant(food, 2)
-        self.grant(potion)
-        self.provisions.select(1, 1, 'food', food)
-        self.provisions.select(1, 1, 'potion', potion)
-        first = self.provisions.prepare_for_raid('raid-1', 1, [1])[1]
-        self.assertEqual(first['food']['regen_rounds'], 2)
-        self.assertEqual(first['potion']['amount'], 5)
-        self.assertEqual(self.characters.inventory_counts(1, 1)[food], 1)
-        self.assertNotIn(potion, self.characters.inventory_counts(1, 1))
-        self.assertEqual(self.provisions.prepare_for_raid('raid-1', 1, [1])[1], first)
-        self.assertEqual(self.characters.inventory_counts(1, 1)[food], 1)
-        self.assertEqual(self.provisions.loadout(1, 1), {'food': food})
-
-    def test_selection_requires_owned_item_and_can_be_cleared(self):
-        with self.assertRaises(CharacterError):
-            self.provisions.select(1, 1, 'food', 'food:lake:common')
-        self.grant('food:lake:common')
-        self.provisions.select(1, 1, 'food', 'food:lake:common')
-        self.assertEqual(self.provisions.loadout(1, 1)['food'], 'food:lake:common')
-        self.provisions.select(1, 1, 'food', None)
-        self.assertEqual(self.provisions.loadout(1, 1), {})
+    def test_legacy_food_and_potions_are_refunded_once(self):
+        # Simulate an older database by removing the migration marker.
+        with self.store.db:
+            self.store.db.execute("DELETE FROM rpg_schema_migrations WHERE name='freeform_cooking_v1'")
+            self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,2,?,?)',
+                                  ('food:pond:common', 2))
+            self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,2,?,?)',
+                                  ('potion:1:attack', 3))
+        Provisions(self.store)
+        counts = self.characters.inventory_counts(1, 2)
+        self.assertEqual(counts['fishing:pond:common'], 2)
+        self.assertEqual(counts['farming:potato'], 2)
+        self.assertEqual(counts['fishing:pond:weed'], 3)
+        self.assertEqual(counts['farming:dew_herb'], 3)
+        self.assertNotIn('food:pond:common', counts)
+        self.assertNotIn('potion:1:attack', counts)
+        Provisions(self.store)
+        self.assertEqual(self.characters.inventory_counts(1, 2), counts)
 
 
 if __name__ == '__main__':

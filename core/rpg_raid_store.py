@@ -292,12 +292,15 @@ class RaidStore:
             for p in raid['participants']:
                 fortune = p.get('fortune') or {}
                 tavern = p.get('tavern') or {}
+                meal = p.get('meal') or {}
                 personal_xp = xp * (100 + fortune.get('xp_percent', 0)
-                                    + tavern.get('xp_percent', 0)) // 100
+                                    + tavern.get('xp_percent', 0)
+                                    + meal.get('xp_percent', 0)) // 100
                 drop = None
                 pool = raid.get('drop_pool', DROP_TABLES.get(raid['monster']['kind'], ()))
                 drop_chance = min(1.0, settings.drop_chance
-                                  + (0.10 if fortune.get('id') == 'wheel' else 0))
+                                  + (0.10 if fortune.get('id') == 'wheel' else 0)
+                                  + meal.get('drop_points', 0) / 100)
                 if victory and pool and raid['monster']['kind'] != '史萊姆群' and rng.random() < drop_chance:
                     if raid['monster']['kind'] == '城崎諾亞':
                         own = list(NOAH_EQUIPMENT.get(p['state']['job'], ()))
@@ -317,15 +320,16 @@ class RaidStore:
                 self.db.execute('INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?) '
                                 'ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp',
                                 (raid['guild_id'], p['id'], personal_xp))
-                if gold:
+                personal_gold = gold * (100 + meal.get('gold_percent', 0)) // 100
+                if personal_gold:
                     self.db.execute('INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
-                                    (raid['guild_id'], p['id'], gold))
+                                    (raid['guild_id'], p['id'], personal_gold))
                 extra_item = None
                 if victory and raid['monster']['kind'] == '城崎諾亞' and rng.random() < 0.02:
                     extra_item = 'noah:unfinished'
                     add_owned_item(self.db, raid['guild_id'], p['id'], extra_item)
-                reward = dict(id=p['id'], xp=personal_xp, gold=gold, item=drop)
+                reward = dict(id=p['id'], xp=personal_xp, gold=personal_gold, item=drop)
                 if receives_fixed_drop:
                     reward['fixed_item'] = fixed_drop
                 if chance_items:

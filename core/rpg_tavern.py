@@ -1,6 +1,7 @@
 """Adventurers' tavern bounties and public round-of-drinks offers."""
 import asyncio
 from dataclasses import dataclass
+import os
 import time
 import uuid
 
@@ -8,6 +9,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_menu import add_back
+from core.rpg_provisions import effect_text
 
 
 @dataclass(frozen=True)
@@ -144,7 +146,12 @@ class TavernStore:
             active = self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
                 WHERE guild_id=? AND user_id=? AND consumed_raid_id IS NULL AND valid_until>? LIMIT 1''',
                                      (guild, user, now)).fetchone()
-            if active:
+            has_meals = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                        "AND name='rpg_meal_claims'").fetchone()
+            meal = has_meals and self.db.execute('''SELECT 1 FROM rpg_meal_claims
+                WHERE guild_id=? AND user_id=? AND remaining>0 AND valid_until>? LIMIT 1''',
+                                                   (guild, user, now)).fetchone()
+            if active or meal:
                 raise CharacterError('你已經有尚未使用的酒館祝福，不能重複領取。')
             if self.claim_count(offer_id) >= offer['capacity']:
                 raise CharacterError('這次請客已經客滿了。')
@@ -211,16 +218,81 @@ class DrinkOfferView(discord.ui.View):
             await interaction.response.send_message(str(exc), ephemeral=True)
 
 
+class MealOfferView(discord.ui.View):
+    def __init__(self, tavern, meal_id):
+        super().__init__(timeout=None)
+        self.tavern, self.meal_id = tavern, meal_id
+        self.claim_button.custom_id = f'tavern:meal:{meal_id}'
+
+    def embed(self):
+        meal = self.tavern.cog.provisions.meal(self.meal_id)
+        data = meal['data']
+        claimants = self.tavern.cog.provisions.claimants(self.meal_id)
+        ingredient_counts = {}
+        for key in data['ingredients']:
+            ingredient_counts[key] = ingredient_counts.get(key, 0) + 1
+        from core.rpg_character import ITEMS
+        ingredients = '、'.join(f'{ITEMS[key].name} ×{amount}'
+                               for key, amount in ingredient_counts.items())
+        secondary = f'／{data["secondary_tag"]}' if data.get('secondary_tag') else ''
+        embed = discord.Embed(
+            title=f'冒險者酒館｜{data["grade"]} 級・{data["name"]}', color=0xE09B37,
+            description=(f'<@{meal["host_id"]}> 完成了一桌料理！\n\n'
+                         f'**{data["primary_tag"]}{secondary}**｜{effect_text(data["effect"])}\n'
+                         f'美味度 {data["score"]}｜每人持續 {data["duration"]} 場討伐\n'
+                         f'食材：{ingredients}\n\n'
+                         '料理效果保留 7 天；正式開戰時消耗一場。'))
+        guest_list = '\n'.join(f'{index}. <@{user_id}>'
+                               for index, user_id in enumerate(claimants, 1)) or '尚無人享用'
+        embed.add_field(name=f'享用紀錄 {len(claimants)}/{meal["capacity"]} 人',
+                        value=f'{guest_list}\n<t:{int(meal["expires_at"])}:R> 截止', inline=False)
+        return embed
+
+    @discord.ui.button(label='一起享用', style=discord.ButtonStyle.success, custom_id='tavern:meal')
+    async def claim_button(self, interaction, button):
+        if interaction.guild_id is None or interaction.user.bot:
+            await interaction.response.send_message('只有伺服器成員可以入席。', ephemeral=True)
+            return
+        try:
+            if not self.tavern.cog.store.has_player(interaction.guild_id, interaction.user.id):
+                raise CharacterError('請先接受邀請函，正式成為冒險者。')
+            self.tavern.cog.provisions.claim(self.meal_id, interaction.guild_id, interaction.user.id)
+            await interaction.response.edit_message(embed=self.embed(), view=self,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
 class TavernService:
     def __init__(self, cog):
         self.cog, self.store = cog, TavernStore(cog.store)
         self.views = {}
+        try:
+            self.channel_ids = tuple(dict.fromkeys(
+                int(value.strip()) for value in
+                os.getenv('RPG_TAVERN_CHANNEL_IDS', '').split(',') if value.strip()))
+        except ValueError as exc:
+            raise ValueError('RPG_TAVERN_CHANNEL_IDS 必須是逗號分隔的頻道 ID') from exc
+
+    def public_channel(self, interaction):
+        guild = interaction.guild
+        if guild is None:
+            raise CharacterError('酒館公開功能只能在伺服器內使用。')
+        for channel_id in self.channel_ids:
+            channel = guild.get_channel(channel_id)
+            if channel is not None and callable(getattr(channel, 'send', None)):
+                return channel
+        raise CharacterError('這個伺服器尚未設定可用的酒館公開頻道。')
 
     def start(self):
         self.store.recover_drafts()
+        self.cog.provisions.recover_drafts()
         for offer in self.store.open_offers():
             view = self.offer_view(offer['id'])
             self.cog.bot.add_view(view, message_id=offer['message_id'])
+        for meal in self.cog.provisions.open_meals():
+            view = self.meal_view(meal['id'])
+            self.cog.bot.add_view(view, message_id=meal['message_id'])
 
     def close(self):
         for view in self.views.values():
@@ -231,17 +303,39 @@ class TavernService:
             self.views[offer_id] = DrinkOfferView(self, offer_id)
         return self.views[offer_id]
 
+    def meal_view(self, meal_id):
+        key = f'meal:{meal_id}'
+        if key not in self.views:
+            self.views[key] = MealOfferView(self, meal_id)
+        return self.views[key]
+
     async def buy_round(self, interaction, package_id):
+        channel = self.public_channel(interaction)
         offer = self.store.create_offer(interaction.guild_id, interaction.user.id,
-                                        interaction.channel_id, package_id)
+                                        channel.id, package_id)
         view = self.offer_view(offer['id'])
         try:
-            message = await interaction.channel.send(embed=view.embed(), view=view,
+            message = await channel.send(embed=view.embed(), view=view,
                 allowed_mentions=discord.AllowedMentions.none())
             self.store.publish_offer(offer['id'], message.id)
             return message, self.store.offer(offer['id'])
         except (Exception, asyncio.CancelledError):
             self.store.cancel_offer(offer['id'], refund=True)
+            view.stop()
+            raise
+
+    async def serve_meal(self, interaction, ingredients):
+        channel = self.public_channel(interaction)
+        meal = self.cog.provisions.cook(interaction.guild_id, interaction.user.id,
+                                        channel.id, ingredients)
+        view = self.meal_view(meal['id'])
+        try:
+            message = await channel.send(embed=view.embed(), view=view,
+                allowed_mentions=discord.AllowedMentions.none())
+            self.cog.provisions.publish(meal['id'], message.id)
+            return message, self.cog.provisions.meal(meal['id'])
+        except (Exception, asyncio.CancelledError):
+            self.cog.provisions.cancel(meal['id'], refund=True)
             view.stop()
             raise
 
@@ -270,12 +364,13 @@ class TavernView(discord.ui.View):
         self.clear_items()
         self._button('一般懸賞（2,000）', 'bounty:regular', 0, discord.ButtonStyle.danger)
         self._button('中階懸賞（5,000）', 'bounty:mid', 0, discord.ButtonStyle.danger)
+        self._button('準備料理', 'cooking', 0, discord.ButtonStyle.success)
         for package_id, package in DRINK_PACKAGES.items():
             self._button(f'{package.name}（{package.price:,}／{package.capacity} 杯）',
                          f'drink:{package_id}', 1, discord.ButtonStyle.success)
-        add_back(self, 2)
-        self._button('重新整理', 'refresh', 2)
-        self._button('關閉', 'close', 2)
+        add_back(self, 3)
+        self._button('重新整理', 'refresh', 3)
+        self._button('關閉', 'close', 3)
 
     def embed(self, notice=None):
         embed = discord.Embed(title='安安大冒險｜冒險者酒館', color=0xC47A3A,
@@ -283,10 +378,11 @@ class TavernView(discord.ui.View):
                          '不影響頻道動態難度，也不重排正常討伐；到點的正常討伐會等懸賞結束後發布。\n\n'
                          '**請大家喝一杯**\n公開請客，入席者取得下一場討伐經驗 +5%。'
                          '領取時間 10 分鐘，效果保留 24 小時且不能囤積；消耗後可再次領取。\n\n'
+                         '**準備料理**\n選擇五份魚、作物、水草或藥草，依標籤與評分做成公開餐桌。\n\n'
                          f'持有金幣：**{self.cog.store.gold(self.guild_id, self.owner.id):,}**'))
         if notice:
             embed.add_field(name='酒館消息', value=notice, inline=False)
-        embed.set_footer(text='請客公告會發布在目前頻道；懸賞會發布至對應的討伐頻道。')
+        embed.set_footer(text='請客與料理會發布至酒館專用頻道；懸賞會發布至對應的討伐頻道。')
         return embed
 
     async def interaction_check(self, interaction):
@@ -313,6 +409,10 @@ class TavernView(discord.ui.View):
                 return
             if action == 'refresh':
                 await interaction.response.edit_message(embed=self.embed(), view=self)
+                return
+            if action == 'cooking':
+                from core.rpg_menu import navigate
+                await navigate(self, interaction, 'provisions')
                 return
             await interaction.response.defer(ephemeral=True)
             try:

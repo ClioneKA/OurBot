@@ -77,7 +77,7 @@ class EquipmentView(discord.ui.View):
                     await self.handle(interaction, action)
                 button.callback = callback
                 buttons.append(button)
-        buttons.extend((self.provisions, self.refresh, self.close_panel))
+        buttons.extend((self.refresh, self.close_panel))
         for button in buttons:
             self.add_item(button)
         add_back(self, 4)
@@ -105,9 +105,6 @@ class EquipmentView(discord.ui.View):
             notice = None
             if action == 'home':
                 await navigate(self, interaction)
-                return
-            if action == 'provision_loadout':
-                await navigate(self, interaction, 'provision_loadout')
                 return
             if action == 'close':
                 self.closed = True
@@ -159,10 +156,6 @@ class EquipmentView(discord.ui.View):
     @discord.ui.button(label='卸下', style=discord.ButtonStyle.secondary, row=3)
     async def remove(self, interaction, button):
         await self.handle(interaction, 'remove')
-
-    @discord.ui.button(label='討伐補給', style=discord.ButtonStyle.secondary, row=4)
-    async def provisions(self, interaction, button):
-        await self.handle(interaction, 'provision_loadout')
 
     @discord.ui.button(label='重新整理', style=discord.ButtonStyle.secondary, row=4)
     async def refresh(self, interaction, button):

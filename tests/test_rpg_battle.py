@@ -393,6 +393,19 @@ class BattleTests(unittest.TestCase):
         player = raid_battle([participant], dict(name='怪物', kind='巨獸'), 1).fighters[0]
         self.assertEqual((player.stats['HP'], player.hp), (106, 106))
 
+    def test_tavern_meal_applies_combat_stats_and_lifesteal(self):
+        state = dict(job='民兵', level=1,
+                     combat={'HP': 100, '攻擊': 100, '防禦': 50, '治療量': 80,
+                             '命中率': 100, '閃避率': 10, '暴擊率': 10},
+                     total=(1, 1, 1, 1, 1), equipped={'武器': 'starter:club'})
+        meal = dict(name='精緻滋養料理', hp_percent=8, healing_percent=8,
+                    attack_percent=6, critical_points=3, lifesteal_percent=4)
+        participant = dict(name='玩家', state=state, rules=[], meal=meal)
+        player = raid_battle([participant], dict(name='怪物', kind='巨獸'), 1).fighters[0]
+        self.assertEqual((player.stats['HP'], player.hp), (108, 108))
+        self.assertEqual((player.stats['攻擊'], player.stats['治療量']), (106, 86))
+        self.assertEqual((player.stats['暴擊率'], player.lifesteal), (13, 4))
+
     def test_structured_combat_stats_track_actual_values_and_survive_restart(self):
         actor = fighter(attack=100, hp=200, rules=[])
         target = fighter('敵人', 1, hp=50, rules=[])

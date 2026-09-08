@@ -9,11 +9,12 @@ import discord
 from core.rpg import RPGStore
 from core.rpg_battle import dump_battle, raid_battle
 from core.rpg_character import CharacterError, Characters
+from core.rpg_provisions import Provisions
 from core.rpg_raids import RaidService
 from core.rpg_raid_store import RaidStore
 from core.rpg_monsters import prepare_monster
 from core.rpg_tavern import (BOUNTY_PRICES, DRINK_PACKAGES, DRINK_XP_PERCENT,
-                             DrinkOfferView, TavernStore)
+                             DrinkOfferView, TavernService, TavernStore)
 from core.settings import RPGSettings
 
 
@@ -109,6 +110,64 @@ class TavernStoreTests(unittest.TestCase):
         result = repo.settle(raid['id'], dump_battle(battle), settings.raid)
         self.assertEqual(result['rewards'][0]['xp'], 105)
         self.assertEqual(self.store.xp(1, 2), 105)
+
+
+class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.store = RPGStore(Path(self.directory.name) / 'rpg.db')
+        self.public = SimpleNamespace(id=88, send=AsyncMock(
+            return_value=SimpleNamespace(id=99)))
+        self.current = SimpleNamespace(id=77, send=AsyncMock())
+        self.guild = SimpleNamespace(id=1, get_channel=lambda channel_id:
+                                     self.public if channel_id == 88 else None)
+        self.interaction = SimpleNamespace(
+            guild_id=1, guild=self.guild, channel=self.current,
+            user=SimpleNamespace(id=1, bot=False))
+        self.characters = Characters(self.store, RPGSettings())
+        self.provisions = Provisions(self.store)
+        self.cog = SimpleNamespace(store=self.store, characters=self.characters,
+                                   provisions=self.provisions)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,10000)')
+        with patch.dict('os.environ', {'RPG_TAVERN_CHANNEL_IDS': '88'}):
+            self.service = TavernService(self.cog)
+
+    async def asyncTearDown(self):
+        self.service.close()
+        self.store.close()
+        self.directory.cleanup()
+
+    async def test_round_is_posted_to_configured_channel_not_current_channel(self):
+        message, offer = await self.service.buy_round(self.interaction, 'table')
+
+        self.assertEqual(message.id, 99)
+        self.assertEqual(offer['channel_id'], 88)
+        self.public.send.assert_awaited_once()
+        self.current.send.assert_not_awaited()
+
+    async def test_missing_guild_channel_rejects_without_charging(self):
+        self.guild.get_channel = lambda channel_id: None
+
+        with self.assertRaisesRegex(CharacterError, '酒館公開頻道'):
+            await self.service.buy_round(self.interaction, 'table')
+        self.assertEqual(self.store.gold(1, 1), 10000)
+
+    async def test_meal_is_posted_to_configured_channel_not_current_channel(self):
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',3)")
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'farming:potato',2)")
+
+        message, meal = await self.service.serve_meal(
+            self.interaction,
+            ['fishing:pond:common'] * 3 + ['farming:potato'] * 2)
+
+        self.assertEqual(message.id, 99)
+        self.assertEqual(meal['channel_id'], 88)
+        self.public.send.assert_awaited_once()
+        self.current.send.assert_not_awaited()
 
 
 class TavernBountyTests(unittest.IsolatedAsyncioTestCase):

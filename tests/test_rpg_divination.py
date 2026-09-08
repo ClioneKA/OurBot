@@ -77,17 +77,20 @@ class DivinationTests(unittest.TestCase):
         restarted = Divinations(self.store)
         self.assertIsNone(restarted.status(1, 1, now=0)['summon_raid_id'])
 
-    def test_temperance_preserves_selected_provisions(self):
+    def test_temperance_preserves_meal_charge(self):
         provisions = Provisions(self.store)
         with self.store.db:
-            self.store.db.execute("INSERT INTO rpg_inventory VALUES (1,1,'food:pond:common',1)")
-        provisions.select(1, 1, 'food', 'food:pond:common')
-        first = provisions.prepare_for_raid('raid-1', 1, [1], preserve_users=[1])
-        second = provisions.prepare_for_raid('raid-1', 1, [1], preserve_users=[1])
+            self.store.db.execute("INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',3)")
+            self.store.db.execute("INSERT INTO rpg_inventory VALUES (1,1,'farming:potato',2)")
+        meal = provisions.cook(1, 1, 9,
+            ['fishing:pond:common'] * 3 + ['farming:potato'] * 2, now=1)
+        first = provisions.prepare_for_raid('raid-1', 1, [1], preserve_users=[1], now=2)
+        second = provisions.prepare_for_raid('raid-1', 1, [1], preserve_users=[1], now=2)
         self.assertEqual(first, second)
-        count = self.store.db.execute("SELECT quantity FROM rpg_inventory WHERE item_id='food:pond:common'").fetchone()[0]
+        count = self.store.db.execute(
+            'SELECT remaining FROM rpg_meal_claims WHERE meal_id=? AND user_id=1',
+            (meal['id'],)).fetchone()[0]
         self.assertEqual(count, 1)
-        self.assertEqual(provisions.loadout(1, 1)['food'], 'food:pond:common')
 
     def test_combat_cards_apply_and_survive_snapshot(self):
         battle = raid_battle([participant(1, 'world'), participant(2, 'lovers')],
@@ -150,6 +153,32 @@ class DivinationTests(unittest.TestCase):
         self.assertEqual(self.store.xp(1, 1), 110)
         self.assertIsNone(divinations.status(1, 1, now=0)['card'])
         self.assertEqual(divinations.status(1, 1, now=0)['draws'], 1)
+
+    def test_settlement_applies_meal_xp_gold_and_drop_effects(self):
+        repo = RaidStore(self.store)
+        policy = dict(victory_xp=100, victory_gold=100, drop_chance=0.0)
+        raid = repo.create(1, 10, {'kind': '巨獸', 'strength': 1}, 0, policy)
+        raid.update(status='running', seed=31,
+                    participants=[dict(id=1, state={'job': '民兵', 'level': 1},
+                                       meal={'xp_percent': 15, 'gold_percent': 15,
+                                             'drop_points': 5})])
+        player = Fighter('玩家', 0, '民兵',
+            {'HP': 100, '攻擊': 10, '防禦': 0, '治療量': 0,
+             '命中率': 100, '閃避率': 0, '暴擊率': 0}, 10, [], user_id=1)
+        enemy = Fighter('敵人', 1, '巨獸',
+            {'HP': 100, '攻擊': 10, '防禦': 0, '治療量': 0,
+             '命中率': 100, '閃避率': 0, '暴擊率': 0}, 1, [])
+        enemy.hp = 0
+        battle_data = dict(result='勝利', round=1,
+                           fighters=[asdict(player), asdict(enemy)])
+        repo.save(raid)
+
+        settled = repo.settle(raid['id'], battle_data, SimpleNamespace(**policy))
+
+        reward = settled['rewards'][0]
+        self.assertEqual((reward['xp'], reward['gold']), (115, 115))
+        self.assertIsNotNone(reward['item'])
+        self.assertEqual((self.store.xp(1, 1), self.store.gold(1, 1)), (115, 5115))
 
 
 if __name__ == '__main__':

@@ -409,7 +409,8 @@ class RaidService:
                         preserve_users=[participant['id'] for participant in participants
                                         if participant.get('fortune', {}).get('id') == 'temperance'])
                     for participant in participants:
-                        participant['provisions'] = prepared.get(participant['id'], {})
+                        if participant['id'] in prepared:
+                            participant['meal'] = prepared[participant['id']]
                 raid['participants'] = participants
                 if not participants:
                     raid.update(status='cancelled', reason='沒有人參與，魔物離開了。')

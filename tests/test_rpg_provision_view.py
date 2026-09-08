@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from core.rpg import RPGStore
 from core.rpg_character import Characters
-from core.rpg_provision_view import ProvisionLoadoutView, ProvisionView
+from core.rpg_provision_view import ProvisionView
 from core.rpg_provisions import Provisions
 from core.settings import RPGSettings
 
@@ -21,57 +21,48 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         settings = RPGSettings()
         self.characters = Characters(self.store, settings)
         self.provisions = Provisions(self.store)
+        self.tavern = SimpleNamespace(serve_meal=AsyncMock())
         self.cog = SimpleNamespace(characters=self.characters, provisions=self.provisions,
-                                   settings=settings, menu_views=WeakSet(), character_embed=lambda *args: None)
-        self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
-            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
+                                   tavern=self.tavern, settings=settings, menu_views=WeakSet(),
+                                   character_embed=lambda *args: None)
+        self.interaction = SimpleNamespace(
+            guild_id=1, channel_id=9, user=SimpleNamespace(id=1),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(),
+                                    defer=AsyncMock()),
             edit_original_response=AsyncMock())
-        self.view = ProvisionView(self.cog, self.interaction)
-        self.addCleanup(self.view.stop)
 
     def grant(self, key, quantity=1):
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,?)', (key, quantity))
 
-    async def test_crafting_panel_only_crafts_food(self):
-        self.assertLessEqual(len(self.view.to_components()), 5)
-        self.assertEqual(len(self.view.children), 8)
-        self.grant('fishing:pond:common')
-        self.grant('farming:potato')
-        await self.view.handle(self.interaction, 'craft')
-        self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 1)
-        self.assertEqual(self.provisions.loadout(1, 1), {})
+    async def test_panel_selects_five_owned_ingredients_and_previews(self):
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        for key in ['fishing:pond:common'] * 3 + ['farming:potato'] * 2:
+            await view.handle(self.interaction, 'ingredient', key)
+        self.assertEqual(len(view.ingredients), 5)
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('成功製作', embed.fields[-1].value)
+        self.assertIn('料理預覽', [field.name for field in embed.fields])
+        self.assertIn('成長', embed.fields[-1].value)
+        self.assertLessEqual(len(view.to_components()), 5)
 
-    async def test_crafting_panel_can_make_five_or_all(self):
-        self.grant('fishing:pond:common', 8)
-        self.grant('farming:potato', 6)
-        await self.view.handle(self.interaction, 'craft:5')
-        self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 5)
-        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('×5', embed.fields[-1].value)
-        self.assertIn('最多可製作：1 個', embed.fields[0].value)
-        await self.view.handle(self.interaction, 'craft:all')
-        self.assertEqual(self.characters.inventory_counts(1, 1)['food:pond:common'], 6)
-
-    async def test_equipment_loadout_panel_selects_food(self):
-        self.grant('food:pond:common')
-        loadout_view = ProvisionLoadoutView(self.cog, self.interaction)
-        self.addCleanup(loadout_view.stop)
-        await loadout_view.handle(self.interaction, 'loadout_food', 'food:pond:common')
-        self.assertEqual(self.provisions.loadout(1, 1)['food'], 'food:pond:common')
-        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('鯽魚馬鈴薯湯', embed.fields[0].value)
-        self.assertLessEqual(len(loadout_view.to_components()), 5)
-
-    async def test_switches_recipe_group(self):
-        await self.view.handle(self.interaction, 'recipe_group', 'potion2')
-        self.assertTrue(self.view.recipe_id.startswith('potion:2:'))
-        self.assertIn('月光水草', self.view.embed().fields[0].value)
-        await self.view.handle(self.interaction, 'recipe_group', 'potion3')
-        self.assertTrue(self.view.recipe_id.startswith('potion:3:'))
-        self.assertIn('夜露水草', self.view.embed().fields[0].value)
+    async def test_completed_meal_is_published_by_tavern(self):
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        view.ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        data = self.provisions.preview(view.ingredients, 1, 1)
+        self.tavern.serve_meal.return_value = (
+            SimpleNamespace(jump_url='https://discord.test/meal'), {'data': data})
+        await view.handle(self.interaction, 'cook')
+        self.interaction.response.defer.assert_awaited_once()
+        self.tavern.serve_meal.assert_awaited_once()
+        embed = self.interaction.edit_original_response.call_args.kwargs['embed']
+        self.assertIn('料理 XP', embed.fields[-1].value)
+        self.assertEqual(view.ingredients, [])
 
 
 if __name__ == '__main__':

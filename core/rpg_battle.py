@@ -1718,6 +1718,13 @@ def raid_battle(participants, monster, seed):
             badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
     provision_logs = []
     stat_caps = {'閃避率': 40, '暴擊率': 100}
+
+    def percent_stat(fighter, stat, percent):
+        before = fighter.stats[stat]
+        fighter.stats[stat] = max(1 if stat == 'HP' else 0, before * (100 + percent) // 100)
+        if stat == 'HP':
+            fighter.hp = fighter.stats['HP']
+
     for fighter, participant in zip(fighters, participants):
         provisions = participant.get('provisions', {})
         food = provisions.get('food')
@@ -1739,14 +1746,21 @@ def raid_battle(participants, monster, seed):
                 fighter.hp = fighter.stats['HP']
             provision_logs.append(
                 f'{fighter.name} 使用【{potion["name"]}】：{stat} {before} → {fighter.stats[stat]}，整場固定。')
+        meal = participant.get('meal') or {}
+        if meal:
+            if meal.get('hp_percent'):
+                percent_stat(fighter, 'HP', meal['hp_percent'])
+            if meal.get('attack_percent'):
+                percent_stat(fighter, '攻擊', meal['attack_percent'])
+            if meal.get('healing_percent'):
+                percent_stat(fighter, '治療量', meal['healing_percent'])
+            fighter.stats['暴擊率'] = min(
+                100, fighter.stats['暴擊率'] + meal.get('critical_points', 0))
+            fighter.lifesteal += meal.get('lifesteal_percent', 0)
+            provision_logs.append(
+                f'{fighter.name} 享用【{meal.get("name", "酒館料理")}】，料理效果整場生效。')
     fortune_logs = []
     fortune_rng = random.Random(f'{seed}:divination')
-
-    def percent_stat(fighter, stat, percent):
-        before = fighter.stats[stat]
-        fighter.stats[stat] = max(1 if stat == 'HP' else 0, before * (100 + percent) // 100)
-        if stat == 'HP':
-            fighter.hp = fighter.stats['HP']
 
     for fighter, participant in zip(fighters, participants):
         fortune = participant.get('fortune') or {}
