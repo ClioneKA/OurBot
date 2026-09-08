@@ -126,7 +126,7 @@ class TailorView(discord.ui.View):
             + '｜'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}' for key in PAINT_ITEMS.values())), inline=False)
         if notice:
             embed.add_field(name='加工結果', value=notice, inline=False)
-        embed.set_footer(text='每件裝備以編號區分；顏料結晶的鑲嵌、拆除、出售與轉交也在此處辦理。')
+        embed.set_footer(text='每件裝備以編號區分；顏料結晶的鑲嵌、替換、出售與轉交也在此處辦理。')
         return embed
 
     async def interaction_check(self, interaction):

@@ -9,7 +9,7 @@ import discord
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import Characters, DYE_PRICE, EMBROIDERY_PRICE, ITEMS
 from core.rpg_crystal_view import CrystalTailorView
-from core.rpg_crystals import CRYSTAL_REMOVAL_PRICE, CrystalStore
+from core.rpg_crystals import CrystalStore
 from core.rpg_tailor_view import TailorView
 from core.settings import RPGSettings
 
@@ -71,6 +71,7 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         definitions = {
             'outline': ('outline_attack', '["攻擊"]', '[15]', None),
             'color': ('color_speed', '["speed"]', '[5]', None),
+            'source': ('source_endless_arrow', '["endless_arrow"]', '[2]', '弓兵'),
         }
         affix, effects, values, job = definitions[crystal_type]
         with self.store.db:
@@ -82,39 +83,108 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
                 (crystal_type, affix, effects, values, job, reward_slot))
         return cursor.lastrowid
 
-    async def test_crystal_services_are_available_inside_tailor_shop(self):
-        outline_id = self.add_crystal('outline')
-        color_id = self.add_crystal('color', 1)
-        elite_id = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+    async def test_equipment_first_socket_and_replace(self):
+        first = self.add_crystal('outline')
+        second = self.add_crystal('outline', 1)
+        elite = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        reference = f'instance:{elite}'
         view = CrystalTailorView(self.cog, self.interaction)
         self.addCleanup(view.stop)
-        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
-        self.assertEqual(labels[:5], ['結晶一覽', '鑲嵌', '拆除', '出售', '給予'])
-
-        await view.handle(self.interaction, 'mode:socket')
-        await view.handle(self.interaction, 'crystal', str(outline_id))
-        await view.handle(self.interaction, 'equipment', f'instance:{elite_id}')
+        self.assertEqual(view.mode, 'socket')
+        self.assertEqual(view.available_crystals, set())
+        self.assertNotIn('拆除', [getattr(child, 'label', '') for child in view.children])
+        await view.handle(self.interaction, 'equipment', reference)
+        self.assertEqual(view.available_crystals, {first, second})
+        self.assertIn('空槽', str(view.embed().to_dict()))
+        await view.handle(self.interaction, 'crystal', str(first))
         await view.handle(self.interaction, 'apply')
-        self.assertEqual(self.crystals.get(outline_id).equipment_instance_id, elite_id)
-
-        await view.handle(self.interaction, 'mode:remove')
-        await view.handle(self.interaction, 'equipment', f'instance:{elite_id}')
-        await view.handle(self.interaction, 'slot', 'outline')
+        self.assertEqual(self.crystals.get(first).equipment_instance_id, elite)
+        self.assertEqual(view.selected_equipment, reference)
+        await view.handle(self.interaction, 'crystal', str(second))
+        self.assertIn('替換預覽', str(view.embed().to_dict()))
+        self.assertIn('確認替換（摧毀舊結晶）', [getattr(child, 'label', '') for child in view.children])
         await view.handle(self.interaction, 'apply')
-        self.assertIsNone(self.crystals.get(outline_id).equipment_instance_id)
-        self.assertEqual(self.store.gold(1, 1), 5000 - CRYSTAL_REMOVAL_PRICE)
+        self.assertIsNone(self.crystals.get(first))
+        self.assertEqual(self.crystals.get(second).equipment_instance_id, elite)
+        self.assertEqual(self.store.gold(1, 1), 5000)
 
+    async def test_inventory_sell_and_give(self):
+        first = self.add_crystal('outline')
+        second = self.add_crystal('color', 1)
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'mode:inventory')
+        await view.handle(self.interaction, 'crystal', str(first))
         await view.handle(self.interaction, 'mode:sell')
-        await view.handle(self.interaction, 'crystal', str(outline_id))
+        self.assertEqual(view.selected_crystal, first)
         await view.handle(self.interaction, 'apply')
-        self.assertIsNone(self.crystals.get(outline_id))
-
-        recipient = SimpleNamespace(id=2, bot=False, mention='<@2>')
+        self.assertIsNone(self.crystals.get(first))
         await view.handle(self.interaction, 'mode:give')
-        await view.handle(self.interaction, 'crystal', str(color_id))
-        await view.handle(self.interaction, 'recipient', recipient)
+        await view.handle(self.interaction, 'crystal', str(second))
+        await view.handle(self.interaction, 'recipient', SimpleNamespace(id=2, bot=False, mention='<@2>'))
         await view.handle(self.interaction, 'apply')
-        self.assertEqual(self.crystals.get(color_id).user_id, 2)
+        self.assertEqual(self.crystals.get(second).user_id, 2)
+
+    async def test_pagination_and_equipment_change(self):
+        ids = {self.add_crystal('outline', index) for index in range(21)}
+        for _ in range(26):
+            self.characters.grant_item(1, 1, 'maze:archer:weapon')
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'equipment_next')
+        select = next(child for child in view.children if getattr(child, 'action', None) == 'equipment')
+        reference = select.options[-1].value
+        await view.handle(self.interaction, 'equipment', reference)
+        await view.handle(self.interaction, 'next')
+        select = next(child for child in view.children if getattr(child, 'action', None) == 'crystal')
+        crystal_id = int(select.options[0].value)
+        self.assertIn(crystal_id, ids)
+        self.assertEqual(view.selected_equipment, reference)
+        await view.handle(self.interaction, 'crystal', str(crystal_id))
+        await view.handle(self.interaction, 'apply')
+        self.assertEqual(self.crystals.get(crystal_id).equipment_instance_id, view.equipment[reference].instance_id)
+        await view.handle(self.interaction, 'equipment_previous')
+        self.assertIsNone(view.selected_equipment)
+        self.assertFalse(view.available_crystals)
+        # Every row stays within Discord's component width limit.
+        for row in range(5):
+            self.assertLessEqual(sum(child.width for child in view.children if child.row == row), 5)
+
+    async def test_crystal_filter_follows_equipment_job_and_socket_state(self):
+        source = self.add_crystal('source')
+        outline = self.add_crystal('outline', 1)
+        archer = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        knight = self.characters.grant_item(1, 1, 'maze:knight:weapon')[0]
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'equipment', f'instance:{archer}')
+        self.assertEqual(view.available_crystals, {source, outline})
+        await view.handle(self.interaction, 'crystal', str(source))
+        await view.handle(self.interaction, 'equipment', f'instance:{knight}')
+        self.assertIsNone(view.selected_crystal)
+        self.assertEqual(view.available_crystals, {outline})
+        self.crystals.socket(1, 1, outline, f'instance:{knight}')
+        await view.handle(self.interaction, 'refresh')
+        self.assertFalse(view.available_crystals)
+        self.assertIn('力量輪廓', str(view.embed().to_dict()))
+
+    async def test_stale_slot_requires_updated_preview(self):
+        first = self.add_crystal('outline')
+        second = self.add_crystal('outline', 1)
+        elite = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        reference = f'instance:{elite}'
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'equipment', reference)
+        await view.handle(self.interaction, 'crystal', str(second))
+        self.crystals.socket(1, 1, first, reference)
+        await view.handle(self.interaction, 'apply')
+        self.assertEqual(self.crystals.get(first).equipment_instance_id, elite)
+        self.assertIsNone(self.crystals.get(second).equipment_instance_id)
+        self.assertIn('替換預覽', str(view.embed().to_dict()))
+        await view.handle(self.interaction, 'apply')
+        self.assertIsNone(self.crystals.get(first))
+        self.assertEqual(self.crystals.get(second).equipment_instance_id, elite)
 
 
 if __name__ == '__main__':
