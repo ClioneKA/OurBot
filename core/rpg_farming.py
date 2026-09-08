@@ -32,18 +32,24 @@ LOCATION_LEVELS = {
 }
 
 PLANTS = {
-    'potato': Plant('馬鈴薯', 'farming:potato', 1, 60 * 60, 2, 100, '搭配普通魚'),
-    'dew_herb': Plant('晨露藥草', 'farming:dew_herb', 5, 2 * 60 * 60, 2, 200, '活力料理'),
-    'wheat': Plant('小麥', 'farming:wheat', 10, 4 * 60 * 60, 1, 800, '搭配稀有魚'),
-    'witch_tomato': Plant('魔女番茄', 'farming:witch_tomato', 20, 60 * 60, 2, 300, '搭配普通魚'),
-    'moonbell': Plant('月鈴草', 'farming:moonbell', 25, 2 * 60 * 60, 2, 600, '猛攻料理'),
-    'chili': Plant('火紅辣椒', 'farming:chili', 30, 4 * 60 * 60, 1, 2400, '搭配稀有魚'),
+    'potato': Plant('馬鈴薯', 'farming:potato', 1, 60 * 60, 2, 100,
+                    '盛宴 Q1｜搭配 池塘鯽魚'),
+    'dew_herb': Plant('晨露藥草', 'farming:dew_herb', 5, 2 * 60 * 60, 2, 200,
+                      '活力 Q1｜搭配 青苔水草'),
+    'wheat': Plant('小麥', 'farming:wheat', 10, 4 * 60 * 60, 1, 800,
+                   '盛宴 Q2｜搭配 七彩錦魚'),
+    'witch_tomato': Plant('魔女番茄', 'farming:witch_tomato', 20, 60 * 60, 2, 300,
+                          '活力 Q2｜搭配 魔女湖鱒'),
+    'moonbell': Plant('月鈴草', 'farming:moonbell', 25, 2 * 60 * 60, 2, 600,
+                      '猛攻 Q2｜搭配 月光水草'),
+    'chili': Plant('火紅辣椒', 'farming:chili', 30, 4 * 60 * 60, 1, 2400,
+                   '猛攻 Q3｜搭配 星紋魔女鰻'),
     'night_pumpkin': Plant('夜色南瓜', 'farming:night_pumpkin', 40, 60 * 60, 2, 600,
-                           '搭配幽光盲魚'),
+                           '活力 Q3｜搭配 幽光盲魚'),
     'dreammist_herb': Plant('夢霧草', 'farming:dreammist_herb', 45, 2 * 60 * 60, 2, 1200,
-                            '成長料理'),
+                            '成長 Q3｜搭配 夜露水草'),
     'moonwhite_rice': Plant('月白米', 'farming:moonwhite_rice', 50, 4 * 60 * 60, 1, 4800,
-                            '搭配鏡蝶魚'),
+                            '盛宴 Q4｜搭配 鏡蝶魚'),
 }
 
 

@@ -6,7 +6,9 @@ from core.rpg import RPGStore
 from core.rpg_character import CharacterError, Characters, ITEMS
 from core.rpg_provisions import (AFTERTASTE, ASSAULT, COOKING_XP_PER_QUALITY,
                                  FEAST, FORTUNE, GROWTH,
-                                 INGREDIENTS, NOURISHMENT, PAIRINGS, Provisions,
+                                 INGREDIENTS, MEAL_CLAIM_SECONDS,
+                                 MEAL_EFFECT_SECONDS, NOURISHMENT,
+                                 PAIRINGS, Provisions,
                                  VITALITY, evaluate_ingredients)
 from core.settings import RPGSettings
 
@@ -83,6 +85,11 @@ class ProvisionTests(unittest.TestCase):
 
         meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
         data = meal['data']
+        self.assertEqual((MEAL_CLAIM_SECONDS, meal['expires_at']), (1800, 1900))
+        valid_until = self.store.db.execute(
+            'SELECT valid_until FROM rpg_meal_claims WHERE meal_id=? AND user_id=1',
+            (meal['id'],)).fetchone()[0]
+        self.assertEqual((MEAL_EFFECT_SECONDS, valid_until), (86400, 86500))
         self.assertGreater(data['cooking_xp'], 0)
         self.assertEqual(self.provisions.state(1, 1)['xp'], data['cooking_xp'])
         self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
@@ -96,6 +103,8 @@ class ProvisionTests(unittest.TestCase):
         meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
         self.provisions.publish(meal['id'], 99)
         self.provisions.claim(meal['id'], 1, 2, now=101)
+        with self.assertRaisesRegex(CharacterError, '料理效果'):
+            self.provisions.claim(meal['id'], 1, 2, now=101)
 
         first = self.provisions.prepare_for_raid('raid-a', 1, [2], preserve_users=[2], now=102)
         self.assertEqual(first[2]['kind'], 'meal')

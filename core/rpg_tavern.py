@@ -26,7 +26,7 @@ DRINK_PACKAGES = {
     'festival': DrinkPackage('諾亞的豪華監獄餐會', 2_000, 20, '請全場冒險者參加'),
 }
 DRINK_XP_PERCENT = 5
-DRINK_CLAIM_SECONDS = 10 * 60
+DRINK_CLAIM_SECONDS = 2 * 60 * 60
 DRINK_EFFECT_SECONDS = 24 * 60 * 60
 BOUNTY_PRICES = {'regular': 2_000, 'mid': 5_000}
 
@@ -146,13 +146,8 @@ class TavernStore:
             active = self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
                 WHERE guild_id=? AND user_id=? AND consumed_raid_id IS NULL AND valid_until>? LIMIT 1''',
                                      (guild, user, now)).fetchone()
-            has_meals = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                                        "AND name='rpg_meal_claims'").fetchone()
-            meal = has_meals and self.db.execute('''SELECT 1 FROM rpg_meal_claims
-                WHERE guild_id=? AND user_id=? AND remaining>0 AND valid_until>? LIMIT 1''',
-                                                   (guild, user, now)).fetchone()
-            if active or meal:
-                raise CharacterError('你已經有尚未使用的酒館祝福，不能重複領取。')
+            if active:
+                raise CharacterError('你已經有尚未使用的飲料效果，不能重複領取。')
             if self.claim_count(offer_id) >= offer['capacity']:
                 raise CharacterError('這次請客已經客滿了。')
             self.db.execute('''INSERT INTO rpg_tavern_drink_claims
@@ -241,7 +236,7 @@ class MealOfferView(discord.ui.View):
                          f'**{data["primary_tag"]}{secondary}**｜{effect_text(data["effect"])}\n'
                          f'美味度 {data["score"]}｜每人持續 {data["duration"]} 場討伐\n'
                          f'食材：{ingredients}\n\n'
-                         '料理效果保留 7 天；正式開戰時消耗一場。'))
+                         '料理效果保留 24 小時；正式開戰時消耗一場。'))
         guest_list = '\n'.join(f'{index}. <@{user_id}>'
                                for index, user_id in enumerate(claimants, 1)) or '尚無人享用'
         embed.add_field(name=f'享用紀錄 {len(claimants)}/{meal["capacity"]} 人',
@@ -377,7 +372,8 @@ class TavernView(discord.ui.View):
             description=('**張貼懸賞**\n發起者會自動報名。懸賞討伐保留經驗與掉落，但不發金幣、'
                          '不影響頻道動態難度，也不重排正常討伐；到點的正常討伐會等懸賞結束後發布。\n\n'
                          '**請大家喝一杯**\n公開請客，入席者取得下一場討伐經驗 +5%。'
-                         '領取時間 10 分鐘，效果保留 24 小時且不能囤積；消耗後可再次領取。\n\n'
+                         '領取時間 2 小時，效果保留 24 小時且不能囤積；消耗後可再次領取。'
+                         '飲料與料理分開計算，可以各持有一份並在同場討伐生效。\n\n'
                          '**準備料理**\n選擇五份魚、作物、水草或藥草，依標籤與評分做成公開餐桌。\n\n'
                          f'持有金幣：**{self.cog.store.gold(self.guild_id, self.owner.id):,}**'))
         if notice:

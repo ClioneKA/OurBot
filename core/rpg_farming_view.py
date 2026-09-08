@@ -50,7 +50,9 @@ class FarmingView(discord.ui.View):
             for key, name in LOCATIONS.items() if key in locations]))
         self.add_item(PanelSelect('plant_choice', row=1, placeholder='選擇植物', options=[
             discord.SelectOption(label=PLANTS[key].name, value=key,
-                                 description=f'Lv.{PLANTS[key].level}｜{growth_text(PLANTS[key].seconds)}｜{PLANTS[key].role}',
+                                 description=(f'Lv.{PLANTS[key].level}｜'
+                                              f'{growth_text(PLANTS[key].seconds)}｜'
+                                              f'收成 {PLANTS[key].base_yield}｜{PLANTS[key].role}'),
                                  default=key == self.plant_id) for key in unlocked]))
         session = state['sessions'].get(self.location_id)
         active = bool(session and session['status'] == 'active')
@@ -86,7 +88,8 @@ class FarmingView(discord.ui.View):
         selected = PLANTS[self.plant_id]
         embed.add_field(name='目前選擇', value=
                         f'{LOCATIONS[self.location_id]}｜{selected.name}\n'
-                        f'成長 {growth_text(selected.seconds)}｜基礎收成 {selected.base_yield}｜每份 {selected.xp_each} XP', inline=False)
+                        f'成長 {growth_text(selected.seconds)}｜基礎收成 {selected.base_yield}｜每份 {selected.xp_each} XP\n'
+                        f'料理：{selected.role}', inline=False)
         embed.add_field(name='成熟通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)

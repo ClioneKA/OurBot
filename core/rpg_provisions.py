@@ -11,8 +11,8 @@ from core.rpg_character import CharacterError, ITEMS
 
 INGREDIENT_COUNT = 5
 COOKING_XP_PER_QUALITY = 50
-MEAL_CLAIM_SECONDS = 10 * 60
-MEAL_EFFECT_SECONDS = 7 * 24 * 60 * 60
+MEAL_CLAIM_SECONDS = 30 * 60
+MEAL_EFFECT_SECONDS = 24 * 60 * 60
 
 GROWTH = '成長'
 ASSAULT = '猛攻'
@@ -253,13 +253,6 @@ class Provisions:
             WHERE guild_id=? AND user_id=? AND remaining>0 AND valid_until>? LIMIT 1''',
                                (guild, user, now)).fetchone()
 
-    def _active_drink(self, guild, user, now):
-        exists = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                                 "AND name='rpg_tavern_drink_claims'").fetchone()
-        return exists and self.db.execute('''SELECT 1 FROM rpg_tavern_drink_claims
-            WHERE guild_id=? AND user_id=? AND consumed_raid_id IS NULL AND valid_until>? LIMIT 1''',
-                                          (guild, user, now)).fetchone()
-
     def cook(self, guild, user, channel, ingredient_ids, now=None):
         now = time.time() if now is None else now
         with self.db:
@@ -291,7 +284,7 @@ class Provisions:
                             (meal_id, guild, user, channel, None,
                              json.dumps(data, ensure_ascii=False, separators=(',', ':')),
                              data['capacity'], now, offer['expires_at'], 'posting'))
-            if not self._active_meal(guild, user, now) and not self._active_drink(guild, user, now):
+            if not self._active_meal(guild, user, now):
                 self.db.execute('''INSERT INTO rpg_meal_claims
                     (meal_id,guild_id,user_id,claimed_at,valid_until,remaining)
                     VALUES (?,?,?,?,?,?)''',
@@ -362,8 +355,8 @@ class Provisions:
                 raise CharacterError('找不到這桌料理。')
             if meal['status'] != 'open' or now >= meal['expires_at']:
                 raise CharacterError('這桌料理已經結束了。')
-            if self._active_meal(guild, user, now) or self._active_drink(guild, user, now):
-                raise CharacterError('你已經有尚未使用的酒館祝福。')
+            if self._active_meal(guild, user, now):
+                raise CharacterError('你已經有尚未使用完的料理效果。')
             if len(self.claimants(meal_id)) >= meal['capacity']:
                 raise CharacterError('這桌料理已經沒有空位了。')
             self.db.execute('''INSERT INTO rpg_meal_claims

@@ -34,6 +34,10 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(self.view.to_components()), 5)
         location_select = self.view.children[0]
         self.assertEqual([option.value for option in location_select.options], ['courtyard'])
+        plant_option = self.view.children[1].options[0]
+        self.assertEqual(plant_option.description,
+                         'Lv.1｜1 小時｜收成 2｜盛宴 Q1｜搭配 池塘鯽魚')
+        self.assertIn('料理：盛宴 Q1｜搭配 池塘鯽魚', self.view.embed().fields[-2].value)
         await self.view.handle(self.interaction, 'location', 'prison')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('農耕 Lv.20', embed.fields[-1].value)

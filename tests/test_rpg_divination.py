@@ -154,12 +154,13 @@ class DivinationTests(unittest.TestCase):
         self.assertIsNone(divinations.status(1, 1, now=0)['card'])
         self.assertEqual(divinations.status(1, 1, now=0)['draws'], 1)
 
-    def test_settlement_applies_meal_xp_gold_and_drop_effects(self):
+    def test_settlement_stacks_drink_with_meal_xp_gold_and_drop_effects(self):
         repo = RaidStore(self.store)
         policy = dict(victory_xp=100, victory_gold=100, drop_chance=0.0)
         raid = repo.create(1, 10, {'kind': '巨獸', 'strength': 1}, 0, policy)
         raid.update(status='running', seed=31,
                     participants=[dict(id=1, state={'job': '民兵', 'level': 1},
+                                       tavern={'xp_percent': 5},
                                        meal={'xp_percent': 15, 'gold_percent': 15,
                                              'drop_points': 5})])
         player = Fighter('玩家', 0, '民兵',
@@ -176,9 +177,9 @@ class DivinationTests(unittest.TestCase):
         settled = repo.settle(raid['id'], battle_data, SimpleNamespace(**policy))
 
         reward = settled['rewards'][0]
-        self.assertEqual((reward['xp'], reward['gold']), (115, 115))
+        self.assertEqual((reward['xp'], reward['gold']), (120, 115))
         self.assertIsNotNone(reward['item'])
-        self.assertEqual((self.store.xp(1, 1), self.store.gold(1, 1)), (115, 5115))
+        self.assertEqual((self.store.xp(1, 1), self.store.gold(1, 1)), (120, 5115))
 
 
 if __name__ == '__main__':

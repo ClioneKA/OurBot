@@ -13,8 +13,9 @@ from core.rpg_provisions import Provisions
 from core.rpg_raids import RaidService
 from core.rpg_raid_store import RaidStore
 from core.rpg_monsters import prepare_monster
-from core.rpg_tavern import (BOUNTY_PRICES, DRINK_PACKAGES, DRINK_XP_PERCENT,
-                             DrinkOfferView, TavernService, TavernStore)
+from core.rpg_tavern import (BOUNTY_PRICES, DRINK_CLAIM_SECONDS, DRINK_PACKAGES,
+                             DRINK_XP_PERCENT, DrinkOfferView, TavernService,
+                             TavernStore)
 from core.settings import RPGSettings
 
 
@@ -36,6 +37,7 @@ class TavernStoreTests(unittest.TestCase):
 
     def test_round_deducts_claims_once_and_is_consumed_by_next_raid(self):
         offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
+        self.assertEqual((DRINK_CLAIM_SECONDS, offer['expires_at']), (7200, 7300))
         self.assertEqual(self.store.gold(1, 1), 9500)
         self.tavern.publish_offer(offer['id'], 99)
         self.tavern.claim(offer['id'], 1, 2, now=101)
@@ -110,6 +112,28 @@ class TavernStoreTests(unittest.TestCase):
         result = repo.settle(raid['id'], dump_battle(battle), settings.raid)
         self.assertEqual(result['rewards'][0]['xp'], 105)
         self.assertEqual(self.store.xp(1, 2), 105)
+
+    def test_drink_and_meal_can_be_held_at_the_same_time(self):
+        characters = Characters(self.store, RPGSettings())
+        provisions = Provisions(self.store)
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        for user in (2, 3):
+            with self.store.db:
+                self.store.db.execute(
+                    "INSERT INTO rpg_inventory VALUES (1,?,'fishing:pond:common',3)", (user,))
+                self.store.db.execute(
+                    "INSERT INTO rpg_inventory VALUES (1,?,'farming:potato',2)", (user,))
+        offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
+        self.tavern.publish_offer(offer['id'], 99)
+
+        self.tavern.claim(offer['id'], 1, 2, now=101)
+        meal_after_drink = provisions.cook(1, 2, 9, ingredients, now=102)
+        self.assertEqual(provisions.claimants(meal_after_drink['id']), [2])
+
+        meal_before_drink = provisions.cook(1, 3, 9, ingredients, now=102)
+        self.assertEqual(provisions.claimants(meal_before_drink['id']), [3])
+        self.tavern.claim(offer['id'], 1, 3, now=103)
+        self.assertEqual(self.tavern.claimants(offer['id']), [2, 3])
 
 
 class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):

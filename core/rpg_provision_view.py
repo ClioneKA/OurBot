@@ -91,7 +91,7 @@ class ProvisionView(discord.ui.View):
                 embed.add_field(name='料理預覽', value=str(exc), inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
-        embed.set_footer(text='料理公開領取 10 分鐘；取得的效果保留 7 天，每次正式開戰消耗一場。')
+        embed.set_footer(text='料理公開領取 30 分鐘；取得的效果保留 24 小時，每次正式開戰消耗一場。')
         return embed
 
     async def handle(self, interaction, action, value=None):
