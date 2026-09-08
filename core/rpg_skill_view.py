@@ -6,7 +6,8 @@ from core.rpg_menu import add_back, navigate
 import discord
 
 from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
-                             condition_text, passive_description, rule_skill, skill_description)
+                             OFFENSIVE_TARGETS, condition_text, passive_description, rule_skill,
+                             skill_description)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 
@@ -98,6 +99,9 @@ class SkillView(discord.ui.View):
         targets = {key: label for key, label in TARGETS.items() if key != 'self' or skill.effect in ALLY_EFFECTS}
         if skill.effect != 'cleanse':
             targets.pop('debuffed', None)
+        if skill.effect in ALLY_EFFECTS:
+            for key in OFFENSIVE_TARGETS:
+                targets.pop(key, None)
         self.add_item(PanelSelect('target', row=3, placeholder=fixed or '選擇目標規則', disabled=bool(fixed), options=[
             discord.SelectOption(label=fixed, value=rule.target, default=True)] if fixed else [
             discord.SelectOption(label=label, value=key, default=key == rule.target) for key, label in targets.items()]))

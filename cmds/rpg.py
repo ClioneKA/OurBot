@@ -497,6 +497,7 @@ class RPG(commands.Cog):
         state = self.characters.snapshot(guild, user)
         embed = discord.Embed(title=f'{state["title"]}・自動技能', color=0x8B5CF6,
                               description='每回合由優先 1 開始檢查，施放第一個符合條件且冷卻結束的技能；否則普攻。\n'
+                              '指向特定對象的條件會先限制合法目標；沒有符合者便檢查下一個技能。\n'
                               '【準備】技能會在一般行動前結算，彼此仍依速度排序。\n'
                               '固定三個主動技能格；Lv.20 解鎖兩個進階技能。Lv.50 解鎖一個三選一職業被動格。')
         for rule in self.tactics.rules(guild, user, state['job']):
@@ -509,7 +510,7 @@ class RPG(commands.Cog):
             embed.add_field(name=f'職業被動｜{passive.name}', value=passive.description, inline=False)
         elif self.tactics.available_passives(guild, user, state['job']):
             embed.add_field(name='職業被動｜尚未選擇', value='Lv.50 已解鎖三個職業被動，請從技能面板選擇一個。', inline=False)
-        embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。')
+        embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。「優先」目標不存在時會改選其他合法目標。')
         return embed
 
 

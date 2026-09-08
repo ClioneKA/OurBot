@@ -28,9 +28,8 @@ class LoadoutStorageTests(unittest.TestCase):
         self.characters.equip(1, 1, weapon_id)
         self.characters.equip(1, 1, charm_id, 2)
         self.tactics.equip(1, 1, '裝甲步兵', 1, 5)
-        current = next(rule for rule in self.tactics.rules(1, 1, '裝甲步兵') if rule.slot == 1)
         self.tactics.configure(1, 1, '裝甲步兵', 1, 3, False,
-                               'enemy_hp_lte', current.target, 45)
+                               'enemy_hp_lte', 'mechanic', 45)
         self.tactics.equip_passive(1, 1, '裝甲步兵', 2)
         saved = self.loadouts.save(1, 1, 1)
         self.loadouts.rename(1, 1, 1, '鐘龍破甲')
@@ -44,8 +43,8 @@ class LoadoutStorageTests(unittest.TestCase):
         self.assertEqual(result['equipped_instances']['飾品2'], charm_id)
         rule = next(rule for rule in self.tactics.rules(1, 1, '裝甲步兵') if rule.slot == 1)
         self.assertEqual((rule_skill('裝甲步兵', rule).name, rule.priority, rule.enabled,
-                          rule.condition, rule.condition_value),
-                         ('重裝猛擊', 3, False, 'enemy_hp_lte', 45))
+                          rule.condition, rule.target, rule.condition_value),
+                         ('重裝猛擊', 3, False, 'enemy_hp_lte', 'mechanic', 45))
         self.assertEqual(self.tactics.passive(1, 1, '裝甲步兵').id, 2)
         self.assertEqual((saved['slot'], self.loadouts.get(1, 1, 1)['name']), (1, '鐘龍破甲'))
 

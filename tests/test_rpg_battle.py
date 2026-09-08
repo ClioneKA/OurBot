@@ -342,6 +342,70 @@ class BattleTests(unittest.TestCase):
         ally.hp = 99
         self.assertIsNotNone(battle.select(actor))
 
+    def test_subject_conditions_constrain_the_selected_target(self):
+        actor = fighter(rules=[Rule(1, 1, True, 'enemy_hp_lte', 'strongest', None, 30)])
+        low = fighter('低血量', 1, hp=100, attack=10, rules=[])
+        strong = fighter('高攻擊', 1, hp=100, attack=100, rules=[])
+        low.hp, strong.hp = 20, 90
+        battle = Battle([actor, low, strong], seed=1)
+        self.assertIs(battle.select(actor)[2], low)
+
+        actor.rules = [Rule(1, 1, True, 'enemy_charging', 'lowest')]
+        strong.effects['charging'] = 2
+        self.assertIs(battle.select(actor)[2], strong)
+        low.effects['taunt'] = 2
+        self.assertIsNone(battle.select(actor))
+
+    def test_new_enemy_conditions_and_priority_targets(self):
+        actor = fighter(rules=[])
+        boss = fighter('首領', 1, hp=100, attack=50, rules=[])
+        add = fighter('召喚物', 1, hp=100, attack=20, rules=[])
+        urgent = fighter('法器', 1, hp=100, attack=10, rules=[])
+        boss.is_boss = True
+        urgent.mechanic_priority = 2
+        battle = Battle([actor, boss, add, urgent], seed=1)
+        battle.round = 1
+
+        self.assertIs(battle.target(actor, [boss, add], Rule(1, 1, True, 'always', 'boss'), True), boss)
+        self.assertIs(battle.target(actor, [boss, add], Rule(1, 1, True, 'always', 'add'), True), add)
+        self.assertIs(battle.target(actor, [boss, add, urgent],
+                                    Rule(1, 1, True, 'always', 'mechanic'), True), urgent)
+        boss.hp, add.hp = 30, 90
+        self.assertIs(battle.target(actor, [boss, add],
+                                    Rule(1, 1, True, 'always', 'highest_hp'), True), add)
+
+        for condition, setup, expected in (
+                ('enemy_guard', lambda: urgent.effects.update(breakable_guard=2), urgent),
+                ('enemy_broken', lambda: add.effects.update({'break': 2}), add),
+                ('enemy_add', lambda: None, add),
+                ('mechanic_target', lambda: None, urgent)):
+            setup()
+            actor.rules = [Rule(1, 1, True, condition, 'lowest')]
+            selected = battle.select(actor)
+            self.assertIsNotNone(selected, condition)
+            if condition != 'enemy_add':
+                self.assertIs(selected[2], expected)
+            else:
+                self.assertFalse(selected[2].is_boss)
+
+    def test_stacked_debuff_condition_filters_cleanse_target_and_tags_survive_reload(self):
+        monk = fighter('僧侶', job='僧侶', rules=[
+            Rule(3, 1, True, 'ally_debuff_stacks', 'strongest', None, 2)])
+        one = fighter('一層', attack=100, rules=[])
+        two = fighter('兩層', attack=10, rules=[])
+        one.status_stacks['corruption'] = 1
+        two.status_stacks['corruption'] = 2
+        enemy = fighter('首領', 1, rules=[])
+        enemy.is_boss = True
+        enemy.mechanic_priority = 3
+        battle = Battle([monk, one, two, enemy], seed=1)
+        self.assertIs(battle.select(monk)[2], two)
+
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        restored_enemy = restored.fighters[-1]
+        self.assertTrue(restored_enemy.is_boss)
+        self.assertEqual(restored_enemy.mechanic_priority, 3)
+
     def test_food_triggers_once_and_rare_regen_starts_next_round(self):
         from unittest.mock import patch
         player = fighter(hp=200, rules=[])

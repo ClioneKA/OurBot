@@ -73,6 +73,16 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'target', 'self')
         self.assertEqual(self.view.current().target, 'lowest')
 
+    async def test_support_hides_offensive_targets_and_new_stack_condition_uses_modal(self):
+        self.store.award_voice([(1, 1, level_floor(20))])
+        self.characters.change_job(1, 1, '僧侶')
+        await self.view.handle(self.interaction, 'refresh')
+        targets = {option.value for option in self.view.children[3].options}
+        self.assertFalse({'boss', 'add', 'mechanic'} & targets)
+        self.assertIn('highest_hp', targets)
+        await self.view.handle(self.interaction, 'condition', 'ally_debuff_stacks')
+        self.interaction.response.send_modal.assert_awaited_once()
+
     async def test_unauthorized_and_expired_interactions_do_not_write(self):
         other = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=2),
                                 response=SimpleNamespace(send_message=AsyncMock()))

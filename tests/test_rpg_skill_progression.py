@@ -86,6 +86,11 @@ class ProgressionTests(unittest.TestCase):
         self.tactics.equip(1, 1, '僧侶', 3, 4)
         with self.assertRaises(CharacterError):
             self.tactics.configure(1, 1, '僧侶', 3, 1, True, 'ally_debuff', 'debuffed')
+        with self.assertRaises(CharacterError):
+            self.tactics.configure(1, 1, '僧侶', 1, 1, True, 'always', 'boss')
+        self.tactics.configure(1, 1, '裝甲步兵', 1, 1, True, 'enemy_guard', 'mechanic')
+        rule = self.tactics.rules(1, 1, '裝甲步兵')[0]
+        self.assertEqual((rule.condition, rule.target), ('enemy_guard', 'mechanic'))
 
     def test_legacy_table_migrates_without_changing_tactics(self):
         with tempfile.TemporaryDirectory() as directory:

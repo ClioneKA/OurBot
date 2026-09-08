@@ -3,8 +3,8 @@ from dataclasses import asdict
 import json
 
 from core.rpg import level_for
-from core.rpg_battle import (ALLY_EFFECTS, CONDITIONS, PASSIVES, SKILLS, TARGETS,
-                             condition_value, unlocked_skills)
+from core.rpg_battle import (ALLY_EFFECTS, CONDITIONS, OFFENSIVE_TARGETS, PASSIVES, SKILLS,
+                             TARGETS, condition_value, unlocked_skills)
 from core.rpg_character import CharacterError, JOBS, item_level, stage_for
 
 
@@ -148,6 +148,8 @@ class Loadouts:
                 raise CharacterError(f'「{skill.name}」不能以自己為目標。')
             if target == 'debuffed' and skill.effect != 'cleanse':
                 raise CharacterError(f'「{skill.name}」不能使用負面狀態目標。')
+            if target in OFFENSIVE_TARGETS and skill.effect in ALLY_EFFECTS:
+                raise CharacterError(f'「{skill.name}」不能使用攻擊目標規則。')
             rules.append((slot, priority, enabled, condition, target,
                           None if skill_id == slot else skill_id, threshold))
         if ({rule[0] for rule in rules} != {1, 2, 3} or

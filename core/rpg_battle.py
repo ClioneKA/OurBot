@@ -15,7 +15,12 @@ CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 指定比例
               'enemy_hp_gte': '任一敵人 HP ≥ 指定比例',
               'round_gte': '戰鬥回合 ≥ 指定回合',
               'ally_debuff': '隊友有可淨化負面狀態（含自己）',
-              'enemy_charging': '敵人正在蓄力'}
+              'enemy_charging': '敵人正在蓄力',
+              'enemy_guard': '敵人有可擊破防護',
+              'enemy_broken': '敵人處於破甲',
+              'enemy_add': '非首領敵人存活',
+              'ally_debuff_stacks': '隊友疊層負面狀態 ≥ 指定層數',
+              'mechanic_target': '機制目標出現'}
 CONDITION_LIMITS = {
     'self40': (1, 100, 40, '%'),
     'ally50': (1, 100, 50, '%'),
@@ -24,9 +29,13 @@ CONDITION_LIMITS = {
     'enemy_hp_lte': (1, 100, 30, '%'),
     'enemy_hp_gte': (1, 100, 70, '%'),
     'round_gte': (1, 30, 5, ' 回合'),
+    'ally_debuff_stacks': (1, 10, 2, ' 層'),
 }
 TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': '自己',
-           'debuffed': '有可淨化負面狀態的隊友'}
+           'debuffed': '有可淨化負面狀態的隊友',
+           'highest_hp': '血量比例最高', 'boss': '首領本體優先',
+           'add': '非首領敵人優先', 'mechanic': '機制目標優先'}
+OFFENSIVE_TARGETS = {'boss', 'add', 'mechanic'}
 
 
 def empty_combat_stats():
@@ -175,6 +184,7 @@ def condition_text(condition, value=None):
         'enemy_hp_lte': f'任一敵人 HP ≤ {threshold}{suffix}',
         'enemy_hp_gte': f'任一敵人 HP ≥ {threshold}{suffix}',
         'round_gte': f'戰鬥回合 ≥ {threshold}',
+        'ally_debuff_stacks': f'隊友疊層負面狀態 ≥ {threshold} 層',
     }
     return labels[condition]
 
@@ -274,6 +284,8 @@ class Tactics:
             raise CharacterError('攻擊技能不能以自己為目標。')
         if target == 'debuffed' and skill.effect != 'cleanse':
             raise CharacterError('負面狀態目標僅供淨化使用。')
+        if target in OFFENSIVE_TARGETS and skill.effect in ALLY_EFFECTS:
+            raise CharacterError('這個目標規則僅供攻擊技能使用。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             rules = self.rules(guild, user, job)
@@ -350,6 +362,8 @@ class Fighter:
     linked_user_id: int | None = None
     passive_id: int | None = None
     passive_state: dict = field(default_factory=dict)
+    is_boss: bool = False
+    mechanic_priority: int = 0
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -844,13 +858,46 @@ class Battle:
         if not candidates:
             return None
         if rule.target == 'debuffed':
-            return max(candidates, key=lambda f: (f.status_stacks.get('corruption', 0),
+            return max(candidates, key=lambda f: (self.cleansable_stack_count(f),
                                                    -f.hp / f.stats['HP']))
+        if rule.target == 'boss':
+            preferred = [f for f in candidates if f.is_boss]
+            candidates = preferred or candidates
+        elif rule.target == 'add':
+            preferred = [f for f in candidates if not f.is_boss]
+            candidates = preferred or candidates
+        elif rule.target == 'mechanic':
+            priority = max((self.mechanic_priority(f) for f in candidates), default=0)
+            if priority:
+                candidates = [f for f in candidates if self.mechanic_priority(f) == priority]
         if rule.target == 'strongest':
             return max(candidates, key=lambda f: f.stats['攻擊'])
+        if rule.target == 'highest_hp':
+            return max(candidates, key=lambda f: f.hp / f.stats['HP'])
         if offensive and actor.team == 1:
             return self.rng.choice(candidates)
         return min(candidates, key=lambda f: f.hp / f.stats['HP'])
+
+    def is_charging(self, fighter):
+        return (fighter.has('charging', self.round) or fighter.has('charged_punch', self.round) or
+                (fighter.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
+                (fighter.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) or
+                (fighter.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')) or
+                (fighter.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging')))
+
+    def has_breakable_guard(self, fighter):
+        return (fighter.has('breakable_guard', self.round) or
+                (fighter.job == '深淵鐘龍' and self.mechanics.get('clock_armor', 0) > 0) or
+                (fighter.job == '吞城鯨' and self.mechanics.get('whale_shield', 0) > 0))
+
+    def mechanic_priority(self, fighter):
+        return max(fighter.mechanic_priority,
+                   1 if fighter.has('mechanic_target', self.round) else 0)
+
+    @staticmethod
+    def cleansable_stack_count(fighter):
+        arrows = fighter.status_stacks.get('poison_arrows', ())
+        return max(0, int(fighter.status_stacks.get('corruption', 0))) + len(arrows)
 
     def select(self, actor):
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
@@ -863,6 +910,9 @@ class Battle:
                             rule.skill_id, condition_value(condition, rule.condition_value))
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
+            taunters = [f for f in enemies if f.has('taunt', self.round)]
+            targetable_enemies = (enemies if skill.effect in ('area', 'cleave')
+                                  else taunters or enemies)
             threshold = condition_value(rule.condition, rule.condition_value)
             if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * threshold:
                 continue
@@ -872,11 +922,26 @@ class Battle:
                 continue
             if rule.condition == 'enemies3' and len(enemies) < threshold:
                 continue
-            if rule.condition == 'enemy_hp_lte' and not any(
-                    f.hp * 100 <= f.stats['HP'] * threshold for f in enemies):
-                continue
-            if rule.condition == 'enemy_hp_gte' and not any(
-                    f.hp * 100 >= f.stats['HP'] * threshold for f in enemies):
+            condition_enemies = targetable_enemies
+            if rule.condition == 'enemy_hp_lte':
+                condition_enemies = [f for f in targetable_enemies
+                                     if f.hp * 100 <= f.stats['HP'] * threshold]
+            elif rule.condition == 'enemy_hp_gte':
+                condition_enemies = [f for f in targetable_enemies
+                                     if f.hp * 100 >= f.stats['HP'] * threshold]
+            elif rule.condition == 'enemy_charging':
+                condition_enemies = [f for f in targetable_enemies if self.is_charging(f)]
+            elif rule.condition == 'enemy_guard':
+                condition_enemies = [f for f in targetable_enemies if self.has_breakable_guard(f)]
+            elif rule.condition == 'enemy_broken':
+                condition_enemies = [f for f in targetable_enemies if f.has('break', self.round)]
+            elif rule.condition == 'enemy_add':
+                condition_enemies = [f for f in targetable_enemies if not f.is_boss]
+            elif rule.condition == 'mechanic_target':
+                condition_enemies = [f for f in targetable_enemies if self.mechanic_priority(f)]
+            if rule.condition in ('enemy_hp_lte', 'enemy_hp_gte', 'enemy_charging',
+                                  'enemy_guard', 'enemy_broken', 'enemy_add',
+                                  'mechanic_target') and not condition_enemies:
                 continue
             if rule.condition == 'round_gte' and self.round < threshold:
                 continue
@@ -884,15 +949,16 @@ class Battle:
                     any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
                     or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows') for f in allies):
                 continue
-            if rule.condition == 'enemy_charging' and not any(
-                    f.has('charged_punch', self.round) or
-                    (f.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
-                    (f.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) or
-                    (f.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')) or
-                    (f.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging'))
-                    for f in enemies):
+            if rule.condition == 'ally_debuff_stacks' and not any(
+                    self.cleansable_stack_count(f) >= threshold for f in allies):
                 continue
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
+            if skill.effect not in ALLY_EFFECTS:
+                candidates = condition_enemies
+            elif rule.condition == 'ally50' and skill.effect in ('heal', 'holy_light'):
+                candidates = [f for f in candidates if f.hp * 100 <= f.stats['HP'] * threshold]
+            elif rule.condition == 'ally_debuff_stacks':
+                candidates = [f for f in candidates if self.cleansable_stack_count(f) >= threshold]
             if skill.effect in ('heal', 'group_heal'):
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
@@ -1921,7 +1987,13 @@ def raid_battle(participants, monster, seed):
         if monster['kind'] == '赤雷與蒼炎':
             job = ('赤雷', '蒼炎')[i]
             name = f'{monster_name(monster)}・{job}'
-        fighters.append(Fighter(name, 1, job, individual, speed, []))
+        is_boss = (count == 1 or monster['kind'] == '赤雷與蒼炎' or
+                   monster['kind'] == '哥布林戰團' and i == 0 or
+                   monster['kind'] == '王城傀儡師' and i == 0)
+        mechanic_priority = (1 if monster['kind'] == '哥布林戰團' and i == 0 or
+                             monster['kind'] == '王城傀儡師' and i > 0 else 0)
+        fighters.append(Fighter(name, 1, job, individual, speed, [],
+                                is_boss=is_boss, mechanic_priority=mechanic_priority))
     battle = Battle(fighters, seed=seed)
     if monster['kind'] == '深淵鐘龍':
         battle.mechanics['next_clock_charge'] = 3
@@ -1997,6 +2069,8 @@ def load_battle(data):
         f.linked_user_id = data_f.get('linked_user_id')
         f.passive_id = data_f.get('passive_id')
         f.passive_state = data_f.get('passive_state', {})
+        f.is_boss = data_f.get('is_boss', False)
+        f.mechanic_priority = data_f.get('mechanic_priority', 0)
         saved_stats = data_f.get('combat_stats', {})
         f.combat_stats = empty_combat_stats()
         for key in f.combat_stats:
