@@ -98,6 +98,39 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         embed = self.interaction.edit_original_response.call_args.kwargs['embed']
         self.assertIn('不發布酒館公告', embed.fields[-1].value)
 
+    async def test_repeat_last_meal_is_enabled_only_with_enough_ingredients(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 6)
+        self.grant('farming:potato', 4)
+        previous = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.publish(previous['id'], 99)
+        data = self.provisions.preview(ingredients, 1, 1)
+        self.tavern.serve_meal.return_value = (
+            SimpleNamespace(jump_url='https://discord.test/repeated'),
+            {'capacity': data['capacity'], 'data': data})
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+
+        repeat = next(child for child in view.children if child.label == '重複上一份料理')
+        self.assertFalse(repeat.disabled)
+        await view.handle(self.interaction, 'repeat')
+
+        self.tavern.serve_meal.assert_awaited_once_with(self.interaction, ingredients)
+        embed = self.interaction.edit_original_response.call_args.kwargs['embed']
+        self.assertIn('repeated', embed.fields[-1].value)
+
+    async def test_repeat_last_meal_is_disabled_when_ingredients_are_insufficient(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 3)
+        self.grant('farming:potato', 2)
+        previous = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.provisions.publish(previous['id'], 99)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+
+        repeat = next(child for child in view.children if child.label == '重複上一份料理')
+        self.assertTrue(repeat.disabled)
+
 
 if __name__ == '__main__':
     unittest.main()

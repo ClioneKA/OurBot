@@ -68,6 +68,11 @@ class ProvisionView(discord.ui.View):
                      discord.ButtonStyle.success)
         self._button('捐給監獄', 'donate', 1, not self.ingredients,
                      discord.ButtonStyle.primary)
+        last_recipe = self.cog.provisions.last_recipe(self.guild_id, self.owner.id)
+        can_repeat = bool(last_recipe) and all(
+            counts.get(key, 0) >= amount for key, amount in Counter(last_recipe).items())
+        self._button('重複上一份料理', 'repeat', 1, not can_repeat,
+                     discord.ButtonStyle.primary)
         self._button('返回酒館', 'tavern', 2)
         self._button('關閉', 'close', 2)
 
@@ -160,12 +165,16 @@ class ProvisionView(discord.ui.View):
                     self.ingredients.clear()
                     notice = (f'已將 {result["quantity"]} 份食材捐給監獄，'
                               f'取得 {result["xp"]:,} 料理 XP。')
-                elif action == 'cook':
-                    if len(self.ingredients) != INGREDIENT_COUNT:
+                elif action in ('cook', 'repeat'):
+                    ingredients = (self.cog.provisions.last_recipe(self.guild_id, self.owner.id)
+                                   if action == 'repeat' else list(self.ingredients))
+                    if not ingredients:
+                        raise CharacterError('還沒有可以重複製作的上一份料理。')
+                    if len(ingredients) != INGREDIENT_COUNT:
                         raise CharacterError('請先選滿五份食材。')
                     await interaction.response.defer()
                     try:
-                        message, meal = await self.cog.tavern.serve_meal(interaction, self.ingredients)
+                        message, meal = await self.cog.tavern.serve_meal(interaction, ingredients)
                     except CharacterError as exc:
                         self.rebuild()
                         await self.origin.edit_original_response(embed=self.embed(str(exc)), view=self)

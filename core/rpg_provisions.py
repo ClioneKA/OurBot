@@ -260,6 +260,18 @@ class Provisions:
         level = self.state(guild, user)['level'] if guild is not None and user is not None else 1
         return evaluate_ingredients(ingredient_ids, level)
 
+    def last_recipe(self, guild, user):
+        row = self.db.execute('''SELECT data FROM rpg_meals
+            WHERE guild_id=? AND host_id=? AND status IN ('open','private')
+            ORDER BY created_at DESC,rowid DESC LIMIT 1''', (guild, user)).fetchone()
+        if not row:
+            return None
+        ingredients = json.loads(row[0]).get('ingredients')
+        if (not isinstance(ingredients, list) or len(ingredients) != INGREDIENT_COUNT
+                or any(key not in INGREDIENTS for key in ingredients)):
+            return None
+        return ingredients
+
     def _active_meal(self, guild, user, now):
         return self.db.execute('''SELECT 1 FROM rpg_meal_claims
             WHERE guild_id=? AND user_id=? AND remaining>0 AND valid_until>? LIMIT 1''',

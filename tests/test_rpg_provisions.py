@@ -178,6 +178,16 @@ class ProvisionTests(unittest.TestCase):
         with self.assertRaisesRegex(CharacterError, '私人料理'):
             self.provisions.cook(1, 1, 9, ingredients, now=101)
 
+    def test_last_recipe_only_returns_successfully_completed_meal(self):
+        ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
+        self.grant('fishing:pond:common', 6)
+        self.grant('farming:potato', 4)
+        meal = self.provisions.cook(1, 1, 9, ingredients, now=100)
+        self.assertIsNone(self.provisions.last_recipe(1, 1))
+
+        self.provisions.publish(meal['id'], 99)
+        self.assertEqual(self.provisions.last_recipe(1, 1), ingredients)
+
     def test_cook_allows_next_table_when_previous_one_is_full_or_expired(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
         self.grant('fishing:pond:common', 9)
