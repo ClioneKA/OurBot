@@ -54,6 +54,9 @@ async def navigate(view, interaction, page='home'):
     elif page == 'tailor':
         from core.rpg_tailor_view import TailorView
         next_view = TailorView(view.cog, view.origin)
+    elif page == 'crystals':
+        from core.rpg_crystal_view import CrystalTailorView
+        next_view = CrystalTailorView(view.cog, view.origin)
     elif page == 'profile':
         from core.rpg_profile_view import ProfileView
         next_view = ProfileView(view.cog, view.origin)
@@ -229,7 +232,7 @@ class AdventureView(discord.ui.View):
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             if action in ('home', 'equipment', 'skills', 'loadouts', 'backpack', 'shop', 'jobs', 'life', 'travel',
-                          'divination', 'tavern', 'tailor', 'profile', 'fishing', 'farming', 'provisions', 'help', 'give', 'use_items'):
+                          'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

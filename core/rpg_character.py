@@ -360,6 +360,19 @@ for key, item in {
 }.items():
     ITEMS[key] = item
 
+MAZE_CHOICE_BOXES = {
+    'maze:choice_box:infantry': ('maze:infantry:weapon', 'maze:infantry:suit'),
+    'maze:choice_box:knight': ('maze:knight:weapon', 'maze:knight:suit'),
+    'maze:choice_box:archer': ('maze:archer:weapon', 'maze:archer:suit'),
+    'maze:choice_box:monk': ('maze:monk:weapon', 'maze:monk:suit'),
+}
+for box_id, choices in MAZE_CHOICE_BOXES.items():
+    job = ITEMS[choices[0]].job
+    ITEMS[box_id] = Item(
+        f'繪畫魔女・{job}菁英裝備自選箱', '', '', 0, (0, 0, 0, 0, 0),
+        category='製作材料', transferable=False,
+        description=f'可從背包使用，選擇一件 {job} T60 菁英武器或套裝。')
+
 ITEMS['cycle:emblem'] = Item(
     '循環徽記', '飾品', '', 2, (3, 3, 3, 3, 3), required_level=60,
     embroidery_slots=1, first_skill_cooldown_reduction=1)

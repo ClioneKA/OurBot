@@ -46,6 +46,14 @@ class PaintedMazeStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(PaintedMazeError, '另一個'):
             self.repo.create(1, 1, 'painting:balloon', 50, now=101)
 
+    def test_admin_test_room_does_not_require_or_consume_entry(self):
+        room = self.repo.create(
+            1, 1, 'noah:unfinished', 50, now=100, require_entry=False)
+        self.assertFalse(room['requires_entry'])
+        started = self.repo.begin(room['id'], 1, [self.participant(1)], now=101)
+        self.assertEqual((started['status'], started['entry_consumed']), ('running', False))
+        self.assertEqual(self.characters.inventory_counts(1, 1).get('noah:unfinished', 0), 0)
+
     def test_lobby_is_one_to_eight_and_members_cannot_join_two_rooms(self):
         self.characters.grant_item(1, 1, 'painting:balloon')
         first = self.repo.create(1, 1, 'painting:balloon', 50, now=100)

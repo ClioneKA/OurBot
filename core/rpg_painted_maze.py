@@ -146,7 +146,7 @@ class PaintedMazeStore:
              json.dumps(room, ensure_ascii=False), room['id']))
 
     def create(self, guild_id, host_id, entry_item, host_level, *, channel_id=None,
-               now=None, seed=None):
+               now=None, seed=None, require_entry=True):
         if entry_item not in ENTRY_ROUTES:
             raise PaintedMazeError('這件物品不能開啟繪境迷廊。')
         if host_level < MIN_LEVEL:
@@ -157,11 +157,12 @@ class PaintedMazeStore:
             self.db.execute('BEGIN IMMEDIATE')
             if self.active_for_user(guild_id, host_id):
                 raise PaintedMazeError('你已在這個伺服器的另一個繪境迷廊房間中。')
-            owned = self.db.execute('''SELECT quantity FROM rpg_inventory
-                WHERE guild_id=? AND user_id=? AND item_id=?''',
-                (guild_id, host_id, entry_item)).fetchone()
-            if not owned or owned[0] < 1:
-                raise PaintedMazeError('背包中沒有可用的入場畫作。')
+            if require_entry:
+                owned = self.db.execute('''SELECT quantity FROM rpg_inventory
+                    WHERE guild_id=? AND user_id=? AND item_id=?''',
+                    (guild_id, host_id, entry_item)).fetchone()
+                if not owned or owned[0] < 1:
+                    raise PaintedMazeError('背包中沒有可用的入場畫作。')
             number = self._reserve_number(guild_id)
             room = {
                 'id': uuid.uuid4().hex,
@@ -169,6 +170,7 @@ class PaintedMazeStore:
                 'host_id': host_id,
                 'number': number,
                 'entry_item': entry_item,
+                'requires_entry': require_entry,
                 'route': ENTRY_ROUTES[entry_item],
                 'status': 'lobby',
                 'members': [host_id],
@@ -262,16 +264,18 @@ class PaintedMazeStore:
             if any(participant.get('state', {}).get('level', 0) < MIN_LEVEL
                    for participant in participants):
                 raise PaintedMazeError(f'所有隊員都必須達到 Lv.{MIN_LEVEL}。')
-            paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
-                WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=1''',
-                (room['guild_id'], room['host_id'], room['entry_item']))
-            if not paid.rowcount:
-                raise PaintedMazeError('房主已沒有這張入場畫作。')
-            self.db.execute('''DELETE FROM rpg_inventory
-                WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0''',
-                (room['guild_id'], room['host_id'], room['entry_item']))
+            requires_entry = room.get('requires_entry', True)
+            if requires_entry:
+                paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
+                    WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=1''',
+                    (room['guild_id'], room['host_id'], room['entry_item']))
+                if not paid.rowcount:
+                    raise PaintedMazeError('房主已沒有這張入場畫作。')
+                self.db.execute('''DELETE FROM rpg_inventory
+                    WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0''',
+                    (room['guild_id'], room['host_id'], room['entry_item']))
             room.update(
-                status='running', participants=participants, entry_consumed=True,
+                status='running', participants=participants, entry_consumed=requires_entry,
                 started_at=now, expires_at=now + ROOM_LIFETIME_SECONDS,
                 party_state={str(participant['id']): {
                     'hp': participant['state']['combat']['HP'],

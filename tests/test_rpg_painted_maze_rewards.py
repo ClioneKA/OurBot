@@ -7,7 +7,6 @@ from core.rpg_character import Characters
 from core.rpg_crystals import CrystalStore
 from core.rpg_painted_maze import PaintedMazeStore
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
-from core.rpg_painted_maze_service import PaintedMazeService
 from core.settings import RPGSettings
 
 
@@ -50,23 +49,26 @@ class PaintedMazeRewardTests(unittest.TestCase):
     def test_noah_first_clear_is_choice_and_retry_does_not_duplicate(self):
         room = self.completed_room('noah:unfinished', 101)
         first = self.rewards.seal_noah_clear(room['id'], now=500)
-        self.assertEqual([reward['status'] for reward in first], ['pending', 'pending'])
+        self.assertEqual([reward['status'] for reward in first],
+                         ['box_granted', 'box_granted'])
         self.assertEqual(first[0]['choices'], ['maze:archer:weapon', 'maze:archer:suit'])
         self.assertEqual(first, self.rewards.seal_noah_clear(room['id'], now=999))
+        self.assertEqual(self.characters.inventory_counts(1, 1)['maze:choice_box:archer'], 1)
 
-        equipment_id = self.rewards.choose_noah_gear(
-            room['id'], 1, 1, 'maze:archer:suit', now=501)
+        item_id, equipment_id = self.rewards.open_choice_box(
+            1, 1, 'maze:choice_box:archer', 'suit')
+        self.assertEqual(item_id, 'maze:archer:suit')
         self.assertEqual(self.characters.get_instance(1, 1, equipment_id).item_id,
                          'maze:archer:suit')
-        self.assertEqual(self.rewards.choose_noah_gear(
-            room['id'], 1, 1, 'maze:archer:suit', now=999), equipment_id)
+        with self.assertRaisesRegex(Exception, '沒有這個'):
+            self.rewards.open_choice_box(1, 1, 'maze:choice_box:archer', 'weapon')
         self.assertEqual(len(self.characters.equipment_instances(1, 1)), 2)  # starter + reward
 
     def test_second_noah_clear_grants_deterministic_random_job_gear(self):
         first_room = self.completed_room('noah:unfinished', 201)
         self.rewards.seal_noah_clear(first_room['id'])
-        self.rewards.choose_noah_gear(first_room['id'], 1, 1, 'maze:archer:weapon')
-        self.rewards.choose_noah_gear(first_room['id'], 1, 2, 'maze:monk:weapon')
+        self.rewards.open_choice_box(1, 1, 'maze:choice_box:archer', 'weapon')
+        self.rewards.open_choice_box(1, 2, 'maze:choice_box:monk', 'weapon')
 
         second_room = self.completed_room('noah:unfinished', 202, now=1000)
         result = self.rewards.seal_noah_clear(second_room['id'], now=1500)
@@ -75,6 +77,20 @@ class PaintedMazeRewardTests(unittest.TestCase):
         instance_id = result[0]['equipment_instance_id']
         retried = self.rewards.seal_noah_clear(second_room['id'], now=1900)
         self.assertEqual(retried[0]['equipment_instance_id'], instance_id)
+
+    def test_legacy_pending_choice_is_converted_to_one_inventory_box(self):
+        room = self.completed_room('noah:unfinished', 250)
+        self.rewards.seal_noah_clear(room['id'], now=500)
+        with self.rpg.db:
+            self.rpg.db.execute('''DELETE FROM rpg_inventory
+                WHERE guild_id=1 AND user_id=1 AND item_id='maze:choice_box:archer' ''')
+            self.rpg.db.execute('''UPDATE rpg_painted_maze_final_rewards
+                SET status='pending',item_id=NULL,claimed_at=NULL
+                WHERE room_id=? AND user_id=1''', (room['id'],))
+        self.assertEqual(self.rewards.release_pending_boxes(1, 1),
+                         ['maze:choice_box:archer'])
+        self.assertEqual(self.rewards.release_pending_boxes(1, 1), [])
+        self.assertEqual(self.characters.inventory_counts(1, 1)['maze:choice_box:archer'], 1)
 
     def test_shadow_clear_grants_three_extra_crystals_per_member_once(self):
         room = self.completed_room('painting:balloon', 301)
@@ -97,6 +113,7 @@ class PaintedMazeRewardTests(unittest.TestCase):
                 room['id'], 1, '戰敗', {'round': 12}, {'1': {'hp': 0}}, now=1000)
 
     def test_reward_outbox_recovers_all_checkpoints_once_after_restart(self):
+        from core.rpg_painted_maze_service import PaintedMazeService
         room = self.completed_room('painting:balloon', 501)
         service = PaintedMazeService.__new__(PaintedMazeService)
         service.repo, service.crystals, service.rewards = self.maze, self.crystals, self.rewards

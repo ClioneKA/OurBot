@@ -147,13 +147,13 @@ class PaintedMazeService:
                 return None
         return None
 
-    async def create(self, interaction, entry_item):
+    async def create(self, interaction, entry_item, *, require_entry=True):
         space = self.cog.spaces.store.get(interaction.guild_id)
         if not space or interaction.channel_id != space.maze_channel_id:
             raise PaintedMazeError('請在「🎨・繪境迷廊」頻道開啟畫作。')
         level = self.cog.characters.snapshot(interaction.guild_id, interaction.user.id)['level']
         room = self.repo.create(interaction.guild_id, interaction.user.id, entry_item, level,
-                                channel_id=interaction.channel_id)
+                                channel_id=interaction.channel_id, require_entry=require_entry)
         index = thread = None
         try:
             index = await interaction.channel.send(
@@ -206,8 +206,8 @@ class PaintedMazeService:
             thread = await self._thread(room)
             if not thread:
                 raise PaintedMazeError('找不到房間的私人討論串，尚未消耗畫作或攜帶效果。')
-            if self.cog.characters.inventory_counts(
-                    room['guild_id'], room['host_id']).get(room['entry_item'], 0) < 1:
+            if (room.get('requires_entry', True) and self.cog.characters.inventory_counts(
+                    room['guild_id'], room['host_id']).get(room['entry_item'], 0) < 1):
                 raise PaintedMazeError('房主已沒有這張入場畫作。')
             guild = self.bot.get_guild(room['guild_id'])
             participants = []
@@ -315,7 +315,8 @@ class PaintedMazeService:
                                     for user_id, count in crystal_counts.items())
             if checkpoint == 4 and room.get('route') == 'noah':
                 for reward in self.rewards.rewards(room['id']):
-                    text = ('首次通關，自選武器／套裝待領取' if reward['status'] == 'pending'
+                    text = (f'獲得【{ITEMS[reward["item_id"]].name}】，可從背包使用'
+                            if reward['status'] == 'box_granted'
                             else f'獲得【{ITEMS[reward["item_id"]].name}】')
                     reward_lines.append(f'<@{reward["user_id"]}>：{text}')
         chunks, current = [], ''
@@ -403,6 +404,7 @@ class PaintedMazeService:
         return discord.Embed(
             title=f'{MODE_NAME} #{room["number"]}｜{state}', color=0xA855F7,
             description=(f'房主：<@{room["host_id"]}>\n路線：**{route}**\n'
+                         f'入場：{"開始時消耗畫作" if room.get("requires_entry", True) else "管理員測試（免畫作）"}\n'
                          f'隊伍：{len(room["members"])}/8\n'
                          + '\n'.join(f'• <@{uid}>' for uid in room['members'])))
 
@@ -457,7 +459,7 @@ class PaintedMazeService:
             embed.add_field(name='結果', value=room.get('end_reason', room['status']), inline=False)
             if room['status'] == 'completed' and room['route'] == 'noah':
                 embed.add_field(name='菁英裝備', value=(
-                    '首次通關者可用 `/迷廊首通裝備` 自選武器或套裝；'
+                    '首次通關者會取得本職菁英裝備自選箱，可從背包使用；'
                     '已有通關紀錄者已隨機發放。'), inline=False)
         embed.set_footer(text='房間最長保留 24 小時；結束後討論串會封存但隊員仍可查看。')
         return embed

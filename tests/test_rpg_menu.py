@@ -10,6 +10,7 @@ from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
 from core.rpg_divination import Divinations
 from core.rpg_menu import AdventureView
+from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
 from core.settings import RPGSettings
 
 
@@ -22,10 +23,12 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         settings = RPGSettings()
         self.characters = Characters(self.store, settings)
         self.divinations = Divinations(self.store)
+        self.rewards = PaintedMazeRewardStore(self.store)
         self.cog = SimpleNamespace(characters=self.characters, settings=settings, menu_views=WeakSet(),
                                    divinations=self.divinations,
-                                   painted_maze=SimpleNamespace(create=AsyncMock(
-                                       return_value={'number': 7})),
+                                   painted_maze=SimpleNamespace(
+                                       create=AsyncMock(return_value={'number': 7}),
+                                       rewards=self.rewards),
                                    character_embed=lambda *args: discord.Embed(title='角色'),
                                    adventurer_embed=lambda *args: discord.Embed(title='冒險者名片'))
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
@@ -103,6 +106,15 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value
         self.assertIn('繪境迷廊 #7', notice)
         self.assertIn('開始探索時消耗', notice)
+
+        self.characters.grant_item(1, 1, 'maze:choice_box:archer')
+        panel.rebuild()
+        await panel.handle(self.interaction, 'select', 'maze:choice_box:archer')
+        await panel.handle(self.interaction, 'choose:weapon')
+        self.assertEqual(self.characters.inventory_counts(1, 1).get(
+            'maze:choice_box:archer', 0), 0)
+        self.assertTrue(any(entry.item_id == 'maze:archer:weapon'
+                            for entry in self.characters.inventory_entries(1, 1)))
 
     async def test_profile_page_sets_and_clears_showcase(self):
         self.characters.grant_item(1, 1, 'paint:red')

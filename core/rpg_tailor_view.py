@@ -60,6 +60,7 @@ class TailorView(discord.ui.View):
                      style=discord.ButtonStyle.primary if self.mode == 'dye' else discord.ButtonStyle.secondary)
         self._button('飾品刺繡', 'mode:embroidery', 0,
                      style=discord.ButtonStyle.primary if self.mode == 'embroidery' else discord.ButtonStyle.secondary)
+        self._button('顏料結晶', 'crystals', 0)
         options = [discord.SelectOption(
             label=f'{self.entries[reference].item.name} #{self.entries[reference].instance_id}',
             value=reference, description=item_text(self.entries[reference].item)[:100],
@@ -125,7 +126,7 @@ class TailorView(discord.ui.View):
             + '｜'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}' for key in PAINT_ITEMS.values())), inline=False)
         if notice:
             embed.add_field(name='加工結果', value=notice, inline=False)
-        embed.set_footer(text='每件裝備以編號區分；染色與刺繡在給予其他玩家後仍會保留。')
+        embed.set_footer(text='每件裝備以編號區分；顏料結晶的鑲嵌、拆除、出售與轉交也在此處辦理。')
         return embed
 
     async def interaction_check(self, interaction):
@@ -143,6 +144,9 @@ class TailorView(discord.ui.View):
                 return
             if action == 'travel':
                 await navigate(self, interaction, 'travel')
+                return
+            if action == 'crystals':
+                await navigate(self, interaction, 'crystals')
                 return
             if action == 'close':
                 self.closed = True

@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS
+from core.rpg_character import CharacterError, ITEMS, MAZE_CHOICE_BOXES
 from core.rpg_menu import add_back, navigate
 from core.rpg_painted_maze import MODE_NAME
 
@@ -14,6 +14,8 @@ ITEM_ACTIONS = {
     'noah:unfinished': ('展開未完成的魔女畫作', '建立城崎諾亞路線的 1～8 人繪境迷廊房間'),
     'painting:balloon': ('展開《氣球》的畫作', '建立繪畫之影路線的 1～8 人繪境迷廊房間'),
 }
+ITEM_ACTIONS.update({box_id: (f'開啟{ITEMS[box_id].name}', '選擇本職 T60 菁英武器或套裝')
+                     for box_id in MAZE_CHOICE_BOXES})
 
 
 class ActionSelect(discord.ui.Select):
@@ -32,6 +34,7 @@ class ItemUseView(discord.ui.View):
         self.selected = 'recipe:paint_set'
         self.closed = False
         self.lock = asyncio.Lock()
+        self.cog.painted_maze.rewards.release_pending_boxes(self.guild_id, self.owner.id)
         self.rebuild()
 
     async def interaction_check(self, interaction):
@@ -45,6 +48,7 @@ class ItemUseView(discord.ui.View):
         self.catalog = ['recipe:paint_set']
         self.catalog.extend(key for key in ('paint:set', 'noah:unfinished', 'painting:balloon')
                             if counts.get(key, 0) > 0)
+        self.catalog.extend(key for key in MAZE_CHOICE_BOXES if counts.get(key, 0) > 0)
         if self.selected not in self.catalog:
             self.selected = self.catalog[0]
         self.clear_items()
@@ -52,12 +56,15 @@ class ItemUseView(discord.ui.View):
             discord.SelectOption(label=ITEM_ACTIONS[key][0], value=key,
                                  description=ITEM_ACTIONS[key][1], default=key == self.selected)
             for key in self.catalog]))
-        for label, action, style in (
-            ('確認使用', 'use', discord.ButtonStyle.success),
-            ('重新整理', 'refresh', discord.ButtonStyle.secondary),
-            ('關閉', 'close', discord.ButtonStyle.secondary),
-        ):
-            button = discord.ui.Button(label=label, row=1, style=style)
+        row = 1
+        actions = ([('領取武器', 'choose:weapon', discord.ButtonStyle.success),
+                    ('領取套裝', 'choose:suit', discord.ButtonStyle.success)]
+                   if self.selected in MAZE_CHOICE_BOXES else
+                   [('確認使用', 'use', discord.ButtonStyle.success)])
+        actions.extend((('重新整理', 'refresh', discord.ButtonStyle.secondary),
+                        ('關閉', 'close', discord.ButtonStyle.secondary)))
+        for label, action, style in actions:
+            button = discord.ui.Button(label=label, row=row, style=style)
             async def callback(interaction, action=action):
                 await self.handle(interaction, action)
             button.callback = callback
@@ -85,7 +92,10 @@ class ItemUseView(discord.ui.View):
             color=0xD65A88)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='入場畫作會在房主按下「開始探索」後才消耗；只建立房間不會消耗。')
+        embed.set_footer(text=(
+            '按下武器或套裝即會消耗自選箱，選擇後不能更換。'
+            if self.selected in MAZE_CHOICE_BOXES else
+            '入場畫作會在房主按下「開始探索」後才消耗；只建立房間不會消耗。'))
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -114,6 +124,17 @@ class ItemUseView(discord.ui.View):
                 await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
             if action != 'use':
+                if action.startswith('choose:') and self.selected in MAZE_CHOICE_BOXES:
+                    try:
+                        item_id, _equipment_id = self.cog.painted_maze.rewards.open_choice_box(
+                            self.guild_id, self.owner.id, self.selected,
+                            action.split(':', 1)[1])
+                        notice = f'已開啟自選箱，獲得【{ITEMS[item_id].name}】。'
+                    except CharacterError as exc:
+                        notice = str(exc)
+                    self.rebuild()
+                    await interaction.response.edit_message(embed=self.embed(notice), view=self)
+                    return
                 await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
 

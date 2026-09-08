@@ -3,7 +3,7 @@ import json
 import random
 import time
 
-from core.rpg_character import ITEMS, CharacterError, add_owned_item
+from core.rpg_character import ITEMS, MAZE_CHOICE_BOXES, CharacterError, add_owned_item
 
 
 JOB_KEYS = {
@@ -12,6 +12,7 @@ JOB_KEYS = {
     '弓兵': 'archer',
     '僧侶': 'monk',
 }
+JOB_BOXES = {job: f'maze:choice_box:{key}' for job, key in JOB_KEYS.items()}
 CHECKPOINT_REWARDS = {
     1: (250, 150),
     2: (400, 250),
@@ -106,13 +107,46 @@ class PaintedMazeRewardStore:
         return [dict(checkpoint=row[0], user_id=row[1], xp=row[2], gold=row[3])
                 for row in self.db.execute(query, args).fetchall()]
 
-    def latest_pending(self, guild_id, user_id):
-        row = self.db.execute('''SELECT room_id FROM rpg_painted_maze_final_rewards
-            WHERE guild_id=? AND user_id=? AND status='pending'
-            ORDER BY created_at DESC LIMIT 1''', (guild_id, user_id)).fetchone()
-        if not row:
-            return None
-        return next(reward for reward in self.rewards(row[0]) if reward['user_id'] == user_id)
+    def release_pending_boxes(self, guild_id, user_id):
+        """Convert legacy unclaimed first-clear choices into inventory boxes once."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            rows = self.db.execute('''SELECT room_id,job FROM rpg_painted_maze_final_rewards
+                WHERE guild_id=? AND user_id=? AND status='pending' ORDER BY created_at''',
+                (guild_id, user_id)).fetchall()
+            granted = []
+            for room_id, job in rows:
+                box_id = JOB_BOXES.get(job)
+                if not box_id:
+                    continue
+                add_owned_item(self.db, guild_id, user_id, box_id)
+                updated = self.db.execute('''UPDATE rpg_painted_maze_final_rewards
+                    SET status='box_granted',item_id=?
+                    WHERE room_id=? AND guild_id=? AND user_id=? AND status='pending' ''',
+                    (box_id, room_id, guild_id, user_id))
+                if updated.rowcount:
+                    granted.append(box_id)
+            return granted
+
+    def open_choice_box(self, guild_id, user_id, box_id, slot):
+        choices = MAZE_CHOICE_BOXES.get(box_id)
+        if not choices or slot not in ('weapon', 'suit'):
+            raise CharacterError('這不是可使用的菁英裝備自選箱。')
+        item_id = next((choice for choice in choices if choice.endswith(':' + slot)), None)
+        if not item_id:
+            raise CharacterError('自選箱中沒有這個裝備選項。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            consumed = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
+                WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=1''',
+                (guild_id, user_id, box_id))
+            if not consumed.rowcount:
+                raise CharacterError('背包中沒有這個菁英裝備自選箱。')
+            self.db.execute('''DELETE FROM rpg_inventory
+                WHERE guild_id=? AND user_id=? AND item_id=? AND quantity<=0''',
+                (guild_id, user_id, box_id))
+            equipment_id = add_owned_item(self.db, guild_id, user_id, item_id)[0]
+            return item_id, equipment_id
 
     def seal_noah_clear(self, room_id, *, now=None):
         """Reserve first-clear choices or grant later random gear in one transaction."""
@@ -144,7 +178,9 @@ class PaintedMazeRewardStore:
                 if clear is None:
                     self.db.execute('''INSERT INTO rpg_painted_maze_noah_clears
                         VALUES (?,?,1,?)''', (room['guild_id'], user_id, room_id))
-                    status, item_id, equipment_id, claimed_at = 'pending', None, None, None
+                    item_id = JOB_BOXES[job]
+                    add_owned_item(self.db, room['guild_id'], user_id, item_id)
+                    status, equipment_id, claimed_at = 'box_granted', None, now
                 else:
                     self.db.execute('''UPDATE rpg_painted_maze_noah_clears
                         SET clear_count=clear_count+1 WHERE guild_id=? AND user_id=?''',
@@ -161,29 +197,3 @@ class PaintedMazeRewardStore:
                     (room_id, room['guild_id'], user_id, 'noah', job, status,
                      json.dumps(choices), item_id, equipment_id, now, claimed_at))
             return self.rewards(room_id)
-
-    def choose_noah_gear(self, room_id, guild_id, user_id, item_id, *, now=None):
-        now = int(time.time() if now is None else now)
-        with self.db:
-            self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT status,choices,item_id,equipment_instance_id
-                FROM rpg_painted_maze_final_rewards
-                WHERE room_id=? AND guild_id=? AND user_id=?''',
-                (room_id, guild_id, user_id)).fetchone()
-            if not row:
-                raise CharacterError('找不到你的諾亞通關獎勵。')
-            if row[0] == 'granted':
-                if row[2] != item_id:
-                    raise CharacterError('這份通關獎勵已領取。')
-                return row[3]
-            choices = json.loads(row[1])
-            if row[0] != 'pending' or item_id not in choices or item_id not in ITEMS:
-                raise CharacterError('只能從首次通關提供的裝備中選擇。')
-            equipment_id = add_owned_item(self.db, guild_id, user_id, item_id)[0]
-            updated = self.db.execute('''UPDATE rpg_painted_maze_final_rewards
-                SET status='granted',item_id=?,equipment_instance_id=?,claimed_at=?
-                WHERE room_id=? AND guild_id=? AND user_id=? AND status='pending' ''',
-                (item_id, equipment_id, now, room_id, guild_id, user_id))
-            if not updated.rowcount:
-                raise CharacterError('通關獎勵狀態已改變，請重新整理。')
-            return equipment_id
