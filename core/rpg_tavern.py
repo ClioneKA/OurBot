@@ -134,6 +134,20 @@ class TavernStore:
                                'AND message_id IS NOT NULL AND expires_at>?', (now,)).fetchall()
         return [self.offer(row[0]) for row in rows]
 
+    def active_effect(self, guild, user, now=None):
+        now = time.time() if now is None else now
+        row = self.db.execute('''SELECT c.offer_id,c.valid_until,o.package_id
+            FROM rpg_tavern_drink_claims c
+            JOIN rpg_tavern_drinks o ON o.id=c.offer_id
+            WHERE c.guild_id=? AND c.user_id=? AND c.consumed_raid_id IS NULL
+            AND c.valid_until>? ORDER BY c.claimed_at,c.id LIMIT 1''',
+                              (guild, user, now)).fetchone()
+        if not row:
+            return None
+        offer_id, valid_until, package_id = row
+        return dict(offer_id=offer_id, valid_until=valid_until, package_id=package_id,
+                    name=DRINK_PACKAGES[package_id].name, xp_percent=DRINK_XP_PERCENT)
+
     def claim(self, offer_id, guild, user, now=None):
         now = time.time() if now is None else now
         with self.db:
@@ -368,6 +382,8 @@ class TavernView(discord.ui.View):
         self._button('關閉', 'close', 3)
 
     def embed(self, notice=None):
+        drink = self.cog.tavern.store.active_effect(self.guild_id, self.owner.id)
+        meal = self.cog.provisions.active_effect(self.guild_id, self.owner.id)
         embed = discord.Embed(title='安安大冒險｜冒險者酒館', color=0xC47A3A,
             description=('**張貼懸賞**\n發起者會自動報名。懸賞討伐保留經驗與掉落，但不發金幣、'
                          '不影響頻道動態難度，也不重排正常討伐；到點的正常討伐會等懸賞結束後發布。\n\n'
@@ -376,6 +392,20 @@ class TavernView(discord.ui.View):
                          '飲料與料理分開計算，可以各持有一份並在同場討伐生效。\n\n'
                          '**準備料理**\n選擇五份魚、作物、水草或藥草，依標籤與評分做成公開餐桌。\n\n'
                          f'持有金幣：**{self.cog.store.gold(self.guild_id, self.owner.id):,}**'))
+        drink_text = '目前沒有飲料效果。'
+        if drink:
+            drink_text = (f'**{drink["name"]}**｜討伐 XP +{drink["xp_percent"]}%\n'
+                          f'<t:{int(drink["valid_until"])}:R> 到期')
+        meal_text = '目前沒有料理效果。'
+        if meal:
+            secondary = f'／{meal["secondary_tag"]}' if meal['secondary_tag'] else ''
+            meal_text = (f'**{meal["grade"]} 級・{meal["name"]}**｜'
+                         f'{meal["primary_tag"]}{secondary}\n'
+                         f'{effect_text(meal["effect"])}\n'
+                         f'剩餘 **{meal["remaining"]}** 場｜'
+                         f'<t:{int(meal["valid_until"])}:R> 到期')
+        embed.add_field(name='目前飲料效果', value=drink_text, inline=False)
+        embed.add_field(name='目前料理效果', value=meal_text, inline=False)
         if notice:
             embed.add_field(name='酒館消息', value=notice, inline=False)
         embed.set_footer(text='請客與料理會發布至酒館專用頻道；懸賞會發布至對應的討伐頻道。')

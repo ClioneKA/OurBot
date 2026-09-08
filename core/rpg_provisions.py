@@ -253,6 +253,21 @@ class Provisions:
             WHERE guild_id=? AND user_id=? AND remaining>0 AND valid_until>? LIMIT 1''',
                                (guild, user, now)).fetchone()
 
+    def active_effect(self, guild, user, now=None):
+        now = time.time() if now is None else now
+        row = self.db.execute('''SELECT c.meal_id,c.valid_until,c.remaining,m.data
+            FROM rpg_meal_claims c JOIN rpg_meals m ON m.id=c.meal_id
+            WHERE c.guild_id=? AND c.user_id=? AND c.remaining>0 AND c.valid_until>?
+            ORDER BY c.claimed_at,c.id LIMIT 1''', (guild, user, now)).fetchone()
+        if not row:
+            return None
+        meal_id, valid_until, remaining, raw = row
+        data = json.loads(raw)
+        return dict(meal_id=meal_id, valid_until=valid_until, remaining=remaining,
+                    name=data['name'], grade=data['grade'],
+                    primary_tag=data['primary_tag'], secondary_tag=data.get('secondary_tag'),
+                    effect=data['effect'])
+
     def cook(self, guild, user, channel, ingredient_ids, now=None):
         now = time.time() if now is None else now
         with self.db:

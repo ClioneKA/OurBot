@@ -15,7 +15,7 @@ from core.rpg_raid_store import RaidStore
 from core.rpg_monsters import prepare_monster
 from core.rpg_tavern import (BOUNTY_PRICES, DRINK_CLAIM_SECONDS, DRINK_PACKAGES,
                              DRINK_XP_PERCENT, DrinkOfferView, TavernService,
-                             TavernStore)
+                             TavernStore, TavernView)
 from core.settings import RPGSettings
 
 
@@ -41,6 +41,9 @@ class TavernStoreTests(unittest.TestCase):
         self.assertEqual(self.store.gold(1, 1), 9500)
         self.tavern.publish_offer(offer['id'], 99)
         self.tavern.claim(offer['id'], 1, 2, now=101)
+        active = self.tavern.active_effect(1, 2, now=102)
+        self.assertEqual((active['name'], active['xp_percent'], active['valid_until']),
+                         (DRINK_PACKAGES['table'].name, DRINK_XP_PERCENT, 86501))
         with self.assertRaises(CharacterError):
             self.tavern.claim(offer['id'], 1, 2, now=102)
         self.assertEqual(self.tavern.prepare_for_raid('raid-a', 1, [2], now=200),
@@ -48,6 +51,7 @@ class TavernStoreTests(unittest.TestCase):
         self.assertEqual(self.tavern.prepare_for_raid('raid-a', 1, [2], now=200),
                          {2: {'xp_percent': DRINK_XP_PERCENT}})
         self.assertEqual(self.tavern.prepare_for_raid('raid-b', 1, [2], now=201), {})
+        self.assertIsNone(self.tavern.active_effect(1, 2, now=201))
 
     def test_consumed_guest_can_claim_same_open_round_again(self):
         offer = self.tavern.create_offer(1, 1, 9, 'table', now=100)
@@ -156,6 +160,7 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
             self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,10000)')
         with patch.dict('os.environ', {'RPG_TAVERN_CHANNEL_IDS': '88'}):
             self.service = TavernService(self.cog)
+        self.cog.tavern = self.service
 
     async def asyncTearDown(self):
         self.service.close()
@@ -192,6 +197,26 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meal['channel_id'], 88)
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
+
+    async def test_tavern_panel_shows_active_drink_and_meal(self):
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',3)")
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'farming:potato',2)")
+        _, meal = await self.service.serve_meal(
+            self.interaction,
+            ['fishing:pond:common'] * 3 + ['farming:potato'] * 2)
+        _, offer = await self.service.buy_round(self.interaction, 'table')
+        self.service.store.claim(offer['id'], 1, 1)
+        view = TavernView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+
+        fields = {field.name: field.value for field in view.embed().fields}
+        self.assertIn('討伐 XP +5%', fields['目前飲料效果'])
+        self.assertIn(meal['data']['name'], fields['目前料理效果'])
+        self.assertIn('剩餘', fields['目前料理效果'])
+        self.assertIn('到期', fields['目前料理效果'])
 
 
 class TavernBountyTests(unittest.IsolatedAsyncioTestCase):

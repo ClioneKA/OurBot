@@ -94,6 +94,10 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(self.provisions.state(1, 1)['xp'], data['cooking_xp'])
         self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
         self.assertEqual(self.provisions.claimants(meal['id']), [1])
+        active = self.provisions.active_effect(1, 1, now=101)
+        self.assertEqual((active['name'], active['remaining'], active['valid_until']),
+                         (data['name'], data['duration'], 86500))
+        self.assertIsNone(self.provisions.active_effect(1, 1, now=86500))
 
     def test_meal_claims_are_idempotent_and_temperance_preserves_charge(self):
         ingredients = ['fishing:pond:rare', 'fishing:lake:rare',
@@ -120,6 +124,7 @@ class ProvisionTests(unittest.TestCase):
             'SELECT remaining FROM rpg_meal_claims WHERE meal_id=? AND user_id=2',
             (meal['id'],)).fetchone()[0]
         self.assertEqual(remaining, 1)
+        self.assertEqual(self.provisions.active_effect(1, 2, now=103)['remaining'], 1)
 
     def test_failed_publish_refunds_ingredients_and_xp(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
