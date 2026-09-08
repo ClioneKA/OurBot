@@ -101,6 +101,8 @@ class Item:
     socket_base: str = ''
     paint_color: str = ''
     embroidery_slots: int = 0
+    set_id: str = ''
+    first_skill_cooldown_reduction: int = 0
 
 
 @dataclass(frozen=True)
@@ -256,6 +258,67 @@ ITEMS['twin_beast:charm'] = Item(
 ITEMS['whale:charm'] = Item(
     '吞城鯨飾品', '飾品', '', 2, (0, 0, 0, 0, 0), required_level=40,
     defense_conversion=True, embroidery_slots=1)
+
+
+SET_BONUSES = {
+    'molten_vein': ('熔脈', '武器最低穩定度提高 15 個百分點'),
+    'furnace_heart': ('爐心', '本場最大 HP +5%'),
+    'spore_shadow': ('孢影', '命中值 +5、暴擊率 +3 個百分點'),
+    'mist_prayer': ('霧祈', '攻擊與治療量各 +4%'),
+    'starforged': ('星鑄', '武器最低穩定度提高 25 個百分點'),
+    'reverse_tide': ('逆潮', '本場最大 HP +7%'),
+    'star_chaser': ('逐星', '命中值 +8、暴擊率 +5 個百分點'),
+    'tide_rite': ('潮祀', '攻擊與治療量各 +6%'),
+}
+
+
+for key, item in {
+    'forge:infantry:weapon': Item('熔脈重斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+                                  (96, 119, 20, 0), STABILITY['裝甲步兵'], required_level=50,
+                                  speed=11, accuracy=60, set_id='molten_vein'),
+    'forge:infantry:suit': Item('熔脈戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+                                (383, 20, 81, 0), required_level=50, set_id='molten_vein'),
+    'forge:knight:weapon': Item('爐心劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
+                                (178, 95, 41, 0), STABILITY['騎士'], required_level=50,
+                                speed=11, accuracy=60, set_id='furnace_heart'),
+    'forge:knight:suit': Item('爐心重鎧', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
+                              (428, 0, 98, 0), required_level=50, set_id='furnace_heart'),
+    'fungus:archer:weapon': Item('孢影長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
+                                 (0, 90, 0, 0), STABILITY['弓兵'], required_level=50,
+                                 speed=11, accuracy=60, set_id='spore_shadow'),
+    'fungus:archer:suit': Item('孢影獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
+                               (351, 26, 63, 0), required_level=50, set_id='spore_shadow'),
+    'fungus:monk:weapon': Item('霧祈權杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
+                               (0, 95, 0, 99), STABILITY['僧侶'], required_level=50,
+                               speed=11, accuracy=60, set_id='mist_prayer'),
+    'fungus:monk:suit': Item('霧祈僧袍', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
+                             (351, 0, 63, 78), required_level=50, set_id='mist_prayer'),
+    'star:infantry:weapon': Item('星鑄戰斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+                                 (121, 151, 25, 0), STABILITY['裝甲步兵'], required_level=60,
+                                 speed=12, accuracy=60, set_id='starforged'),
+    'star:infantry:suit': Item('星鑄戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
+                               (484, 26, 101, 0), required_level=60, set_id='starforged'),
+    'star:archer:weapon': Item('逐星長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
+                               (0, 114, 0, 0), STABILITY['弓兵'], required_level=60,
+                               speed=12, accuracy=60, set_id='star_chaser'),
+    'star:archer:suit': Item('逐星獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
+                             (437, 33, 76, 0), required_level=60, set_id='star_chaser'),
+    'tide:knight:weapon': Item('逆潮劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
+                               (227, 120, 52, 0), STABILITY['騎士'], required_level=60,
+                               speed=12, accuracy=60, set_id='reverse_tide'),
+    'tide:knight:suit': Item('逆潮重鎧', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
+                             (545, 0, 125, 0), required_level=60, set_id='reverse_tide'),
+    'tide:monk:weapon': Item('潮祀權杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
+                             (0, 120, 0, 126), STABILITY['僧侶'], required_level=60,
+                             speed=12, accuracy=60, set_id='tide_rite'),
+    'tide:monk:suit': Item('潮祀僧袍', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
+                           (437, 0, 76, 101), required_level=60, set_id='tide_rite'),
+}.items():
+    ITEMS[key] = item
+
+ITEMS['cycle:emblem'] = Item(
+    '循環徽記', '飾品', '', 2, (3, 3, 3, 3, 3), required_level=60,
+    embroidery_slots=1, first_skill_cooldown_reduction=1)
 
 for key, name, description in (
     ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
@@ -435,6 +498,10 @@ for key, item in list(ITEMS.items()):
         ITEMS[key] = replace(item, value=1200)
     elif key.startswith(('twin_beast:', 'whale:')):
         ITEMS[key] = replace(item, value=1000)
+    elif key.startswith(('forge:', 'fungus:')):
+        ITEMS[key] = replace(item, value=1250)
+    elif key.startswith(('star:', 'tide:', 'cycle:')):
+        ITEMS[key] = replace(item, value=1500)
     elif key.startswith(('golem:', 'tree:', 'goblin:', 'fox:', 'bat:', 'clock:', 'puppet:', 'plague:')):
         ITEMS[key] = replace(item, value=750)
 
@@ -522,6 +589,12 @@ def item_text(item):
         parts.append('受到直接攻擊時，將最近一次由防禦擋下的傷害轉為下一次攻擊的額外攻擊力')
     if item.embroidery_slots:
         parts.append(f'刺繡格 {item.embroidery_slots} 格')
+    if item.set_id:
+        set_name, set_effect = SET_BONUSES[item.set_id]
+        parts.append(f'{set_name}套裝（2 件）：{set_effect}')
+    if item.first_skill_cooldown_reduction:
+        parts.append('每場第一次成功施放基礎冷卻至少 2 回合的主動技能時，'
+                     f'該次冷卻 -{item.first_skill_cooldown_reduction}（最低 1 回合）')
     if item.description:
         parts.append(item.description)
     return '、'.join(parts) or '無加成'
@@ -889,15 +962,41 @@ class Characters:
         for name, value in combat_bonus.items():
             combat[name] += value
         weapon = resolved.get('武器')
+        suit = resolved.get('套裝')
+        active_set = weapon.set_id if weapon and suit and weapon.set_id == suit.set_id else ''
+        set_bonus_text = ''
+        if active_set:
+            set_name, set_effect = SET_BONUSES[active_set]
+            set_bonus_text = f'{set_name}（2/2）：{set_effect}'
+            if active_set == 'furnace_heart':
+                combat['HP'] = combat['HP'] * 105 // 100
+            elif active_set == 'reverse_tide':
+                combat['HP'] = combat['HP'] * 107 // 100
+            elif active_set == 'spore_shadow':
+                combat['命中率'] += 5
+                combat['暴擊率'] = min(100, combat['暴擊率'] + 3)
+            elif active_set == 'star_chaser':
+                combat['命中率'] += 8
+                combat['暴擊率'] = min(100, combat['暴擊率'] + 5)
+            elif active_set == 'mist_prayer':
+                combat['攻擊'] = combat['攻擊'] * 104 // 100
+                combat['治療量'] = combat['治療量'] * 104 // 100
+            elif active_set == 'tide_rite':
+                combat['攻擊'] = combat['攻擊'] * 106 // 100
+                combat['治療量'] = combat['治療量'] * 106 // 100
         combat['閃避率'] += sum(item.evasion for item in resolved.values())
         combat['命中率'] += sum(item.accuracy for item in resolved.values())
         speed = max(1, min(100, BASE_SPEED.get(job, 50) + sum(item.speed for item in resolved.values())))
         combat['速度'] = speed
+        stability = weapon.stability if weapon else (100, 100)
+        stability_bonus = {'molten_vein': 15, 'starforged': 25}.get(active_set, 0)
+        if stability_bonus:
+            stability = (min(stability[1], stability[0] + stability_bonus), stability[1])
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,
                     equipped_instances=equipped_instances,
-                    combat_bonus=combat_bonus, stability=weapon.stability if weapon else (100, 100), speed=speed,
+                    combat_bonus=combat_bonus, stability=stability, speed=speed,
                     lifesteal=weapon.lifesteal if weapon else 0,
                     damage_guard_chance=min(100, sum(item.damage_guard_chance for item in resolved.values())),
                     vulnerable_chance=weapon.vulnerable_chance if weapon else 0,
@@ -906,6 +1005,9 @@ class Characters:
                     alternating_damage_percent=max(
                         (item.alternating_damage_percent for item in resolved.values()), default=0),
                     defense_conversion=any(item.defense_conversion for item in resolved.values()),
+                    first_skill_cooldown_reduction=max(
+                        (item.first_skill_cooldown_reduction for item in resolved.values()), default=0),
+                    active_set=active_set, set_bonus_text=set_bonus_text,
                     critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job])
 
     def inventory_counts(self, guild_id, user_id):

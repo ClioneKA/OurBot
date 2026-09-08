@@ -3,16 +3,16 @@ import random
 from decimal import Decimal
 
 
-BALANCE_VERSION = 6
+BALANCE_VERSION = 7
 # Calibrated encounter tiers are content levels. Higher-level players are
 # intentionally stronger when returning to these lower-tier encounters.
-REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40}
+REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60}
 # Base victory XP is tied to encounter tier instead of the channel that hosts
 # it. Quality and channel difficulty are applied after this value is selected.
-TIER_VICTORY_XP = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750}
+TIER_VICTORY_XP = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750, 5: 900, 6: 1050}
 # HP, attack, defense. Tiers are internal and never part of display names.
 TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
-         4: (2.2, 1.25, 1.2)}
+         4: (2.2, 1.25, 1.2), 5: (1, 1, 1), 6: (1, 1, 1)}
 # tier, HP, attack, defense, speed, accuracy, evasion, critical. Speed is an
 # absolute initiative value on the same narrow scale as player speed.
 PROFILES = {
@@ -40,6 +40,12 @@ PROFILES = {
     # Special summon calibrated around Lv.45 equipment. It is always ordinary
     # quality and is excluded from both scheduled encounter pools.
     '城崎諾亞': (4, 3.803625, 0.9148125, 1.4375, 60, 95, 45, 12),
+    # Tier five and six use final multipliers directly (their TIERS entries are
+    # neutral). They target roughly 20 rounds and a 35% ordinary win rate.
+    '熔爐鎧獸': (5, 17.0, 2.9, 1.69, 42, 105, 58, 10),
+    '迷霧菌后': (5, 17.0, 2.5, 1.4, 52, 105, 58, 8),
+    '星蝕巨神': (6, 12.5, 2.0, 1.65, 48, 108, 63, 10),
+    '逆潮聖骸': (6, 9.2, 1.62, 1.55, 52, 108, 63, 10),
 }
 # probability, equivalent level bonus, victory rewards, equipment drop chance
 QUALITIES = {
@@ -71,8 +77,8 @@ def prepare_monster(monster, quality=None):
         # encounters use the normal T40 anchor.
         level_bonus=level_bonus + (5 if monster['kind'] == '城崎諾亞' else 0),
         hit=hit, dodge=dodge, crit=crit,
-        count=(3 if monster['kind'] in ('史萊姆群', '哥布林戰團', '王城傀儡師') else
-               2 if monster['kind'] == '赤雷與蒼炎' else 1)),
+        count=(3 if monster['kind'] in ('史萊姆群', '哥布林戰團', '王城傀儡師', '迷霧菌后') else
+               2 if monster['kind'] in ('赤雷與蒼炎', '星蝕巨神') else 1)),
         quality_reward=reward, quality_drop=drop)
 
 

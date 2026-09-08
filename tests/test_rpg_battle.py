@@ -1046,3 +1046,71 @@ class BattleTests(unittest.TestCase):
         battle.step()
         self.assertLess(enemy.hp, enemy.stats['HP'])
         self.assertIn('回合上限', battle.result)
+
+    def test_cycle_emblem_reduces_only_first_eligible_skill_cooldown_and_reloads(self):
+        actor = fighter(job='民兵', rules=[Rule(1, 1, True, 'always', 'lowest')])
+        actor.first_skill_cooldown_reduction = 1
+        enemy = fighter('敵人', 1, hp=10000, attack=1, rules=[])
+        battle = Battle([actor, enemy], seed=1)
+        battle.round = 1
+        battle.act(actor)
+        self.assertEqual(actor.ready[1], 3)
+        self.assertTrue(actor.first_skill_cooldown_used)
+        self.assertTrue(any('循環徽記' in line and '奮力一擊' in line for line in battle.log))
+        reloaded = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        self.assertTrue(reloaded.fighters[0].first_skill_cooldown_used)
+
+    def test_new_raid_monster_shapes_and_persisted_tags(self):
+        from core.rpg_monsters import prepare_monster
+        base = fighter(job='裝甲步兵')
+        participant = dict(id=1, name='玩家', state=dict(
+            level=60, job='裝甲步兵', combat=base.stats, speed=60,
+            equipped={'武器': 'forge:infantry:weapon'}, stability=(100, 100)), rules=[])
+        expected = {
+            '熔爐鎧獸': (['熔爐鎧獸'], [True], 5),
+            '迷霧菌后': (['迷霧菌后', '爆裂孢子', '爆裂孢子'], [True, False, False], 5),
+            '星蝕巨神': (['星蝕巨神', '蝕光星核'], [True, False], 6),
+            '逆潮聖骸': (['逆潮聖骸'], [True], 6),
+        }
+        for kind, (jobs, bosses, tier) in expected.items():
+            with self.subTest(kind=kind):
+                monster = prepare_monster({'kind': kind, 'name': kind}, '普通')
+                battle = raid_battle([participant], monster, 3)
+                enemies = battle.living(1)
+                self.assertEqual((monster['tier'], [f.job for f in enemies],
+                                  [f.is_boss for f in enemies]), (tier, jobs, bosses))
+                reloaded = load_battle(json.loads(json.dumps(dump_battle(battle))))
+                self.assertEqual([(f.job, f.is_boss, f.mechanic_priority) for f in reloaded.living(1)],
+                                 [(f.job, f.is_boss, f.mechanic_priority) for f in enemies])
+
+    def test_furnace_armor_breaks_and_cancels_charge(self):
+        attacker = fighter(job='裝甲步兵', attack=1000, rules=[])
+        attacker.stats['命中率'] = 200
+        furnace = fighter('熔爐鎧獸', 1, job='熔爐鎧獸', hp=10000, attack=1, rules=[])
+        battle = Battle([attacker, furnace], seed=1)
+        battle.round = 4
+        battle.mechanics.update(furnace_armor=3, furnace_charging=True)
+        for _ in range(3):
+            battle.hit(attacker, furnace, 1.5)
+        self.assertEqual(battle.mechanics['furnace_armor'], 0)
+        self.assertFalse(battle.mechanics['furnace_charging'])
+        self.assertTrue(furnace.has('break', battle.round))
+
+    def test_drowning_marks_are_stacked_cleanse_targets_and_tick(self):
+        cleric = fighter('僧侶', job='僧侶', rules=[
+            Rule(1, 1, True, 'ally_debuff_stacks', 'debuffed', skill_id=3,
+                 condition_value=2)])
+        ally = fighter('隊友', hp=1000, rules=[])
+        enemy = fighter('逆潮聖骸', 1, job='逆潮聖骸', hp=10000, attack=1, rules=[])
+        ally.status_stacks['drowning_mark'] = 2
+        battle = Battle([cleric, ally, enemy], seed=1)
+        battle.round = 1
+        selected = battle.select(cleric)
+        self.assertIs(selected[2], ally)
+        battle.act(cleric)
+        self.assertNotIn('drowning_mark', ally.status_stacks)
+        ally.status_stacks['drowning_mark'] = 3
+        before = ally.hp
+        with patch.object(battle, 'act'):
+            battle.step()
+        self.assertEqual(ally.hp, before - ally.stats['HP'] * 6 // 100)

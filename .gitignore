@@ -8,3 +8,4 @@ gen_sounds/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+local_designs/

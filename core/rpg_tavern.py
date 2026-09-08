@@ -28,7 +28,7 @@ DRINK_PACKAGES = {
 DRINK_XP_PERCENT = 5
 DRINK_CLAIM_SECONDS = 2 * 60 * 60
 DRINK_EFFECT_SECONDS = 24 * 60 * 60
-BOUNTY_PRICES = {'regular': 2_000, 'mid': 5_000}
+BOUNTY_PRICES = {'regular': 2_000, 'mid': 5_000, 'high': 8_000}
 
 
 class TavernStore:
@@ -381,6 +381,7 @@ class TavernView(discord.ui.View):
         self.clear_items()
         self._button('一般懸賞（2,000）', 'bounty:regular', 0, discord.ButtonStyle.danger)
         self._button('中階懸賞（5,000）', 'bounty:mid', 0, discord.ButtonStyle.danger)
+        self._button('高階懸賞（8,000）', 'bounty:high', 0, discord.ButtonStyle.danger)
         self._button('準備料理', 'cooking', 0, discord.ButtonStyle.success)
         for package_id, package in DRINK_PACKAGES.items():
             self._button(f'{package.name}（{package.price:,}／{package.capacity} 杯）',

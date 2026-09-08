@@ -1,4 +1,4 @@
-"""Opt-in, permissionless notification roles for regular and mid-tier raids."""
+"""Opt-in, permissionless notification roles for each raid channel tier."""
 import asyncio
 import discord
 
@@ -12,10 +12,12 @@ class RaidNotifications:
         with self.db:
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_notification_roles (guild_id INTEGER PRIMARY KEY, role_id INTEGER NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_mid_notification_roles (guild_id INTEGER PRIMARY KEY, role_id INTEGER NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS rpg_high_notification_roles (guild_id INTEGER PRIMARY KEY, role_id INTEGER NOT NULL)')
 
     async def ensure(self, guild, kind='regular', create=True):
-        table = 'rpg_mid_notification_roles' if kind == 'mid' else 'rpg_notification_roles'
-        label = '中階討伐' if kind == 'mid' else '討伐'
+        table = {'regular': 'rpg_notification_roles', 'mid': 'rpg_mid_notification_roles',
+                 'high': 'rpg_high_notification_roles'}[kind]
+        label = {'regular': '討伐', 'mid': '中階討伐', 'high': '高階討伐'}[kind]
         async with self.locks.setdefault((guild.id, kind), asyncio.Lock()):
             row = self.db.execute(f'SELECT role_id FROM {table} WHERE guild_id=?', (guild.id,)).fetchone()
             role = guild.get_role(row[0]) if row else None
@@ -39,7 +41,7 @@ class RaidNotifications:
 
     async def subscribe(self, guild, member, enabled=True, kind='regular'):
         role = await self.ensure(guild, kind, create=enabled)
-        label = '中階討伐' if kind == 'mid' else '討伐'
+        label = {'regular': '討伐', 'mid': '中階討伐', 'high': '高階討伐'}[kind]
         if role is None:
             return '你尚未訂閱討伐通知。'
         if not guild.me.guild_permissions.manage_roles or not role.is_assignable():

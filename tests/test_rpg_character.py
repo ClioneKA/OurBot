@@ -479,6 +479,37 @@ class CharacterTests(unittest.TestCase):
             state = self.characters.change_job(1, 1, job)
             self.assertEqual(state['critical_damage_percent'], expected)
 
+    def test_tier_five_and_six_sets_and_cycle_emblem(self):
+        from core.rpg_character import item_text
+        self.level(50)
+        self.characters.change_job(1, 1, '裝甲步兵')
+        for key in ('forge:infantry:weapon', 'forge:infantry:suit',
+                    'star:infantry:weapon', 'star:infantry:suit', 'cycle:emblem'):
+            self.characters.grant_item(1, 1, key)
+        self.characters.equip(1, 1, 'forge:infantry:weapon')
+        single = self.characters.snapshot(1, 1)
+        self.assertEqual((single['active_set'], single['stability']), ('', (60, 140)))
+        self.characters.equip(1, 1, 'forge:infantry:suit')
+        molten = self.characters.snapshot(1, 1)
+        self.assertEqual((molten['active_set'], molten['stability']), ('molten_vein', (75, 140)))
+        self.assertIn('熔脈', molten['set_bonus_text'])
+        with self.assertRaises(CharacterError):
+            self.characters.equip(1, 1, 'star:infantry:weapon')
+        with self.assertRaises(CharacterError):
+            self.characters.equip(1, 1, 'cycle:emblem')
+
+        self.level(60)
+        self.characters.equip(1, 1, 'star:infantry:weapon')
+        mixed = self.characters.snapshot(1, 1)
+        self.assertEqual((mixed['active_set'], mixed['stability']), ('', (60, 140)))
+        self.characters.equip(1, 1, 'star:infantry:suit')
+        self.characters.equip(1, 1, 'cycle:emblem')
+        star = self.characters.snapshot(1, 1)
+        self.assertEqual((star['active_set'], star['stability']), ('starforged', (85, 140)))
+        self.assertEqual(star['first_skill_cooldown_reduction'], 1)
+        self.assertIn('2 件', item_text(ITEMS['star:infantry:weapon']))
+        self.assertIn('冷卻 -1', item_text(ITEMS['cycle:emblem']))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

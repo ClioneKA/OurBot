@@ -5,7 +5,7 @@ from core.rpg_menu import add_back, navigate
 
 import discord
 
-from core.rpg_character import CharacterError, item_level, item_text
+from core.rpg_character import CharacterError, ITEMS, SET_BONUSES, item_level, item_text
 
 
 PAGE_SIZE = 25
@@ -86,10 +86,20 @@ class EquipmentView(discord.ui.View):
         return state
 
     def embed(self, notice=None):
+        state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
         embed = self.cog.character_embed(self.guild_id, self.owner)
         embed.title = '裝備與能力值｜' + embed.title
         selected = self.available_items.get(self.item_id)
         embed.add_field(name='目前選擇', value=f'{self.slot}：{selected.name if selected else "請選擇物品"}', inline=False)
+        if state.get('active_set'):
+            embed.add_field(name='套裝效果：2/2（已啟動）', value=state['set_bonus_text'], inline=False)
+        else:
+            worn_sets = [ITEMS[key].set_id for key in state['equipped'].values()
+                         if key in ITEMS and ITEMS[key].set_id]
+            if worn_sets:
+                set_id = worn_sets[0]
+                set_name, set_effect = SET_BONUSES[set_id]
+                embed.add_field(name='套裝效果：1/2', value=f'{set_name}：{set_effect}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
         embed.set_footer(text='先選欄位與物品；裝備染色與飾品刺繡請前往遠野漢娜的裁縫所。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')

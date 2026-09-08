@@ -42,7 +42,7 @@ class MonsterTests(unittest.TestCase):
         twins = monster('赤雷與蒼炎')
         twin_battle = raid_battle([participant()], twins, 17)
         enemies = twin_battle.living(1)
-        self.assertEqual(BALANCE_VERSION, 6)
+        self.assertEqual(BALANCE_VERSION, 7)
         self.assertEqual((PROFILES['赤雷與蒼炎'][2], PROFILES['吞城鯨'][2]), (1.048, 1.537))
         self.assertEqual((twins['tier'], twins['profile']['level_bonus']), (4, 0))
         self.assertEqual([fighter.job for fighter in enemies], ['赤雷', '蒼炎'])
@@ -313,10 +313,12 @@ class MonsterTests(unittest.TestCase):
             store = RPGStore(Path(directory) / 'rpg.db')
             try:
                 repo = RaidStore(store)
-                expected = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750}
+                expected = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750,
+                            5: 900, 6: 1050}
                 self.assertEqual(TIER_VICTORY_XP, expected)
                 kinds = {0: '史萊姆群', 1: '巨獸', 2: '鐵殼魔像',
-                         3: '深淵鐘龍', 4: '吞城鯨'}
+                         3: '深淵鐘龍', 4: '吞城鯨', 5: '熔爐鎧獸',
+                         6: '星蝕巨神'}
                 for channel, (tier, kind) in enumerate(kinds.items(), 20):
                     raid = repo.create(1, channel, monster(kind, quality='普通'), 0,
                                        asdict(RaidSettings()))

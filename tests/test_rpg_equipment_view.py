@@ -82,3 +82,20 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('paint', actions())
         self.assertNotIn('鑲嵌／改色', button_labels())
         self.assertIn('遠野漢娜', self.view.embed().footer.text)
+
+    async def test_set_progress_and_active_bonus_are_visible(self):
+        self.store.award_voice([(1, 1, level_floor(50))])
+        self.characters.change_job(1, 1, '裝甲步兵')
+        self.characters.grant_item(1, 1, 'forge:infantry:weapon')
+        self.characters.grant_item(1, 1, 'forge:infantry:suit')
+
+        self.characters.equip(1, 1, 'forge:infantry:weapon')
+        self.view.rebuild()
+        partial = self.view.embed()
+        self.assertIn('套裝效果：1/2', [field.name for field in partial.fields])
+
+        self.characters.equip(1, 1, 'forge:infantry:suit')
+        self.view.rebuild()
+        active = self.view.embed()
+        self.assertIn('套裝效果：2/2（已啟動）', [field.name for field in active.fields])
+        self.assertTrue(any('最低穩定度提高 15' in field.value for field in active.fields))

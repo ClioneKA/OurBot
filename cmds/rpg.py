@@ -379,6 +379,7 @@ class RPG(commands.Cog):
                                  app_commands.Choice(name='取消', value='unsubscribe')],
                          kind=[app_commands.Choice(name='一般討伐', value='regular'),
                                app_commands.Choice(name='中階討伐', value='mid'),
+                               app_commands.Choice(name='高階討伐', value='high'),
                                app_commands.Choice(name='全部', value='all')])
     async def raid_notifications(self, interaction: discord.Interaction, action: str = 'subscribe', kind: str = 'regular'):
         if not self.store.has_player(interaction.guild_id, interaction.user.id):
@@ -387,14 +388,14 @@ class RPG(commands.Cog):
         if action not in ('subscribe', 'unsubscribe'):
             await interaction.response.send_message('請選擇領取或取消。', ephemeral=True)
             return
-        if kind not in ('regular', 'mid', 'all'):
-            await interaction.response.send_message('請選擇一般討伐、中階討伐或全部。', ephemeral=True)
+        if kind not in ('regular', 'mid', 'high', 'all'):
+            await interaction.response.send_message('請選擇一般討伐、中階討伐、高階討伐或全部。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:
             messages = [await self.raids.notifications.subscribe(interaction.guild, interaction.user,
                         action == 'subscribe', selected) for selected in
-                        (('regular', 'mid') if kind == 'all' else (kind,))]
+                        (('regular', 'mid', 'high') if kind == 'all' else (kind,))]
             message = '\n'.join(messages)
         except CharacterError as exc:
             message = str(exc)
@@ -415,7 +416,8 @@ class RPG(commands.Cog):
         victory_gold='勝利每人最終金幣，覆蓋類型預設獎勵', drop_percent='專屬物品掉落百分比，0–100；史萊姆群固定不掉落')
     @app_commands.choices(kind=[app_commands.Choice(name=k, value=k) for k in
         ('巨獸', '毒蛛', '史萊姆群', '鐵殼魔像', '荊棘妖樹', '哥布林戰團', '月影妖狐', '血翼蝠王',
-         '深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨')])
+         '深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨',
+         '熔爐鎧獸', '迷霧菌后', '星蝕巨神', '逆潮聖骸')])
     async def spawn_raid(self, interaction: discord.Interaction, kind: str = None,
                          name: app_commands.Range[str, 1, 20] = None,
                          strength: app_commands.Range[float, 0.1, 10.0] = 1.0,

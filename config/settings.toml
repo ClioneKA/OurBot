@@ -105,6 +105,19 @@ victory_xp = 600
 victory_gold = 200
 drop_chance = 0.125
 
+[rpg.high_raid]
+enabled = true
+ai_monsters = true
+min_interval_minutes = 90
+max_interval_minutes = 180
+half_interval_periods = "12:00-14:00,18:00-23:00"
+schedule_timezone_offset_hours = 8
+max_participants = 20
+# 舊怪物快照／未帶階層資料時的相容值；五、六階 XP 由怪物階層表決定。
+victory_xp = 900
+victory_gold = 250
+drop_chance = 0.125
+
 [rpg.total_raid]
 enabled = true
 max_participants = 6

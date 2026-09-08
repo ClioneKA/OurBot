@@ -359,6 +359,8 @@ class Fighter:
     damage_taken_percent: int = 0
     healing_received_percent: int = 0
     cooldown_reduction: int = 0
+    first_skill_cooldown_reduction: int = 0
+    first_skill_cooldown_used: bool = False
     linked_user_id: int | None = None
     passive_id: int | None = None
     passive_state: dict = field(default_factory=dict)
@@ -766,11 +768,15 @@ class Battle:
             removed += target.effects.pop(effect, None) is not None
             target.effect_sources.pop(effect, None)
         removed += target.status_stacks.pop('corruption', None) is not None
+        removed += target.status_stacks.pop('drowning_mark', None) is not None
         removed += target.status_stacks.pop('poison_arrows', None) is not None
         return removed
 
     def apply_debuff(self, target, effect, until, source=None):
         """Apply a cleansable debuff unless Guard currently grants immunity."""
+        if target.job == '逆潮法陣' and effect in ('poison', 'stun'):
+            self.log.append(f'{target.name} 免疫{"中毒" if effect == "poison" else "暈眩"}。')
+            return False
         if target.has('immunity', self.round):
             self.log.append(f'{target.name} 受到【護衛】保護，免疫負面狀態。')
             self._gain_watch(target)
@@ -820,6 +826,22 @@ class Battle:
         return target.hp > 0
 
     def check_end(self):
+        for defeated in [f for f in self.fighters if f.team == 1 and f.hp <= 0
+                         and not f.status_stacks.get('mechanic_defeat_processed')]:
+            if defeated.job == '蝕光星核':
+                defeated.status_stacks['mechanic_defeat_processed'] = 1
+                giant = next((f for f in self.living(1) if f.job == '星蝕巨神'), None)
+                self.mechanics['star_core_down_round'] = self.round
+                self.mechanics['star_charging'] = False
+                if giant is not None:
+                    giant.effects['break'] = self.round + 1
+                    self.log.append(f'{defeated.name} 崩解，{giant.name} 的星蝕墜落取消並破甲至第 {self.round + 1} 回合結束。')
+            elif defeated.job == '逆潮法陣':
+                defeated.status_stacks['mechanic_defeat_processed'] = 1
+                saint = next((f for f in self.living(1) if f.job == '逆潮聖骸'), None)
+                if saint is not None:
+                    saint.effects['break'] = self.round + 1
+                    self.log.append(f'{defeated.name} 被擊破，{saint.name} 破甲至第 {self.round + 1} 回合結束。')
         master = next((f for f in self.fighters if f.team == 1 and f.job == '王城傀儡師'), None)
         if master is not None and master.hp <= 0:
             for puppet in (f for f in self.fighters if f.team == 1 and f.job in ('劍傀儡', '咒傀儡')):
@@ -849,7 +871,8 @@ class Battle:
     def target(self, actor, candidates, rule, offensive=False):
         if rule.target == 'debuffed':
             candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
-                          or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows')]
+                          or f.status_stacks.get('corruption', 0) or f.status_stacks.get('drowning_mark', 0)
+                          or f.status_stacks.get('poison_arrows')]
         if offensive:
             taunters = [f for f in candidates if f.has('taunt', self.round)]
             candidates = taunters or candidates
@@ -883,12 +906,15 @@ class Battle:
                 (fighter.job == '深淵鐘龍' and self.mechanics.get('clock_charging')) or
                 (fighter.job == '城崎諾亞' and self.mechanics.get('noah_draft_charging')) or
                 (fighter.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')) or
-                (fighter.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging')))
+                (fighter.job == '吞城鯨' and self.mechanics.get('whale_swallow_charging')) or
+                (fighter.job == '熔爐鎧獸' and self.mechanics.get('furnace_charging')) or
+                (fighter.job == '星蝕巨神' and self.mechanics.get('star_charging')))
 
     def has_breakable_guard(self, fighter):
         return (fighter.has('breakable_guard', self.round) or
                 (fighter.job == '深淵鐘龍' and self.mechanics.get('clock_armor', 0) > 0) or
-                (fighter.job == '吞城鯨' and self.mechanics.get('whale_shield', 0) > 0))
+                (fighter.job == '吞城鯨' and self.mechanics.get('whale_shield', 0) > 0) or
+                (fighter.job == '熔爐鎧獸' and self.mechanics.get('furnace_armor', 0) > 0))
 
     def mechanic_priority(self, fighter):
         return max(fighter.mechanic_priority,
@@ -897,7 +923,8 @@ class Battle:
     @staticmethod
     def cleansable_stack_count(fighter):
         arrows = fighter.status_stacks.get('poison_arrows', ())
-        return max(0, int(fighter.status_stacks.get('corruption', 0))) + len(arrows)
+        return (max(0, int(fighter.status_stacks.get('corruption', 0)))
+                + max(0, int(fighter.status_stacks.get('drowning_mark', 0))) + len(arrows))
 
     def select(self, actor):
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
@@ -947,7 +974,8 @@ class Battle:
                 continue
             if rule.condition == 'ally_debuff' and not any(
                     any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
-                    or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows') for f in allies):
+                    or f.status_stacks.get('corruption', 0) or f.status_stacks.get('drowning_mark', 0)
+                    or f.status_stacks.get('poison_arrows') for f in allies):
                 continue
             if rule.condition == 'ally_debuff_stacks' and not any(
                     self.cleansable_stack_count(f) >= threshold for f in allies):
@@ -963,7 +991,8 @@ class Battle:
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
                 candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
-                              or f.status_stacks.get('corruption', 0) or f.status_stacks.get('poison_arrows')]
+                              or f.status_stacks.get('corruption', 0) or f.status_stacks.get('drowning_mark', 0)
+                              or f.status_stacks.get('poison_arrows')]
             elif skill.effect == 'bless':
                 candidates = [f for f in candidates if not f.has(skill.effect, self.round)]
             if skill.effect == 'group_heal':
@@ -1048,6 +1077,11 @@ class Battle:
                 value = max(1, value // 2)
             if target.job == '吞城鯨' and self.mechanics.get('whale_shield', 0) > 0:
                 value = max(1, value * 65 // 100)
+            if target.job == '熔爐鎧獸' and self.mechanics.get('furnace_armor', 0) > 0:
+                value = max(1, value * (100 - self.mechanics['furnace_armor'] * 8) // 100)
+            if (target.job == '星蝕巨神'
+                    and any(f.job == '蝕光星核' for f in self.living(target.team))):
+                value = max(1, value * 80 // 100)
             if guarded:
                 value = max(1, value // 2)
             value = max(1, int(value * self.damage_taken_multiplier(target)))
@@ -1132,6 +1166,30 @@ class Battle:
             if layers == 0 and target.hp > 0:
                 target.effects['break'] = self.round + 2
                 self.log.append(f'{target.name} 的【城塞鯨脂】完全崩解，遭到破甲至第 {self.round + 2} 回合結束。')
+        if (actor.team == 0 and target.job == '熔爐鎧獸'
+                and self.mechanics.get('furnace_armor', 0) > 0
+                and attack_scope == 'single' and (power >= 1.5 or critical)):
+            self.mechanics['furnace_armor'] -= 1
+            layers = self.mechanics['furnace_armor']
+            self.log.append(f'{target.name} 的爐甲減少 1 層，剩餘 {layers} 層。')
+            if layers == 0 and target.hp > 0:
+                target.effects['break'] = self.round + 1
+                self.mechanics['furnace_charging'] = False
+                self.log.append(f'{target.name} 的爐甲完全崩解，爐心震爆取消並破甲至第 {self.round + 1} 回合結束。')
+        if actor.team == 0 and target.hp == 0 and target.job == '蝕光星核':
+            target.status_stacks['mechanic_defeat_processed'] = 1
+            giant = next((f for f in self.living(1) if f.job == '星蝕巨神'), None)
+            self.mechanics['star_core_down_round'] = self.round
+            self.mechanics['star_charging'] = False
+            if giant is not None:
+                giant.effects['break'] = self.round + 1
+                self.log.append(f'{target.name} 崩解，{giant.name} 的星蝕墜落取消並破甲至第 {self.round + 1} 回合結束。')
+        if actor.team == 0 and target.hp == 0 and target.job == '逆潮法陣':
+            target.status_stacks['mechanic_defeat_processed'] = 1
+            saint = next((f for f in self.living(1) if f.job == '逆潮聖骸'), None)
+            if saint is not None:
+                saint.effects['break'] = self.round + 1
+                self.log.append(f'{target.name} 被擊破，{saint.name} 破甲至第 {self.round + 1} 回合結束。')
         if (actor.team == 0 and target.hp > 0 and actor.vulnerable_chance
                 and self.rng.random() * 100 < actor.vulnerable_chance):
             target.effects['vulnerable'] = self.round + 1
@@ -1343,6 +1401,164 @@ class Battle:
         if target is not None:
             self.hit(actor, target)
 
+    def furnace_act(self, actor):
+        if self.mechanics.get('furnace_charging'):
+            self.mechanics['furnace_charging'] = False
+            layers = self.mechanics.get('furnace_armor', 0)
+            if not layers:
+                actor.effects['break'] = self.round + 1
+                self.log.append(f'{actor.name} 的爐甲已經崩解，【爐心震爆】取消。')
+                return
+            power = 1.8 + layers * .2
+            self.record_skill(actor, '爐心震爆')
+            self.log.append(f'{actor.name} 釋放【爐心震爆】：剩餘 {layers} 層爐甲，全體 {power * 100:g}% 傷害！')
+            for enemy in self.living(0):
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, power, attack_scope='group')
+            return
+        if self.round % 4 == 0:
+            self.mechanics.update(furnace_armor=3, furnace_charging=True)
+            self.record_skill(actor, '重燃爐甲')
+            self.log.append(f'{actor.name} 使用【重燃爐甲】：爐甲恢復至 3 層，下一回合將釋放爐心震爆！')
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None:
+            self.hit(actor, target)
+
+    def fungus_act(self, actor):
+        if actor.job == '爆裂孢子':
+            started = actor.status_stacks.get('spore_swelling_round')
+            if started is not None and started < self.round and actor.has('spore_swelling', self.round):
+                self.record_skill(actor, '孢子爆裂')
+                self.log.append(f'{actor.name} 釋放【孢子爆裂】：對全隊造成 70% 傷害並附加中毒！')
+                for enemy in self.living(0):
+                    if enemy.hp > 0 and self.hit(actor, enemy, .7, attack_scope='group') and enemy.hp > 0:
+                        self.apply_debuff(enemy, 'poison', self.round + 2, actor)
+                actor.hp = 0
+                actor.combat_stats['deaths'] += 1
+                return
+            if self.round % 3 == 0:
+                actor.status_stacks['spore_swelling_round'] = self.round
+                actor.effects.update(spore_swelling=self.round + 1,
+                                     charging=self.round + 1, mechanic_target=self.round + 1)
+                self.record_skill(actor, '膨脹')
+                self.log.append(f'{actor.name} 開始【膨脹】，下一回合將爆裂！')
+                return
+            target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+            self.record_skill(actor, '孢子撞擊')
+            self.log.append(f'{actor.name} 使用【孢子撞擊】')
+            if target is not None:
+                self.hit(actor, target, .45)
+            return
+        if self.round % 4 == 0:
+            self.record_skill(actor, '菌霧滋養')
+            amounts = []
+            for spore in [f for f in self.living(1) if f.job == '爆裂孢子']:
+                amounts.append(self.restore(spore, spore.stats['HP'] // 10))
+            self.log.append(f'{actor.name} 使用【菌霧滋養】，存活孢子共恢復 {sum(amounts)} HP。')
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None:
+            self.hit(actor, target)
+
+    def star_act(self, actor):
+        if actor.job == '蝕光星核':
+            self.record_skill(actor, '星核脈動')
+            self.log.append(f'{actor.name} 維持【蝕光屏障】，本回合不攻擊。')
+            return
+        core = next((f for f in self.living(1) if f.job == '蝕光星核'), None)
+        if self.mechanics.get('star_charging'):
+            self.mechanics['star_charging'] = False
+            if core is None:
+                actor.effects['break'] = self.round + 1
+                self.log.append(f'{actor.name} 失去星核，【星蝕墜落】取消。')
+                return
+            self.record_skill(actor, '星蝕墜落')
+            self.log.append(f'{actor.name} 釋放【星蝕墜落】：對全隊造成 200% 傷害！')
+            for enemy in self.living(0):
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 2.0, attack_scope='group')
+            return
+        if self.round % 4 == 3:
+            if core is None:
+                fallen = next((f for f in self.fighters if f.job == '蝕光星核'), None)
+                down_round = self.mechanics.get('star_core_down_round', -99)
+                if fallen is not None and self.round - down_round >= 3:
+                    fallen.hp = fallen.stats['HP']
+                    fallen.combat_stats['deaths'] = max(0, fallen.combat_stats['deaths'] - 1)
+                    fallen.status_stacks.pop('mechanic_defeat_processed', None)
+                    core = fallen
+                    self.log.append(f'{actor.name} 重建【蝕光星核】。')
+            if core is not None:
+                self.mechanics['star_charging'] = True
+                self.record_skill(actor, '聚引星蝕')
+                self.log.append(f'{actor.name} 使用【聚引星蝕】，下一回合將釋放星蝕墜落！')
+                return
+        if self.round % 5 == 0:
+            self.record_skill(actor, '星塵橫掃')
+            self.log.append(f'{actor.name} 使用【星塵橫掃】：對全隊造成 120% 傷害！')
+            for enemy in self.living(0):
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 1.2, attack_scope='group')
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None:
+            self.hit(actor, target)
+
+    def add_drowning_mark(self, target):
+        if target.has('immunity', self.round):
+            self.log.append(f'{target.name} 受到【護衛】保護，免疫溺印。')
+            return
+        before = target.status_stacks.get('drowning_mark', 0)
+        target.status_stacks['drowning_mark'] = min(3, before + 1)
+        self.log.append(f'{target.name} 的溺印變為 {target.status_stacks["drowning_mark"]}/3 層。')
+
+    def tide_act(self, actor):
+        if actor.job == '逆潮法陣':
+            self.record_skill(actor, '逆潮爆發')
+            self.log.append(f'{actor.name} 完成【逆潮爆發】：對全隊造成 130% 傷害！')
+            for enemy in self.living(0):
+                if enemy.hp > 0:
+                    self.hit(actor, enemy, 1.3, attack_scope='group')
+            saint = next((f for f in self.living(1) if f.job == '逆潮聖骸'), None)
+            if saint is not None:
+                amount = self.restore(saint, saint.stats['HP'] * 8 // 100)
+                self.log.append(f'{saint.name} 受到逆潮滋養，恢復 {amount} HP。')
+            actor.status_stacks['mechanic_defeat_processed'] = 1
+            actor.hp = 0
+            actor.combat_stats['deaths'] += 1
+            return
+        circle = next((f for f in self.living(1) if f.job == '逆潮法陣'), None)
+        if self.round % 3 == 0 and circle is None:
+            circle_stats = dict(actor.stats)
+            circle_stats.update(HP=max(1, actor.stats['HP'] * 12 // 100),
+                                防禦=max(1, actor.stats['防禦'] * 65 // 100), 暴擊率=0)
+            circle = Fighter(f'{actor.name}・逆潮法陣', 1, '逆潮法陣', circle_stats, 1, [],
+                             is_boss=False, mechanic_priority=1)
+            circle.effects.update(charging=self.round + 1, mechanic_target=self.round + 1)
+            self.fighters.append(circle)
+            self.record_skill(actor, '召喚逆潮法陣')
+            self.log.append(f'{actor.name} 召喚【逆潮法陣】，下一回合將爆發！')
+            return
+        if self.round % 5 == 0:
+            self.record_skill(actor, '溺潮')
+            self.log.append(f'{actor.name} 使用【溺潮】：對全隊造成 80% 傷害並附加溺印！')
+            for enemy in self.living(0):
+                if enemy.hp > 0 and self.hit(actor, enemy, .8, attack_scope='group') and enemy.hp > 0:
+                    self.add_drowning_mark(enemy)
+            return
+        target = self.target(actor, self.living(0), Rule(0, 0, True, 'always', 'lowest'), True)
+        self.record_skill(actor, '普通攻擊')
+        self.log.append(f'{actor.name} 使用普通攻擊')
+        if target is not None and self.hit(actor, target) and target.hp > 0:
+            self.add_drowning_mark(target)
+
     def noah_act(self, actor):
         """Resolve Noah's announced colour and the below-70% composition loop."""
         if actor.hp * 100 <= actor.stats['HP'] * 70 and not self.mechanics.get('noah_phase_two'):
@@ -1397,6 +1613,18 @@ class Battle:
                 self.log.append(f'{actor.name} 正在替【未完成稿】收尾；下一次行動將對全隊造成 180% 傷害！')
 
     def act(self, actor):
+        if actor.team == 1 and actor.job == '熔爐鎧獸':
+            self.furnace_act(actor)
+            return
+        if actor.team == 1 and actor.job in ('迷霧菌后', '爆裂孢子'):
+            self.fungus_act(actor)
+            return
+        if actor.team == 1 and actor.job in ('星蝕巨神', '蝕光星核'):
+            self.star_act(actor)
+            return
+        if actor.team == 1 and actor.job in ('逆潮聖骸', '逆潮法陣'):
+            self.tide_act(actor)
+            return
         if actor.team == 1 and actor.job in ('赤雷', '蒼炎'):
             self.twin_act(actor)
             return
@@ -1538,6 +1766,12 @@ class Battle:
         """
         self.record_skill(actor, skill.name)
         cooldown = max(1, skill.cooldown - actor.cooldown_reduction)
+        if (actor.first_skill_cooldown_reduction and not actor.first_skill_cooldown_used
+                and skill.cooldown >= 2):
+            cooldown = max(1, cooldown - actor.first_skill_cooldown_reduction)
+            actor.first_skill_cooldown_used = True
+            self.log.append(f'{actor.name} 的【循環徽記】使【{skill.name}】冷卻減少 '
+                            f'{actor.first_skill_cooldown_reduction} 回合。')
         actor.ready[rule.slot] = self.round + cooldown + 1
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
@@ -1604,7 +1838,9 @@ class Battle:
                 if self.apply_debuff(target, 'weak', self.round + 1, actor):
                     self.log.append(f'{target.name} 陷入虛弱，攻擊降低 20%。')
             if hit and effect == 'poison_arrow' and target.hp > 0:
-                if target.has('immunity', self.round):
+                if target.job == '逆潮法陣':
+                    self.log.append(f'{target.name} 免疫毒箭侵蝕。')
+                elif target.has('immunity', self.round):
                     self.log.append(f'{target.name} 受到【護衛】保護，免疫毒箭侵蝕。')
                 else:
                     attack = actor.stats['攻擊']
@@ -1633,6 +1869,25 @@ class Battle:
                     self.mechanics['whale_next_swallow'] = self.round + 3
                     target.effects['break'] = self.round + 1
                     self.log.append(f'{target.name} 的【吞城】被打斷，遭到破甲至第 {self.round + 1} 回合結束。')
+                    return
+                if target.job == '熔爐鎧獸' and self.mechanics.get('furnace_charging'):
+                    self.mechanics['furnace_charging'] = False
+                    self.mechanics['furnace_armor'] = 0
+                    target.effects['break'] = self.round + 1
+                    self.log.append(f'{target.name} 的【爐心震爆】被打斷，爐甲崩解並破甲至第 {self.round + 1} 回合結束。')
+                    return
+                if target.job == '星蝕巨神' and self.mechanics.get('star_charging'):
+                    self.mechanics['star_charging'] = False
+                    target.effects['break'] = self.round + 1
+                    self.log.append(f'{target.name} 的【星蝕墜落】被盾擊打斷，破甲至第 {self.round + 1} 回合結束。')
+                    return
+                if target.job == '爆裂孢子' and target.has('spore_swelling', self.round):
+                    for effect_name in ('spore_swelling', 'charging', 'mechanic_target'):
+                        target.effects.pop(effect_name, None)
+                    self.log.append(f'{target.name} 的膨脹被打斷，恢復一般行動。')
+                    return
+                if target.job == '逆潮法陣':
+                    self.log.append(f'{target.name} 的法陣蓄力無法被盾擊打斷，必須將其擊倒。')
                     return
                 if status == 'stun' and target.job == '深淵鐘龍':
                     self.log.append(f'{target.name} 免疫暈眩，鐘甲不會被盾擊直接打斷。')
@@ -1727,6 +1982,16 @@ class Battle:
             if self.check_end():
                 break
         if not self.result:
+            for fighter in list(self.living(0)):
+                marks = fighter.status_stacks.get('drowning_mark', 0)
+                if not marks:
+                    continue
+                damage = max(1, fighter.stats['HP'] * marks * 2 // 100)
+                actual, partner, partner_actual = self.apply_damage(fighter, damage)
+                self.log.append(f'{fighter.name} 的 {marks} 層【溺印】造成 {actual + partner_actual} HP 傷害。')
+                if self.check_end():
+                    break
+        if not self.result:
             for fighter in self.living(0):
                 if fighter.food_regen_left and self.round >= fighter.food_regen_start:
                     amount = self.restore(
@@ -1761,6 +2026,8 @@ def raid_battle(participants, monster, seed):
                         healing_share=p['state'].get('healing_share', 0),
                         alternating_damage_percent=p['state'].get('alternating_damage_percent', 0),
                         defense_conversion=p['state'].get('defense_conversion', False),
+                        first_skill_cooldown_reduction=p['state'].get(
+                            'first_skill_cooldown_reduction', 0),
                         critical_damage_percent=p['state'].get('critical_damage_percent', 150),
                         armed=bool(p['state'].get('equipped', {}).get('武器')),
                         passive_id=p.get('passive_id'),
@@ -1773,6 +2040,10 @@ def raid_battle(participants, monster, seed):
         if selected:
             passive_logs.append(f'{fighter.name} 裝備職業被動【{selected.name}】。')
     for fighter, participant in zip(fighters, participants):
+        if participant['state'].get('set_bonus_text'):
+            passive_logs.append(f'{fighter.name} 啟動套裝【{participant["state"]["set_bonus_text"]}】。')
+        if participant['state'].get('first_skill_cooldown_reduction'):
+            passive_logs.append(f'{fighter.name} 裝備【循環徽記】，第一次符合資格的主動技能冷卻將減少 1 回合。')
         if any(ITEMS[key].party_bonus for key in participant['state'].get('equipped', {}).values() if key in ITEMS):
             count = min(5, (len(participants) + 1) // 2)
             total = participant['state']['total']
@@ -1968,8 +2239,17 @@ def raid_battle(participants, monster, seed):
     count = profile['count'] if profile else 1
     for i in range(count):
         individual = dict(stats)
+        fighter_speed = speed
         if monster['kind'] == '王城傀儡師':
             shares = (50, 25, 25)
+            individual['HP'] = max(1, stats['HP'] * shares[i] // 100
+                                   + (stats['HP'] - sum(stats['HP'] * share // 100 for share in shares) if i == 0 else 0))
+        elif monster['kind'] == '迷霧菌后':
+            shares = (60, 20, 20)
+            individual['HP'] = max(1, stats['HP'] * shares[i] // 100
+                                   + (stats['HP'] - sum(stats['HP'] * share // 100 for share in shares) if i == 0 else 0))
+        elif monster['kind'] == '星蝕巨神':
+            shares = (80, 20)
             individual['HP'] = max(1, stats['HP'] * shares[i] // 100
                                    + (stats['HP'] - sum(stats['HP'] * share // 100 for share in shares) if i == 0 else 0))
         else:
@@ -1987,12 +2267,32 @@ def raid_battle(participants, monster, seed):
         if monster['kind'] == '赤雷與蒼炎':
             job = ('赤雷', '蒼炎')[i]
             name = f'{monster_name(monster)}・{job}'
+        if monster['kind'] == '迷霧菌后':
+            job = '迷霧菌后' if i == 0 else '爆裂孢子'
+            name = monster_name(monster) if i == 0 else f'{monster_name(monster)}・爆裂孢子{i}'
+            if i:
+                individual['防禦'] = max(1, int((10 + average * 2) * 1.0))
+                individual['閃避率'] = 60
+                individual['暴擊率'] = 5
+                fighter_speed = 58
+        if monster['kind'] == '星蝕巨神':
+            job = '星蝕巨神' if i == 0 else '蝕光星核'
+            name = monster_name(monster) if i == 0 else f'{monster_name(monster)}・蝕光星核'
+            if i:
+                individual['攻擊'] = 0
+                individual['防禦'] = max(1, int((10 + average * 2) * 1.2))
+                individual['命中率'] = 0
+                individual['閃避率'] = 45
+                individual['暴擊率'] = 0
+                fighter_speed = 1
         is_boss = (count == 1 or monster['kind'] == '赤雷與蒼炎' or
                    monster['kind'] == '哥布林戰團' and i == 0 or
-                   monster['kind'] == '王城傀儡師' and i == 0)
+                   monster['kind'] == '王城傀儡師' and i == 0 or
+                   monster['kind'] in ('迷霧菌后', '星蝕巨神') and i == 0)
         mechanic_priority = (1 if monster['kind'] == '哥布林戰團' and i == 0 or
-                             monster['kind'] == '王城傀儡師' and i > 0 else 0)
-        fighters.append(Fighter(name, 1, job, individual, speed, [],
+                             monster['kind'] == '王城傀儡師' and i > 0 or
+                             monster['kind'] == '星蝕巨神' and i == 1 else 0)
+        fighters.append(Fighter(name, 1, job, individual, fighter_speed, [],
                                 is_boss=is_boss, mechanic_priority=mechanic_priority))
     battle = Battle(fighters, seed=seed)
     if monster['kind'] == '深淵鐘龍':
@@ -2013,6 +2313,10 @@ def raid_battle(participants, monster, seed):
     if monster['kind'] == '吞城鯨':
         battle.mechanics.update(whale_shield=min(10, 3 + len(participants) // 3),
                                 whale_tide=0, whale_next_swallow=10)
+    if monster['kind'] == '熔爐鎧獸':
+        battle.mechanics.update(furnace_armor=3, furnace_charging=False)
+    if monster['kind'] == '星蝕巨神':
+        battle.mechanics.update(star_charging=False, star_core_down_round=-99)
     battle.log.extend(badge_logs)
     battle.log.extend(passive_logs)
     battle.log.extend(provision_logs)
@@ -2066,6 +2370,8 @@ def load_battle(data):
         f.damage_taken_percent = data_f.get('damage_taken_percent', 0)
         f.healing_received_percent = data_f.get('healing_received_percent', 0)
         f.cooldown_reduction = data_f.get('cooldown_reduction', 0)
+        f.first_skill_cooldown_reduction = data_f.get('first_skill_cooldown_reduction', 0)
+        f.first_skill_cooldown_used = data_f.get('first_skill_cooldown_used', False)
         f.linked_user_id = data_f.get('linked_user_id')
         f.passive_id = data_f.get('passive_id')
         f.passive_state = data_f.get('passive_state', {})

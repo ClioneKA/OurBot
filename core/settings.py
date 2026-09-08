@@ -145,6 +145,8 @@ class RPGSettings:
     raid: RaidSettings = field(default_factory=RaidSettings)
     mid_raid: RaidSettings = field(default_factory=lambda: RaidSettings(
         min_interval_minutes=90, max_interval_minutes=180, victory_xp=600, victory_gold=200))
+    high_raid: RaidSettings = field(default_factory=lambda: RaidSettings(
+        min_interval_minutes=90, max_interval_minutes=180, victory_xp=900, victory_gold=250))
     total_raid: TotalRaidSettings = field(default_factory=TotalRaidSettings)
 
     def __post_init__(self):

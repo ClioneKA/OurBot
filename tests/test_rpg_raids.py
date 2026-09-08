@@ -15,8 +15,8 @@ from core.rpg_battle import Tactics, dump_battle, raid_battle, load_battle
 from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_divination import Divinations
 from core.rpg_monsters import BALANCE_VERSION
-from core.rpg_raids import RaidService, RaidSignup, channel_ids
-from core.rpg_raid_store import RaidStore, DROP_TABLES
+from core.rpg_raids import HIGH_RAID_KINDS, MID_KINDS, RaidService, RaidSignup, channel_ids
+from core.rpg_raid_store import RaidStore, DROP_TABLES, HIGH_KINDS
 from core.settings import RPGSettings, RaidSettings, SettingsError
 
 
@@ -45,7 +45,36 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             channel, raid = await service.summon_divination(mid.guild, user)
         self.assertEqual(channel.id, 3)
         self.assertEqual((raid['pool'], raid['members'], raid['status']), ('mid', [1], 'lobby'))
+        self.assertNotIn(raid['monster']['kind'], HIGH_KINDS)
         self.assertEqual(self.cog.divinations.status(1, 1)['summon_raid_id'], raid['id'])
+        await service.close()
+
+    async def test_level_fifty_high_priestess_uses_high_channel(self):
+        class FakeChannel:
+            def __init__(self, channel_id):
+                self.id = channel_id
+                self.mention = f'<#{channel_id}>'
+                self.guild = SimpleNamespace(id=1, unavailable=False)
+                self.send = AsyncMock(return_value=SimpleNamespace(id=channel_id + 100))
+
+        high = FakeChannel(4)
+        self.cog.bot.get_channel = lambda cid: high if cid == 4 else None
+        self.cog.divinations = Divinations(self.store)
+        self.store.award_voice([(1, 1, level_floor(50))])
+        with self.store.db:
+            self.store.db.execute("INSERT OR REPLACE INTO rpg_divinations VALUES (1,1,'2026-01-01',1,'high_priestess',NULL,NULL)")
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '', 'RPG_MID_RAID_CHANNEL_IDS': '',
+                                            'RPG_HIGH_RAID_CHANNEL_IDS': '4'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        user = SimpleNamespace(id=1, bot=False)
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
+                patch.dict('os.environ', {'OPENAI_API_KEY': ''}), \
+                patch('core.rpg_monsters.random.choices', return_value=['普通']):
+            channel, raid = await service.summon_divination(high.guild, user)
+        self.assertEqual(channel.id, 4)
+        self.assertEqual((raid['pool'], raid['members']), ('high', [1]))
+        self.assertIn(raid['monster']['kind'], HIGH_RAID_KINDS)
         await service.close()
 
     async def test_noah_special_rewards_prefer_own_job_and_skip_dynamic_difficulty(self):
@@ -144,7 +173,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_mid_tier_channel_pool_rewards_and_fixed_paint_drop(self):
         from cmds.rpg import RPG
         choices = next(p.choices for p in RPG.spawn_raid.parameters if p.name == 'kind')
-        self.assertTrue({'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨'}
+        self.assertTrue({'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨',
+                         '熔爐鎧獸', '迷霧菌后', '星蝕巨神', '逆潮聖骸'}
                         <= {choice.value for choice in choices})
 
         class FakeChannel:
@@ -195,6 +225,13 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(first), set(kinds))
         self.assertEqual(set(second), set(kinds))
 
+    async def test_high_tier_has_an_independent_persisted_shuffle_bag(self):
+        first = [self.repo.next_high_kind(100, HIGH_RAID_KINDS) for _ in HIGH_RAID_KINDS]
+        second = [self.repo.next_high_kind(100, HIGH_RAID_KINDS) for _ in HIGH_RAID_KINDS]
+        self.assertEqual(set(first), set(HIGH_RAID_KINDS))
+        self.assertEqual(set(second), set(HIGH_RAID_KINDS))
+        self.assertEqual(set(MID_KINDS), {'深淵鐘龍', '王城傀儡師', '瘟疫縫合獸', '赤雷與蒼炎', '吞城鯨'})
+
     async def test_tier_four_generation_and_two_job_loot_tables(self):
         from core.rpg_monsters import prepare_monster
         cases = {
@@ -214,6 +251,38 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(item.required_level == 40 for item in equipment))
             marker = '復活' if kind == '赤雷與蒼炎' else '城塞鯨脂'
             self.assertIn(marker, self.service.lobby_embed(raid).fields[2].value)
+
+    async def test_tier_five_six_loot_levels_and_level_fifty_entry(self):
+        from core.rpg_monsters import prepare_monster
+        cases = {
+            '熔爐鎧獸': (5, 50, {'裝甲步兵', '騎士'}, 4),
+            '迷霧菌后': (5, 50, {'弓兵', '僧侶'}, 4),
+            '星蝕巨神': (6, 60, {'裝甲步兵', '弓兵'}, 5),
+            '逆潮聖骸': (6, 60, {'騎士', '僧侶'}, 5),
+        }
+        for channel, (kind, (tier, item_level, jobs, size)) in enumerate(cases.items(), 40):
+            with self.subTest(kind=kind), patch.dict('os.environ', {'OPENAI_API_KEY': ''}):
+                monster = prepare_monster(await self.service.imagine(kind), quality='普通')
+            raid = self.repo.create(1, channel, monster, 100, asdict(self.settings.mid_raid),
+                                    {'drop_chance': 1}, pool='mid')
+            self.assertEqual((monster['tier'], len(raid['drop_pool'])), (tier, size))
+            equipment = [ITEMS[key] for key in raid['drop_pool']]
+            self.assertEqual({item.job for item in equipment if item.job}, jobs)
+            self.assertTrue(all(item.required_level == item_level for item in equipment))
+            participant_field = self.service.lobby_embed(raid).fields[1]
+            self.assertIn('需 Lv.50', participant_field.name)
+
+        high = self.repo.create(1, 90, prepare_monster(
+            {'kind': '星蝕巨神', 'name': '星蝕巨神'}, '普通'), 100,
+            asdict(self.settings.mid_raid), pool='mid')
+        high.update(status='lobby', deadline=200, members=[])
+        self.repo.save(high)
+        self.store.award_voice([(1, 99, level_floor(49))])
+        with self.assertRaises(CharacterError):
+            self.repo.join(high['id'], 1, 99, 150, 20)
+        self.store.award_voice([(1, 99, level_floor(50) - self.store.xp(1, 99))])
+        joined = self.repo.join(high['id'], 1, 99, 150, 20)
+        self.assertEqual(joined['members'], [99])
 
     async def test_fox_bat_generation_loot_and_command_choices(self):
         from core.rpg_monsters import prepare_monster
@@ -785,38 +854,46 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(channel.send.call_args.kwargs['view'], RaidSignup)
         self.assertGreater(self.repo.next_at(2), 0)
 
-    async def test_scheduler_serializes_regular_and_mid_raids_per_guild(self):
+    async def test_scheduler_serializes_regular_mid_and_high_raids_per_guild(self):
         class FakeChannel:
             def __init__(self, channel_id):
                 self.id = channel_id
                 self.guild = SimpleNamespace(id=1, unavailable=False)
                 self.send = AsyncMock(return_value=SimpleNamespace(id=channel_id + 100))
 
-        regular, mid = FakeChannel(2), FakeChannel(3)
+        regular, mid, high = FakeChannel(2), FakeChannel(3), FakeChannel(4)
         bot = SimpleNamespace(is_ready=lambda: True,
-                              get_channel=lambda channel_id: {2: regular, 3: mid}.get(channel_id))
+                              get_channel=lambda channel_id: {2: regular, 3: mid, 4: high}.get(channel_id))
         cog = SimpleNamespace(store=self.store, settings=self.settings, characters=self.characters,
                               tactics=self.tactics, ai_model='unused', bot=bot)
-        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3',
+                                            'RPG_HIGH_RAID_CHANNEL_IDS': '4'}):
             service = RaidService(cog)
         service.notifications.ensure = AsyncMock(return_value=None)
         service.imagine = AsyncMock(side_effect=lambda kind=None: dict(
             self.monster, kind=kind or self.monster['kind']))
         service.repo.schedule(2, 10)
         service.repo.schedule(3, 20)
+        service.repo.schedule(4, 30)
         try:
             with patch('core.rpg_raids.discord.TextChannel', FakeChannel):
                 await service.tick.coro(service)
-                self.assertEqual((regular.send.await_count, mid.send.await_count), (1, 0))
+                self.assertEqual((regular.send.await_count, mid.send.await_count, high.send.await_count), (1, 0, 0))
                 self.assertEqual(service.repo.next_at(3), 20)
+                self.assertEqual(service.repo.next_at(4), 30)
 
                 first = next(raid for raid in service.repo.pending() if raid['channel_id'] == 2)
                 first.update(status='cancelled', delivered=True)
                 service.repo.save(first)
                 await service.tick.coro(service)
 
-            self.assertEqual((regular.send.await_count, mid.send.await_count), (1, 1))
-            self.assertEqual([raid['channel_id'] for raid in service.repo.pending()], [3])
+                second = next(raid for raid in service.repo.pending() if raid['channel_id'] == 3)
+                second.update(status='cancelled', delivered=True)
+                service.repo.save(second)
+                await service.tick.coro(service)
+
+            self.assertEqual((regular.send.await_count, mid.send.await_count, high.send.await_count), (1, 1, 1))
+            self.assertEqual([raid['channel_id'] for raid in service.repo.pending()], [4])
         finally:
             await service.close()
 

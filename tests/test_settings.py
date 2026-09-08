@@ -28,6 +28,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.ai.memory.summary_model, '')
         self.assertEqual(settings.ai.memory.guild_memory_limit, 30)
         self.assertEqual(settings.ai.memory.guild_memory_min_evidence, 2)
+        self.assertEqual(settings.rpg.high_raid.victory_gold, 250)
+        self.assertEqual(settings.rpg.high_raid.victory_xp, 900)
 
     def test_invalid_types_ranges_and_unknown_keys(self):
         cases = [

@@ -11,6 +11,13 @@ from core.rpg_monsters import TIER_VICTORY_XP
 
 
 MID_RAID_MIN_LEVEL = 30
+HIGH_RAID_MIN_LEVEL = 50
+HIGH_KINDS = {'熔爐鎧獸', '迷霧菌后', '星蝕巨神', '逆潮聖骸'}
+
+
+def raid_min_level(raid):
+    return HIGH_RAID_MIN_LEVEL if raid.get('monster', {}).get('kind') in HIGH_KINDS else (
+        MID_RAID_MIN_LEVEL if raid.get('pool') in ('mid', 'special') else 1)
 
 # Each monster type owns its loot table; new types default to no equipment drops.
 # Entries reference the shared item catalog and may be accessories, suits or weapons.
@@ -31,6 +38,14 @@ DROP_TABLES = {
     '史萊姆群': (),
     '鐵殼魔像': ('golem:hammer', 'golem:sword_shield', 'golem:bow', 'golem:staff'),
     '荊棘妖樹': ('tree:infantry', 'tree:knight', 'tree:archer', 'tree:monk'),
+    '熔爐鎧獸': ('forge:infantry:weapon', 'forge:infantry:suit',
+              'forge:knight:weapon', 'forge:knight:suit'),
+    '迷霧菌后': ('fungus:archer:weapon', 'fungus:archer:suit',
+              'fungus:monk:weapon', 'fungus:monk:suit'),
+    '星蝕巨神': ('star:infantry:weapon', 'star:infantry:suit',
+              'star:archer:weapon', 'star:archer:suit', 'cycle:emblem'),
+    '逆潮聖骸': ('tide:knight:weapon', 'tide:knight:suit',
+              'tide:monk:weapon', 'tide:monk:suit', 'cycle:emblem'),
 }
 FIXED_DROPS = {'深淵鐘龍': 'paint:red', '王城傀儡師': 'paint:yellow', '瘟疫縫合獸': 'paint:blue'}
 CHANCE_DROPS = {
@@ -48,6 +63,7 @@ class RaidStore:
             self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_raid ON rpg_raids(channel_id) WHERE status IN ('posting','lobby','running')")
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_raid_schedule (channel_id INTEGER PRIMARY KEY, next_at REAL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_mid_raid_bags (channel_id INTEGER PRIMARY KEY, remaining TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS rpg_high_raid_bags (channel_id INTEGER PRIMARY KEY, remaining TEXT NOT NULL)')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raid_difficulty (
                 guild_id INTEGER NOT NULL, channel_id INTEGER NOT NULL, multiplier REAL NOT NULL,
                 balance_version INTEGER NOT NULL DEFAULT 2,
@@ -225,6 +241,31 @@ class RaidStore:
             self.db.execute('INSERT OR REPLACE INTO rpg_mid_raid_bags VALUES (?,?)',
                             (channel, json.dumps(remaining, ensure_ascii=False)))
 
+    def next_high_kind(self, channel, kinds):
+        """Draw from the independent persisted high-tier shuffle bag."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('SELECT remaining FROM rpg_high_raid_bags WHERE channel_id=?', (channel,)).fetchone()
+            remaining = json.loads(row[0]) if row else []
+            remaining = [kind for kind in remaining if kind in kinds]
+            if not remaining:
+                remaining = list(kinds)
+                random.shuffle(remaining)
+            kind = remaining.pop()
+            self.db.execute('INSERT OR REPLACE INTO rpg_high_raid_bags VALUES (?,?)',
+                            (channel, json.dumps(remaining, ensure_ascii=False)))
+            return kind
+
+    def return_high_kind(self, channel, kind):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('SELECT remaining FROM rpg_high_raid_bags WHERE channel_id=?', (channel,)).fetchone()
+            remaining = json.loads(row[0]) if row else []
+            if kind not in remaining:
+                remaining.append(kind)
+            self.db.execute('INSERT OR REPLACE INTO rpg_high_raid_bags VALUES (?,?)',
+                            (channel, json.dumps(remaining, ensure_ascii=False)))
+
     def join(self, raid_id, guild, user, now, maximum, leave=False):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -238,8 +279,9 @@ class RaidStore:
             else:
                 if user in raid['members']:
                     raise CharacterError('你已經報名了。')
-                if raid.get('pool') in ('mid', 'special') and level_for(self.store.xp(guild, user)) < MID_RAID_MIN_LEVEL:
-                    raise CharacterError(f'中階討伐需達 Lv.{MID_RAID_MIN_LEVEL} 才能參加。')
+                minimum = raid_min_level(raid)
+                if level_for(self.store.xp(guild, user)) < minimum:
+                    raise CharacterError(f'此討伐需達 Lv.{minimum} 才能參加。')
                 if len(raid['members']) >= maximum:
                     raise CharacterError('討伐隊伍已滿。')
                 for other in self.pending():
