@@ -24,10 +24,13 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.divinations = Divinations(self.store)
         self.cog = SimpleNamespace(characters=self.characters, settings=settings, menu_views=WeakSet(),
                                    divinations=self.divinations,
+                                   painted_maze=SimpleNamespace(create=AsyncMock(
+                                       return_value={'number': 7})),
                                    character_embed=lambda *args: discord.Embed(title='角色'),
                                    adventurer_embed=lambda *args: discord.Embed(title='冒險者名片'))
         self.interaction = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=1),
-            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(),
+                                     defer=AsyncMock()),
             edit_original_response=AsyncMock())
         self.view = AdventureView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
@@ -73,7 +76,8 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(bag.to_components()), 5)
 
     async def test_backpack_uses_single_extensible_item_action_panel(self):
-        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:unfinished'):
+        for key in ('paint:red', 'paint:yellow', 'paint:blue', 'noah:unfinished',
+                    'painting:balloon'):
             self.characters.grant_item(1, 1, key)
         await self.view.handle(self.interaction, 'backpack')
         bag = self.interaction.response.edit_message.call_args.kwargs['view']
@@ -87,15 +91,18 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         await bag.handle(self.interaction, 'use_items')
         panel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(panel.stop)
-        self.assertEqual(panel.catalog, ['recipe:paint_set', 'noah:unfinished'])
+        self.assertEqual(panel.catalog,
+                         ['recipe:paint_set', 'noah:unfinished', 'painting:balloon'])
         await panel.handle(self.interaction, 'use')
         self.assertEqual(self.characters.inventory_counts(1, 1)['paint:set'], 1)
         await panel.handle(self.interaction, 'select', 'noah:unfinished')
         await panel.handle(self.interaction, 'use')
         self.assertEqual(self.characters.inventory_counts(1, 1)['noah:unfinished'], 1)
-        notice = self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value
-        self.assertIn('尚未開放', notice)
-        self.assertIn('沒有消耗', notice)
+        self.cog.painted_maze.create.assert_awaited_once_with(
+            self.interaction, 'noah:unfinished')
+        notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value
+        self.assertIn('繪境迷廊 #7', notice)
+        self.assertIn('開始探索時消耗', notice)
 
     async def test_profile_page_sets_and_clears_showcase(self):
         self.characters.grant_item(1, 1, 'paint:red')

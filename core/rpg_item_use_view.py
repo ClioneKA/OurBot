@@ -5,12 +5,14 @@ import discord
 
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_menu import add_back, navigate
+from core.rpg_painted_maze import MODE_NAME
 
 
 ITEM_ACTIONS = {
     'recipe:paint_set': ('組合噴漆罐套組', '消耗紅、黃、藍色噴漆罐各 1 個'),
     'paint:set': ('使用噴漆罐套組', '召喚特殊四階討伐「城崎諾亞」'),
-    'noah:unfinished': ('使用未完成的魔女畫作', '總力戰用途尚未開放；目前不會消耗'),
+    'noah:unfinished': ('展開未完成的魔女畫作', '建立城崎諾亞路線的 1～8 人繪境迷廊房間'),
+    'painting:balloon': ('展開《氣球》的畫作', '建立繪畫之影路線的 1～8 人繪境迷廊房間'),
 }
 
 
@@ -41,7 +43,8 @@ class ItemUseView(discord.ui.View):
     def rebuild(self):
         counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         self.catalog = ['recipe:paint_set']
-        self.catalog.extend(key for key in ('paint:set', 'noah:unfinished') if counts.get(key, 0) > 0)
+        self.catalog.extend(key for key in ('paint:set', 'noah:unfinished', 'painting:balloon')
+                            if counts.get(key, 0) > 0)
         if self.selected not in self.catalog:
             self.selected = self.catalog[0]
         self.clear_items()
@@ -77,11 +80,12 @@ class ItemUseView(discord.ui.View):
             description=(f'目前選擇：**{selected_name}**\n{selected_description}\n\n'
                          f'三色存量：{paints}\n'
                          f'噴漆罐套組 ×{counts.get("paint:set", 0)}｜'
-                         f'未完成的魔女畫作 ×{counts.get("noah:unfinished", 0)}'),
+                         f'未完成的魔女畫作 ×{counts.get("noah:unfinished", 0)}｜'
+                         f'《氣球》的畫作 ×{counts.get("painting:balloon", 0)}'),
             color=0xD65A88)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='只有確認成功才會消耗材料或道具；尚未開放的用途不會消耗物品。')
+        embed.set_footer(text='入場畫作會在房主按下「開始探索」後才消耗；只建立房間不會消耗。')
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -127,12 +131,22 @@ class ItemUseView(discord.ui.View):
                 await interaction.edit_original_response(embed=self.embed(notice), view=self)
                 return
 
+            if self.selected in ('noah:unfinished', 'painting:balloon'):
+                await interaction.response.defer()
+                try:
+                    room = await self.cog.painted_maze.create(interaction, self.selected)
+                    notice = (f'已建立 **{MODE_NAME} #{room["number"]}** 與私人討論串；'
+                              '畫作將在開始探索時消耗。')
+                except (CharacterError, discord.HTTPException) as exc:
+                    notice = str(exc)
+                self.rebuild()
+                await interaction.edit_original_response(embed=self.embed(notice), view=self)
+                return
+
             try:
                 if self.selected == 'recipe:paint_set':
                     item = self.cog.characters.combine_paint_set(self.guild_id, self.owner.id)
                     notice = f'已消耗三色噴漆罐各 1，組合成 {item.name}。'
-                elif self.selected == 'noah:unfinished':
-                    raise CharacterError('未完成的魔女畫作將用於之後的總力戰，目前尚未開放，也沒有消耗。')
                 else:
                     raise CharacterError('這項道具操作目前不可用。')
             except CharacterError as exc:

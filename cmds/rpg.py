@@ -203,8 +203,9 @@ class RPG(commands.Cog):
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
-    @app_commands.command(name='開啟繪境迷廊', description='使用一張畫作建立 1～8 人的自動戰鬥 Rogue 房間')
+    @app_commands.command(name='開啟繪境迷廊', description='管理員測試：以指定畫作建立繪境迷廊房間')
     @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
     @app_commands.rename(painting='畫作')
     @app_commands.choices(painting=[
         app_commands.Choice(name='未完成的畫作（城崎諾亞路線）', value='noah:unfinished'),
@@ -212,6 +213,9 @@ class RPG(commands.Cog):
     ])
     async def open_painted_maze(self, interaction: discord.Interaction,
                                 painting: app_commands.Choice[str]):
+        if not interaction.permissions.administrator:
+            await interaction.response.send_message('這個測試指令僅限管理員使用。', ephemeral=True)
+            return
         if not self.store.has_player(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message('請先接受邀請函，正式成為冒險者。', ephemeral=True)
             return
