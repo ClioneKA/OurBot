@@ -17,6 +17,17 @@ from core.settings import RPGSettings
 
 
 class PaintedMazeStoreTests(unittest.TestCase):
+    def test_contract_draw_offers_one_variant_per_color_and_can_offer_all_variants(self):
+        seen = set()
+        for seed in range(200):
+            for checkpoint in (1, 2, 3):
+                offered = PaintedMazeStore._contract_candidates({'seed': seed}, checkpoint)
+                self.assertEqual(len(offered), 3)
+                self.assertEqual(len({COLOR_CONTRACTS[key]['color'] for key in offered}), 3)
+                self.assertEqual(offered, PaintedMazeStore._contract_candidates({'seed': seed}, checkpoint))
+                seen.update(offered)
+        self.assertEqual(seen, set(COLOR_CONTRACTS))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -40,8 +51,8 @@ class PaintedMazeStoreTests(unittest.TestCase):
         self.assertEqual((room['route'], room['members'], room['status']), ('shadow', [1], 'lobby'))
         self.assertEqual(room['expires_at'], 100 + ROOM_LIFETIME_SECONDS)
         self.assertEqual(room['paintings'], draw_painting_route(123))
-        self.assertEqual([len(room['paintings'][index:index + 3]) for index in (0, 3, 6)], [3, 3, 3])
-        self.assertEqual([painting['tier'] for painting in room['paintings']], [50] * 3 + [55] * 3 + [60] * 3)
+        self.assertEqual(len(room['paintings']), 3)
+        self.assertEqual([painting['tier'] for painting in room['paintings']], [55, 60, 65])
         self.assertEqual(self.characters.inventory_counts(1, 1)['painting:balloon'], 1)
         with self.assertRaisesRegex(PaintedMazeError, '另一個'):
             self.repo.create(1, 1, 'painting:balloon', 50, now=101)
@@ -131,25 +142,23 @@ class PaintedMazeStoreTests(unittest.TestCase):
         self.assertEqual(attached['thread_id'], 21)
         self.assertEqual(self.repo.by_thread(21)['id'], room['id'])
 
-    def test_every_third_painting_opens_a_persistent_sixty_second_contract_vote(self):
+    def test_each_painting_opens_a_persistent_sixty_second_contract_vote(self):
         self.characters.grant_item(1, 1, 'painting:balloon')
         room = self.repo.create(1, 1, 'painting:balloon', 50, now=100, seed=123)
         self.repo.change_member(room['id'], 2, 50, now=101)
         room = self.repo.begin(
             room['id'], 1, [self.participant(1), self.participant(2)], now=110)
-        room = self.repo.record_boss_victory(room['id'], 2, now=120)
-        self.assertEqual((room['boss_index'], room['status']), (1, 'running'))
-        self.repo.record_boss_victory(room['id'], 1, now=130)
         room = self.repo.record_boss_victory(
             room['id'], 2, sealed_rewards=[{'kind': 'outline', 'sealed': True}], now=140)
         vote = room['contract_vote']
-        self.assertEqual((room['boss_index'], room['stage'], room['status']), (3, 1, 'contract'))
+        self.assertEqual((room['boss_index'], room['stage'], room['status']), (1, 1, 'contract'))
         self.assertEqual(vote['deadline'], 140 + CONTRACT_VOTE_SECONDS)
         self.assertEqual(len(vote['candidates']), 3)
+        self.assertEqual(len({COLOR_CONTRACTS[key]['color'] for key in vote['candidates']}), 3)
         self.assertTrue(set(vote['candidates']) <= set(COLOR_CONTRACTS))
         self.assertEqual(room['sealed_rewards'], [{'kind': 'outline', 'sealed': True}])
 
-        first, second, _third = vote['candidates']
+        first, second, _third = vote['candidates'][:3]
         self.repo.cast_contract_vote(room['id'], 1, first, now=150)
         changed = self.repo.cast_contract_vote(room['id'], 1, second, now=160)
         self.assertEqual(changed['contract_vote']['votes'], {'1': second})
@@ -165,8 +174,7 @@ class PaintedMazeStoreTests(unittest.TestCase):
         self.characters.grant_item(1, 1, 'painting:balloon')
         room = self.repo.create(1, 1, 'painting:balloon', 50, now=100, seed=888)
         room = self.repo.begin(room['id'], 1, [self.participant(1)], now=110)
-        for timestamp in (120, 130, 140):
-            room = self.repo.record_boss_victory(room['id'], 1, now=timestamp)
+        room = self.repo.record_boss_victory(room['id'], 1, now=140)
         expected_candidates = list(room['contract_vote']['candidates'])
         self.assertEqual(self.repo.resolve_contracts_due(now=199), [])
         resolved = self.repo.resolve_contracts_due(now=200)[0]

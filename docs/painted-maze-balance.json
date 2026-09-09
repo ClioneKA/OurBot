@@ -1,0 +1,85 @@
+[
+  {
+    "level": 60,
+    "players": 4,
+    "seeds": 1000,
+    "seed_start": 20000,
+    "accessories": true,
+    "gear": "raid",
+    "contract_policy": "new_color_then_balanced",
+    "rate_denominator": "all_entries",
+    "stage_clears": [
+      1000,
+      994,
+      612
+    ],
+    "reach_final_rate": 0.612,
+    "win_rates": {
+      "noah": 0.022,
+      "shadow": 0.167
+    },
+    "final_results": {
+      "noah": {
+        "戰敗": 489,
+        "平手（達回合上限）": 101,
+        "勝利": 22
+      },
+      "shadow": {
+        "平手（達回合上限）": 147,
+        "戰敗": 298,
+        "勝利": 167
+      }
+    },
+    "painting_failures": {
+      "3:逆潮聖骸:戰敗": 166,
+      "3:鐵殼魔像:戰敗": 34,
+      "3:熔爐鎧獸:戰敗": 124,
+      "3:星蝕巨神:戰敗": 47,
+      "3:逆潮聖骸:平手（達回合上限）": 3,
+      "3:深淵鐘龍:戰敗": 4,
+      "3:逆潮聖骸:平手": 1,
+      "2:赤雷與蒼炎:戰敗": 5,
+      "3:星蝕巨神:平手（達回合上限）": 3,
+      "2:赤雷與蒼炎:平手（達回合上限）": 1
+    }
+  },
+  {
+    "level": 60,
+    "players": 8,
+    "seeds": 1000,
+    "seed_start": 20000,
+    "accessories": true,
+    "gear": "raid",
+    "contract_policy": "new_color_then_balanced",
+    "rate_denominator": "all_entries",
+    "stage_clears": [
+      1000,
+      998,
+      889
+    ],
+    "reach_final_rate": 0.889,
+    "win_rates": {
+      "noah": 0.226,
+      "shadow": 0.628
+    },
+    "final_results": {
+      "noah": {
+        "戰敗": 448,
+        "勝利": 226,
+        "平手（達回合上限）": 215
+      },
+      "shadow": {
+        "平手（達回合上限）": 193,
+        "勝利": 628,
+        "戰敗": 68
+      }
+    },
+    "painting_failures": {
+      "3:逆潮聖骸:戰敗": 82,
+      "3:熔爐鎧獸:戰敗": 11,
+      "3:逆潮聖骸:平手（達回合上限）": 14,
+      "3:星蝕巨神:戰敗": 2,
+      "2:赤雷與蒼炎:平手（達回合上限）": 2
+    }
+  }
+]

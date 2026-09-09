@@ -22,25 +22,25 @@ ENTRY_ROUTES = {
 }
 PAINTING_STAGES = (
     (
-        {'id': 'charcoal_beast', 'name': '《炭筆獄獸》', 'base_kind': '巨獸', 'tier': 50},
-        {'id': 'wire_guard', 'name': '《鐵線守衛》', 'base_kind': '鐵殼魔像', 'tier': 50},
-        {'id': 'moon_fox_study', 'name': '《月下狐之習作》', 'base_kind': '月影妖狐', 'tier': 50},
-        {'id': 'ink_spider', 'name': '《墨毒蜘蛛》', 'base_kind': '毒蛛', 'tier': 50},
-        {'id': 'thorn_sketch', 'name': '《荊棘庭園素描》', 'base_kind': '荊棘妖樹', 'tier': 50},
+        {'id': 'charcoal_beast', 'name': '《炭筆獄獸》', 'base_kind': '巨獸', 'tier': 55},
+        {'id': 'wire_guard', 'name': '《鐵線守衛》', 'base_kind': '鐵殼魔像', 'tier': 55},
+        {'id': 'moon_fox_study', 'name': '《月下狐之習作》', 'base_kind': '月影妖狐', 'tier': 55},
+        {'id': 'ink_spider', 'name': '《墨毒蜘蛛》', 'base_kind': '毒蛛', 'tier': 55},
+        {'id': 'thorn_sketch', 'name': '《荊棘庭園素描》', 'base_kind': '荊棘妖樹', 'tier': 55},
     ),
     (
-        {'id': 'twin_zodiac', 'name': '《赤雷與蒼炎的雙生肖像》', 'base_kind': '赤雷與蒼炎', 'tier': 55},
-        {'id': 'sunken_whale', 'name': '《沉沒城邦與巨鯨》', 'base_kind': '吞城鯨', 'tier': 55},
-        {'id': 'stitched_color', 'name': '《腐彩縫合像》', 'base_kind': '瘟疫縫合獸', 'tier': 55},
-        {'id': 'mist_still_life', 'name': '《霧菌靜物》', 'base_kind': '迷霧菌后', 'tier': 55},
-        {'id': 'faceless_group', 'name': '《無面傀儡群像》', 'base_kind': '王城傀儡師', 'tier': 55},
+        {'id': 'twin_zodiac', 'name': '《赤雷與蒼炎的雙生肖像》', 'base_kind': '赤雷與蒼炎', 'tier': 60},
+        {'id': 'sunken_whale', 'name': '《沉沒城邦與巨鯨》', 'base_kind': '吞城鯨', 'tier': 60},
+        {'id': 'stitched_color', 'name': '《腐彩縫合像》', 'base_kind': '瘟疫縫合獸', 'tier': 60},
+        {'id': 'mist_still_life', 'name': '《霧菌靜物》', 'base_kind': '迷霧菌后', 'tier': 60},
+        {'id': 'faceless_group', 'name': '《無面傀儡群像》', 'base_kind': '王城傀儡師', 'tier': 60},
     ),
     (
-        {'id': 'burning_armor', 'name': '《燃燒鎧甲的末日壁畫》', 'base_kind': '熔爐鎧獸', 'tier': 60},
-        {'id': 'star_eclipse', 'name': '《星蝕巨神天頂畫》', 'base_kind': '星蝕巨神', 'tier': 60},
-        {'id': 'reverse_tide', 'name': '《逆潮聖骸祭壇畫》', 'base_kind': '逆潮聖骸', 'tier': 60},
-        {'id': 'light_eating_dragon', 'name': '《吞噬光芒的鐘龍》', 'base_kind': '深淵鐘龍', 'tier': 60},
-        {'id': 'unrecorded_colossus', 'name': '《未被記錄的黑色巨像》', 'base_kind': '鐵殼魔像', 'tier': 60},
+        {'id': 'burning_armor', 'name': '《燃燒鎧甲的末日壁畫》', 'base_kind': '熔爐鎧獸', 'tier': 65},
+        {'id': 'star_eclipse', 'name': '《星蝕巨神天頂畫》', 'base_kind': '星蝕巨神', 'tier': 65},
+        {'id': 'reverse_tide', 'name': '《逆潮聖骸祭壇畫》', 'base_kind': '逆潮聖骸', 'tier': 65},
+        {'id': 'light_eating_dragon', 'name': '《吞噬光芒的鐘龍》', 'base_kind': '深淵鐘龍', 'tier': 65},
+        {'id': 'unrecorded_colossus', 'name': '《未被記錄的黑色巨像》', 'base_kind': '鐵殼魔像', 'tier': 65},
     ),
 )
 COLOR_CONTRACTS = {
@@ -57,7 +57,7 @@ COLOR_CONTRACTS = {
     'gold': {
         'name': '金黃契約',
         'party': '全隊速度 +8；兩層時主動技能基礎冷卻 -1',
-        'backlash': '最終敵人速度提高，高層時蓄力提前完成',
+        'backlash': '最終敵人速度提高；兩層以上時蓄力提前完成',
     },
     'verdant': {
         'name': '翠綠契約',
@@ -67,19 +67,49 @@ COLOR_CONTRACTS = {
     'violet': {
         'name': '紫蝕契約',
         'party': '對帶有可淨化負面狀態的敵人傷害 +8%',
-        'backlash': '最終敵人的侵蝕疊層與持續時間增強',
+        'backlash': '最終敵人命中時附加腐敗',
     },
     'black': {
         'name': '漆黑契約',
         'party': '全隊傷害 +12%、暴擊率 +2 百分點，但受到傷害 +4%',
-        'backlash': '最終敵人傷害 +8%；三層時最終階段追加行動',
+        'backlash': '最終敵人傷害 +8%；三層時每五回合追加行動',
     },
 }
+
+# Keep the original IDs valid for rooms saved before the contract expansion.
+CONTRACT_COLORS = tuple(COLOR_CONTRACTS)
+for _color, _contract in COLOR_CONTRACTS.items():
+    _contract['color'] = _color
+CONTRACT_VARIANTS = {
+    'crimson': [('edge', '銳筆', '全隊攻擊 +12%', {'攻擊': 12}),
+                ('precision', '點睛', '全隊命中率 +15、暴擊率 +8 百分點', {'命中率+': 15, '暴擊率+': 8})],
+    'azure': [('armor', '厚塗', '全隊防禦 +18%', {'防禦': 18}),
+              ('vitality', '留白', '全隊最大 HP +15%，增加的 HP 同時補滿', {'HP': 15})],
+    'gold': [('aim', '聚光', '全隊命中率 +20 百分點、攻擊 +6%', {'命中率+': 20, '攻擊': 6}),
+             ('evasion', '掠影', '全隊閃避率 +12 百分點、速度 +4', {'閃避率+': 12, '速度+': 4})],
+    'verdant': [('renewal', '回春', '過關恢復額外 10% 最大 HP', {}),
+                ('shelter', '蔭庇', '全隊最大 HP +8%、治療量 +15%', {'HP': 8, '治療量': 15})],
+    'violet': [('focus', '蝕刻', '對有負面狀態的敵人傷害 +16%', {}),
+               ('insight', '洞察', '全隊攻擊 +8%、命中率 +10 百分點', {'攻擊': 8, '命中率+': 10})],
+    'black': [('ruin', '毀形', '全隊傷害 +20%，受到傷害 +8%', {}),
+              ('gamble', '孤注', '全隊暴擊率 +18 百分點，受到傷害 +5%', {'暴擊率+': 18})],
+}
+for _color, _variants in CONTRACT_VARIANTS.items():
+    for _suffix, _name, _party, _stats in _variants:
+        COLOR_CONTRACTS[f'{_color}:{_suffix}'] = {
+            'color': _color, 'name': f'{COLOR_CONTRACTS[_color]["name"]}・{_name}',
+            'party': _party, 'backlash': COLOR_CONTRACTS[_color]['backlash'], 'stats': _stats,
+        }
 
 
 def draw_painting_route(seed):
     rng = random.Random(seed)
-    return [dict(painting) for stage in PAINTING_STAGES for painting in rng.sample(stage, 3)]
+    return [dict(rng.choice(stage)) for stage in PAINTING_STAGES]
+
+
+def paintings_per_stage(room):
+    """New rooms have one painting per act; retain already saved legacy routes."""
+    return max(1, len(room['paintings']) // 3)
 
 
 class PaintedMazeError(CharacterError):
@@ -173,6 +203,8 @@ class PaintedMazeStore:
                 'number': number,
                 'entry_item': entry_item,
                 'requires_entry': require_entry,
+                'reward_policy': 'escrow_v2',
+                'rest_ready': [],
                 'route': ENTRY_ROUTES[entry_item],
                 'status': 'lobby',
                 'members': [host_id],
@@ -320,16 +352,19 @@ class PaintedMazeStore:
             }
             room['battle_history'].append(summary)
             room['last_battle'] = battle
+            room.pop('battle', None)
+            room.pop('battle_deadline', None)
             room['party_state'] = party_state
             if result != '勝利':
                 self._finish(room, 'failed', actor_id, f'畫作戰鬥{result}', now)
                 self._save(room)
                 return room
             room['boss_index'] += 1
+            room['rest_ready'] = []
             if sealed_rewards:
                 room['sealed_rewards'].extend(sealed_rewards)
-            if room['boss_index'] % 3 == 0:
-                contract_round = room['boss_index'] // 3
+            if room['boss_index'] % paintings_per_stage(room) == 0:
+                contract_round = room['boss_index'] // paintings_per_stage(room)
                 room.setdefault('reward_due', []).append({
                     'kind': 'stage', 'checkpoint': contract_round})
                 room['stage'] = contract_round
@@ -367,7 +402,10 @@ class PaintedMazeStore:
                 'route': room['route'], 'result': result,
                 'rounds': battle.get('round', 0), 'completed_at': now,
             }
+            room['final_entered'] = True
             room['last_battle'] = battle
+            room.pop('battle', None)
+            room.pop('battle_deadline', None)
             room['party_state'] = party_state
             if result == '勝利':
                 room.setdefault('reward_due', []).append({'kind': 'final', 'checkpoint': 4})
@@ -380,7 +418,9 @@ class PaintedMazeStore:
     @staticmethod
     def _contract_candidates(room, contract_round):
         rng = random.Random(room['seed'] + 1009 * contract_round)
-        return rng.sample(tuple(COLOR_CONTRACTS), 3)
+        colors = rng.sample(CONTRACT_COLORS, 3)
+        return [rng.choice([key for key, value in COLOR_CONTRACTS.items()
+                            if value['color'] == color]) for color in colors]
 
     def record_boss_victory(self, room_id, actor_id, *, sealed_rewards=None, now=None):
         """Advance one completed painting and open a vote at each stage seal."""
@@ -395,10 +435,11 @@ class PaintedMazeStore:
             if room['boss_index'] >= len(room['paintings']):
                 raise PaintedMazeError('前置畫作已全部完成。')
             room['boss_index'] += 1
+            room['rest_ready'] = []
             if sealed_rewards:
                 room['sealed_rewards'].extend(sealed_rewards)
-            if room['boss_index'] % 3 == 0:
-                contract_round = room['boss_index'] // 3
+            if room['boss_index'] % paintings_per_stage(room) == 0:
+                contract_round = room['boss_index'] // paintings_per_stage(room)
                 room.setdefault('reward_due', []).append({
                     'kind': 'stage', 'checkpoint': contract_round})
                 room['stage'] = contract_round
@@ -458,6 +499,118 @@ class PaintedMazeStore:
             self._save(room)
             return room
 
+    def start_battle(self, room_id, actor_id, battle, *, deadline, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            if not room or room['status'] != 'running' or room.get('battle'):
+                raise PaintedMazeError('戰鬥已開始或目前不能挑戰。')
+            if actor_id not in room['members'] or now >= room['expires_at']:
+                raise PaintedMazeError('無法開始這場戰鬥。')
+            if room['boss_index'] == len(room['paintings']):
+                if room.get('final_vote', {}).get('result') != 'enter':
+                    raise PaintedMazeError('必須先由全隊投票決定進入尾王。')
+                room['final_entered'] = True
+            if set(room.get('rest_ready', ())) != set(room['members']):
+                raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
+            room.update(battle=battle, battle_deadline=deadline)
+            self._save(room)
+            return room
+
+    def rest_participant(self, room_id, user_id, *, expected_index=None, now=None):
+        now = time.time() if now is None else now
+        room = self.get(room_id)
+        if (not room or room['status'] != 'running' or room.get('battle')
+                or room.get('final_vote') or now >= room['expires_at']):
+            raise PaintedMazeError('目前不是可調整技能的休息點。')
+        if expected_index is not None and room['boss_index'] != expected_index:
+            raise PaintedMazeError('這個休息點已結束，請重新開啟技能面板。')
+        participant = next((p for p in room['participants'] if p['id'] == user_id), None)
+        if participant is None:
+            raise PaintedMazeError('只有隊員可以使用休息點。')
+        return room, participant
+
+    def save_rest_tactics(self, room_id, user_id, rules, passive_id, *, expected_index):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room, participant = self.rest_participant(room_id, user_id, expected_index=expected_index)
+            participant['rules'] = rules
+            participant['passive_id'] = passive_id
+            room['rest_ready'] = [uid for uid in room.get('rest_ready', []) if uid != user_id]
+            self._save(room)
+            return room
+
+    def ready_at_rest(self, room_id, user_id, *, expected_index):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room, _ = self.rest_participant(room_id, user_id, expected_index=expected_index)
+            ready = set(room.get('rest_ready', []))
+            if user_id in ready:
+                ready.remove(user_id)
+            else:
+                ready.add(user_id)
+            room['rest_ready'] = sorted(ready)
+            self._save(room)
+            return room
+
+    def save_battle(self, room_id, battle, *, expected_round, deadline):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            if (not room or room['status'] != 'running' or not room.get('battle')
+                    or room['battle']['round'] != expected_round):
+                raise PaintedMazeError('戰鬥回合已更新，請重新開啟面板。')
+            room.update(battle=battle, battle_deadline=deadline)
+            self._save(room)
+            return room
+
+    def vote_final(self, room_id, user_id, choice, *, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            vote = room.get('final_vote') if room else None
+            if (not room or room['status'] != 'running' or room.get('battle')
+                    or not vote or vote.get('result') or now >= vote['deadline']):
+                raise PaintedMazeError('尾王去留投票已截止或尚未開啟。')
+            if user_id not in room['members'] or choice not in ('enter', 'retreat'):
+                raise PaintedMazeError('只有隊員可以投票挑戰或撤退。')
+            vote['votes'][str(user_id)] = choice
+            self._save(room)
+            return room
+
+    def ensure_final_vote(self, room_id, *, now=None):
+        """Give saved rooms already waiting at the final door the new vote."""
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            if (room and room['status'] == 'running' and room['boss_index'] == len(room['paintings'])
+                    and not room.get('battle') and not room.get('final_vote')):
+                if set(room.get('rest_ready', [])) != set(room['members']):
+                    raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
+                room['final_vote'] = {'votes': {}, 'deadline': now + 60, 'result': None}
+                self._save(room)
+            return room
+
+    def resolve_final_vote(self, room_id, *, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            vote = room.get('final_vote') if room else None
+            if not vote or vote.get('result') or room['status'] != 'running':
+                return room
+            if now < vote['deadline']:
+                raise PaintedMazeError('尾王去留投票尚未截止。')
+            entering = sum(vote['votes'].get(str(uid)) == 'enter' for uid in room['members'])
+            vote['result'] = 'enter' if entering > len(room['members']) / 2 else 'retreat'
+            if vote['result'] == 'retreat':
+                self._finish(room, 'retreated', None, '全隊投票撤退，保留全部累積掉落', now)
+            self._save(room)
+            return room
+
     def resolve_contracts_due(self, *, now=None):
         now = time.time() if now is None else now
         due = [room['id'] for room in self.active()
@@ -468,6 +621,11 @@ class PaintedMazeStore:
     @staticmethod
     def _finish(room, status, actor_id, reason, now):
         room.update(status=status, ended_at=now, ended_by=actor_id, end_reason=reason)
+        room['terminal_refresh_pending'] = True
+        if room.get('reward_policy') == 'escrow_v2':
+            room['loot_percent'] = 50 if room.get('final_entered') and status != 'completed' else 100
+            if room['loot_percent'] == 50:
+                room['end_reason'] += '；本場累積掉落減半（結晶保留數向上取整）'
 
     def close(self, room_id, actor_id, *, administrator=False, now=None):
         now = time.time() if now is None else now
@@ -503,7 +661,20 @@ class PaintedMazeStore:
 
     def rooms_with_rewards_due(self):
         rows = self.db.execute("SELECT data FROM rpg_painted_maze_rooms").fetchall()
-        return [room for row in rows if (room := json.loads(row[0])).get('reward_due')]
+        return [room for row in rows if (room := json.loads(row[0])).get('reward_due')
+                and (room.get('reward_policy') != 'escrow_v2' or room['status'] not in ACTIVE_STATUSES)]
+
+    def terminal_refreshes(self):
+        rows = self.db.execute('SELECT data FROM rpg_painted_maze_rooms').fetchall()
+        return [room for row in rows if (room := json.loads(row[0])).get('terminal_refresh_pending')]
+
+    def mark_terminal_refreshed(self, room_id):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            if room:
+                room.pop('terminal_refresh_pending', None)
+                self._save(room)
 
     def mark_reward_complete(self, room_id, kind, checkpoint, *, now=None):
         now = int(time.time() if now is None else now)

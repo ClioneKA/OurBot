@@ -1,10 +1,12 @@
 """Deterministic end-to-end balance matrix for the Painted Maze.
 
 The simulator uses real character snapshots and the equipment players are
-expected to own at entry.  It intentionally runs the entire nine-painting
+expected to own at entry.  It intentionally runs the entire three-painting
 route with carried HP instead of treating each boss as a fresh raid.
 """
 import argparse
+from collections import Counter
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 import statistics
@@ -18,7 +20,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Rule
 from core.rpg_character import Characters
-from core.rpg_painted_maze import draw_painting_route
+from core.rpg_painted_maze import COLOR_CONTRACTS, PaintedMazeStore, draw_painting_route
 from core.rpg_painted_maze_battle import simulate_final_battle, simulate_painting
 from core.settings import RPGSettings
 
@@ -40,6 +42,19 @@ T60_RAID_EQUIPMENT = {
     '弓兵': ('star:archer:weapon', 'star:archer:suit'),
     '僧侶': ('tide:monk:weapon', 'tide:monk:suit'),
 }
+# Four distinct, obtainable accessories (Lv.60 capacity); no maze rewards.
+FULL_ACCESSORIES = {
+    '裝甲步兵': ('cycle:emblem', 'goblin:badge', 'puppet:twin_charm', 'whale:charm'),
+    '騎士': ('cycle:emblem', 'goblin:badge', 'puppet:twin_charm', 'whale:charm'),
+    '弓兵': ('cycle:emblem', 'goblin:badge', 'puppet:twin_charm', 'twin_beast:charm'),
+    '僧侶': ('cycle:emblem', 'goblin:badge', 'puppet:twin_charm', 'whale:charm'),
+}
+ACCESSORY_EMBROIDERY = {'裝甲步兵': 'flame', '騎士': 'shield', '弓兵': 'wing', '僧侶': 'star'}
+BALANCED_PRIORITY = (
+    'crimson', 'azure', 'gold', 'verdant:shelter', 'crimson:edge', 'azure:vitality',
+    'gold:aim', 'crimson:precision', 'verdant', 'violet:insight', 'azure:armor',
+    'violet:focus', 'verdant:renewal', 'black', 'gold:evasion', 'violet', 'black:gamble', 'black:ruin',
+)
 CONTRACT_PATTERNS = {
     '緋紅三疊': ('crimson',) * 3,
     '蒼藍三疊': ('azure',) * 3,
@@ -77,29 +92,84 @@ def maze_rules(job):
             rule(3, 3, 'always', 'lowest', 1)]
 
 
-def build_participants(level, count, gear='raid'):
+def build_participants(level, count, gear='raid', *, accessories=False):
     directory = tempfile.TemporaryDirectory()
     store = RPGStore(Path(directory.name) / 'maze-balance.db')
     characters = Characters(store, RPGSettings())
     equipment = (T50_EQUIPMENT if level < 60 else
                  T60_MAZE_EQUIPMENT if gear == 'maze' else T60_RAID_EQUIPMENT)
     participants = []
-    for index in range(count):
-        user_id, job = index + 1, JOBS[index % len(JOBS)]
-        store.award_voice([(1, user_id, level_floor(level))])
-        characters.change_job(1, user_id, job)
-        for item_id in equipment[job]:
-            characters.grant_item(1, user_id, item_id)
-            characters.equip(1, user_id, item_id)
-        participants.append({
-            'id': user_id, 'name': f'{job}{index + 1}',
-            'state': characters.snapshot(1, user_id),
-            'rules': [asdict(item) for item in maze_rules(job)],
-            'passive_id': 1,
-        })
-    store.close()
-    directory.cleanup()
+    try:
+        for index in range(count):
+            user_id, job = index + 1, JOBS[index % len(JOBS)]
+            store.award_voice([(1, user_id, level_floor(level))])
+            characters.change_job(1, user_id, job)
+            for item_id in equipment[job]:
+                characters.grant_item(1, user_id, item_id)
+                characters.equip(1, user_id, item_id)
+            if accessories:
+                with store.db:
+                    store.db.execute('INSERT OR REPLACE INTO rpg_wallets VALUES (?,?,?)', (1, user_id, 10000))
+                for slot, item_id in enumerate(FULL_ACCESSORIES[job], 1):
+                    instance_id = characters.grant_item(1, user_id, item_id)[0]
+                    token = f'instance:{instance_id}'
+                    characters.embroider_accessory(1, user_id, token, ACCESSORY_EMBROIDERY[job])
+                    characters.equip(1, user_id, token, slot)
+            participants.append({
+                'id': user_id, 'name': f'{job}{index + 1}',
+                'state': characters.snapshot(1, user_id),
+                'rules': [asdict(item) for item in maze_rules(job)],
+                'passive_id': 1,
+            })
+    finally:
+        store.close()
+        directory.cleanup()
     return participants
+
+
+def offered_contract(seed, checkpoint, chosen):
+    """Prefer a new colour and then a balanced benefit; never see future offers."""
+    colors = Counter(COLOR_CONTRACTS[key]['color'] for key in chosen)
+    candidates = PaintedMazeStore._contract_candidates({'seed': seed}, checkpoint)
+    return min(candidates, key=lambda key: (colors[COLOR_CONTRACTS[key]['color']], BALANCED_PRIORITY.index(key)))
+
+
+def benchmark(seeds=200, *, counts=(4, 8), level=60, accessories=True, seed_start=0):
+    """Actual offered contracts, persistent HP and unconditional complete-run rates."""
+    rows = []
+    for count in counts:
+        participants = build_participants(level, count, accessories=accessories)
+        stage_clears = [0, 0, 0]
+        failures = Counter()
+        wins = Counter()
+        final_results = {route: Counter() for route in ('noah', 'shadow')}
+        for seed in range(seed_start, seed_start + seeds):
+            paintings = draw_painting_route(seed)
+            contracts, hp = [], None
+            for index, painting in enumerate(paintings):
+                result = simulate_painting(deepcopy(participants), painting, seed + 7919 * (index + 1),
+                                            index + 1, contracts, hp)
+                if result['result'] != '勝利':
+                    failures[f'{index + 1}:{painting["base_kind"]}:{result["result"]}'] += 1
+                    break
+                stage_clears[index] += 1
+                hp = result['party_state']
+                contracts.append(offered_contract(seed, index + 1, contracts))
+            else:
+                for route in ('noah', 'shadow'):
+                    result = simulate_final_battle(dict(status='running', boss_index=3, seed=seed,
+                        paintings=paintings, participants=deepcopy(participants), route=route,
+                        contracts=contracts, party_state=deepcopy(hp)))
+                    final_results[route][result['result']] += 1
+                    wins[route] += result['result'] == '勝利'
+        rows.append(dict(level=level, players=count, seeds=seeds, seed_start=seed_start,
+            accessories=accessories, gear='raid', contract_policy='new_color_then_balanced',
+            rate_denominator='all_entries',
+            stage_clears=stage_clears, reach_final_rate=stage_clears[-1] / seeds,
+            win_rates={route: wins[route] / seeds for route in final_results},
+            final_results={route: dict(results) for route, results in final_results.items()},
+            painting_failures=dict(failures)))
+    return rows
 
 
 def simulate_run(level, count, route, contracts, seed, gear='raid'):
@@ -108,7 +178,7 @@ def simulate_run(level, count, route, contracts, seed, gear='raid'):
     party_state = None
     painting_rounds = []
     for index, painting in enumerate(paintings):
-        active_contracts = contracts[:index // 3]
+        active_contracts = contracts[:index]
         result = simulate_painting(
             participants, painting, seed + 7919 * (index + 1), index + 1,
             active_contracts, party_state)
@@ -117,11 +187,11 @@ def simulate_run(level, count, route, contracts, seed, gear='raid'):
         if result['result'] != '勝利':
             return {'victory': False, 'painting_rounds': painting_rounds,
                     'final_rounds': None, 'failed_at': index + 1}
-    room = dict(status='running', boss_index=9, participants=participants,
+    room = dict(status='running', boss_index=3, participants=participants,
                 party_state=party_state, contracts=list(contracts), route=route, seed=seed)
     final = simulate_final_battle(room)
     return {'victory': final['result'] == '勝利', 'painting_rounds': painting_rounds,
-            'final_rounds': final['rounds'], 'failed_at': None if final['result'] == '勝利' else 10}
+            'final_rounds': final['rounds'], 'failed_at': None if final['result'] == '勝利' else 4}
 
 
 def simulate_matrix(seeds, levels=(50, 60, 75, 80), counts=(1, 4, 8),
@@ -154,9 +224,17 @@ def main():
                         help='Only run Lv.50/60, 1/8 players and three representative contracts.')
     parser.add_argument('--gear', choices=('raid', 'maze'), default='raid',
                         help='Use current T60 raid gear (default) or cleared Painted Maze gear.')
+    parser.add_argument('--benchmark', action='store_true', help='Benchmark Lv.60, 4/8 players with actual contract offers.')
+    parser.add_argument('--accessories', action='store_true', help='Fill four Lv.60 accessory slots with legal embroidery (benchmark).')
+    parser.add_argument('--seed-start', type=int, default=0, help='First deterministic benchmark seed.')
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error('--seeds must be positive')
+    if args.benchmark:
+        import json
+        for row in benchmark(args.seeds, accessories=args.accessories, seed_start=args.seed_start):
+            print(json.dumps(row, ensure_ascii=False), flush=True)
+        return
     kwargs = {}
     if args.quick:
         kwargs.update(levels=(50, 60), counts=(1, 8), patterns={

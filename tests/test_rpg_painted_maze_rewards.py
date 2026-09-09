@@ -28,23 +28,57 @@ class PaintedMazeRewardTests(unittest.TestCase):
         return {'id': user_id, 'state': {'level': 60, 'job': job,
                 'combat': {'HP': 1000}}, 'rules': [], 'passive_id': None}
 
-    def completed_room(self, entry_item, seed, *, now=100):
-        self.characters.grant_item(1, 1, entry_item)
-        room = self.maze.create(1, 1, entry_item, 60, now=now, seed=seed)
+    def completed_room(self, entry_item, seed, *, now=100, require_entry=True):
+        if require_entry:
+            self.characters.grant_item(1, 1, entry_item)
+        room = self.maze.create(1, 1, entry_item, 60, now=now, seed=seed,
+                                require_entry=require_entry)
         self.maze.change_member(room['id'], 2, 60, now=now + 1)
         room = self.maze.begin(room['id'], 1, [
             self.participant(1, '弓兵'), self.participant(2, '僧侶')], now=now + 2)
         clock = now + 3
         for _stage in range(3):
-            for _boss in range(3):
-                room = self.maze.record_boss_victory(room['id'], 1, now=clock)
-                clock += 1
+            room = self.maze.record_boss_victory(room['id'], 1, now=clock)
+            clock += 1
             room = self.maze.resolve_contract(
                 room['id'], now=room['contract_vote']['deadline'])
             clock = room['last_contract_vote']['deadline'] + 1
         return self.maze.settle_final(
             room['id'], 1, '勝利', {'round': 12},
             {'1': {'hp': 500}, '2': {'hp': 600}}, now=clock)
+
+    def test_admin_rooms_grant_nothing_on_both_routes_or_recovery(self):
+        from types import SimpleNamespace
+        from core.rpg_painted_maze_service import PaintedMazeService
+
+        service = PaintedMazeService(SimpleNamespace(store=self.rpg, bot=None))
+        tables = ('players', 'rpg_wallets', 'rpg_inventory', 'rpg_crystal_instances',
+                  'rpg_painted_maze_noah_clears', 'rpg_painted_maze_final_rewards',
+                  'rpg_painted_maze_currency_rewards')
+        before = {table: self.rpg.db.execute(f'SELECT * FROM {table}').fetchall()
+                  for table in tables}
+        for index, entry in enumerate(('noah:unfinished', 'painting:balloon')):
+            room = self.completed_room(entry, 900 + index, now=100 + index * 1000,
+                                       require_entry=False)
+            for stage in (1, 2, 3):
+                self.assertEqual(self.crystals.seal_stage(room['id'], stage), [])
+            for checkpoint in (1, 2, 3, 4):
+                self.assertEqual(self.rewards.seal_currency(room['id'], checkpoint), [])
+            if index == 0:
+                self.assertEqual(self.rewards.seal_noah_clear(room['id']), [])
+            else:
+                self.assertEqual(self.crystals.seal_shadow_bonus(room['id']), [])
+            for _ in range(2):
+                recovered = service.recover_rewards(room['id'])
+                self.assertEqual(recovered['reward_due'], [])
+            embed = service.room_embed(recovered)
+            self.assertIn('無獎勵測試', [field.name for field in embed.fields])
+        for table in tables:
+            self.assertEqual(self.rpg.db.execute(f'SELECT * FROM {table}').fetchall(),
+                             before[table], table)
+        regular = self.completed_room('noah:unfinished', 902, now=3000)
+        self.assertTrue(all(row['status'] == 'box_granted'
+                            for row in self.rewards.seal_noah_clear(regular['id'])))
 
     def test_noah_first_clear_is_choice_and_retry_does_not_duplicate(self):
         room = self.completed_room('noah:unfinished', 101)

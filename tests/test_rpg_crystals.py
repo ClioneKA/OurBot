@@ -37,11 +37,15 @@ class CrystalStoreTests(unittest.TestCase):
             {'id': 2, 'state': {'level': 60, 'job': '僧侶', 'combat': {'HP': 1000}}},
         ]
         self.room = self.maze.begin(room['id'], 1, participants, now=110)
+        # These inventory/socket tests use legacy immediately released rewards.
+        # Escrow and final-risk payouts are exercised in test_rpg_painted_maze_live.
+        self.room.pop('reward_policy')
+        with self.rpg.db:
+            self.maze._save(self.room)
 
     def finish_stage(self, stage, now):
-        for _ in range(3):
-            self.room = self.maze.record_boss_victory(self.room['id'], 1, now=now)
-            now += 1
+        self.room = self.maze.record_boss_victory(self.room['id'], 1, now=now)
+        now += 1
         return now
 
     def resolve_vote(self, now):
@@ -55,7 +59,7 @@ class CrystalStoreTests(unittest.TestCase):
         self.assertEqual([crystal.crystal_type for crystal in stage_one], ['outline', 'outline'])
         self.assertTrue(all(crystal.affix_id in OUTLINE_AFFIXES for crystal in stage_one))
         self.assertEqual(len({crystal.instance_id for crystal in stage_one}), 2)
-        self.assertEqual(stage_one[0].source_painting_id, self.room['paintings'][2]['id'])
+        self.assertEqual(stage_one[0].source_painting_id, self.room['paintings'][0]['id'])
 
         now = self.resolve_vote(now)
         now = self.finish_stage(2, now)

@@ -52,6 +52,10 @@ class PaintedMazeRewardStore:
             if not row:
                 raise CharacterError('找不到繪境迷廊房間。')
             room = json.loads(row[0])
+            if not room.get('requires_entry', True):
+                return []  # Administrator-created practice rooms never grant rewards.
+            if room.get('reward_policy') == 'escrow_v2' and room['status'] in ('lobby', 'running', 'contract'):
+                raise CharacterError('累積掉落會在離場時統一發放。')
             if checkpoint <= 3 and room.get('stage', 0) < checkpoint:
                 raise CharacterError('這個階段尚未完成。')
             if checkpoint == 4 and room.get('status') != 'completed':
@@ -73,6 +77,14 @@ class PaintedMazeRewardStore:
                                 + tavern.get('xp_percent', 0)
                                 + meal.get('xp_percent', 0)) // 100
                 gold = base_gold * (100 + meal.get('gold_percent', 0)) // 100
+                if room.get('loot_percent', 100) == 50:
+                    # Round the cumulative total, not each checkpoint separately.
+                    xp_bonus = 100 + fortune.get('xp_percent', 0) + tavern.get('xp_percent', 0) + meal.get('xp_percent', 0)
+                    gold_bonus = 100 + meal.get('gold_percent', 0)
+                    prior_xp = sum(CHECKPOINT_REWARDS[i][0] * xp_bonus // 100 for i in range(1, checkpoint))
+                    prior_gold = sum(CHECKPOINT_REWARDS[i][1] * gold_bonus // 100 for i in range(1, checkpoint))
+                    xp = (prior_xp + xp) // 2 - prior_xp // 2
+                    gold = (prior_gold + gold) // 2 - prior_gold // 2
                 self.db.execute('''INSERT INTO rpg_painted_maze_currency_rewards
                     VALUES (?,?,?,?,?,?,?)''',
                     (room_id, checkpoint, room['guild_id'], user_id, xp, gold, now))
@@ -158,6 +170,8 @@ class PaintedMazeRewardStore:
             if not row:
                 raise CharacterError('找不到繪境迷廊房間。')
             room = json.loads(row[0])
+            if not room.get('requires_entry', True):
+                return []  # Administrator-created practice rooms never grant rewards.
             if room.get('route') != 'noah' or room.get('status') != 'completed':
                 raise CharacterError('尚未擊敗繪畫魔女，不能封存菁英裝備。')
             jobs = {participant['id']: participant['state']['job']

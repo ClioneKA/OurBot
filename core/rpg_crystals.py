@@ -249,13 +249,23 @@ class CrystalStore:
             if not row:
                 raise CharacterError('找不到繪境迷廊房間。')
             room = json.loads(row[0])
-            if room.get('stage', 0) < stage or room.get('boss_index', 0) < stage * 3:
+            if not room.get('requires_entry', True):
+                return []  # Administrator-created practice rooms never grant rewards.
+            if room.get('reward_policy') == 'escrow_v2' and room['status'] in ('lobby', 'running', 'contract'):
+                raise CharacterError('累積掉落會在離場時統一發放。')
+            per_stage = max(1, len(room['paintings']) // 3)
+            if room.get('stage', 0) < stage or room.get('boss_index', 0) < stage * per_stage:
                 raise CharacterError('這個階段尚未完成，不能封存結晶。')
-            painting = room['paintings'][stage * 3 - 1]
+            painting = room['paintings'][stage * per_stage - 1]
             jobs = {participant['id']: participant['state']['job']
                     for participant in room['participants']}
             granted = []
             for user_id in room['members']:
+                if room.get('loot_percent', 100) == 50:
+                    stages = list(range(1, room['stage'] + 1))
+                    random.Random(f'{room["seed"]}:retained:{user_id}').shuffle(stages)
+                    if stage not in stages[:(len(stages) + 1) // 2]:
+                        continue
                 existing = self.db.execute('''SELECT instance_id FROM rpg_crystal_instances
                     WHERE source_room_id=? AND source_stage=? AND source_user_id=? AND reward_slot=0''',
                     (room_id, stage, user_id)).fetchone()
@@ -294,6 +304,8 @@ class CrystalStore:
             if not row:
                 raise CharacterError('找不到繪境迷廊房間。')
             room = json.loads(row[0])
+            if not room.get('requires_entry', True):
+                return []  # Administrator-created practice rooms never grant rewards.
             if room.get('route') != 'shadow' or room.get('status') != 'completed':
                 raise CharacterError('尚未擊敗繪畫之影，不能封存額外結晶。')
             jobs = {participant['id']: participant['state']['job']

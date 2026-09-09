@@ -2,7 +2,7 @@ from dataclasses import asdict
 import unittest
 
 from core.rpg_battle import Battle, Fighter, SKILLS, default_rules, dump_battle, load_battle
-from core.rpg_painted_maze import draw_painting_route
+from core.rpg_painted_maze import COLOR_CONTRACTS, draw_painting_route
 from core.rpg_painted_maze_battle import (
     FINAL_MAX_ROUNDS,
     PAINTING_MAX_ROUNDS,
@@ -45,11 +45,11 @@ class PaintedMazeBattleTests(unittest.TestCase):
         painting = draw_painting_route(3)[0]
         solo = painting_monster(painting, 1)
         party = painting_monster(painting, 8)
-        self.assertEqual((solo['content_level'], solo['tier'], solo['quality']), (50, 5, '普通'))
+        self.assertEqual((solo['content_level'], solo['tier'], solo['quality']), (55, 5, '普通'))
         self.assertAlmostEqual(
             party['profile']['hp'] * 8 / solo['profile']['hp'], 1 + .85 * 7)
-        self.assertAlmostEqual(solo['profile']['attack'] / STAGE_PROFILE[50]['attack'], .55)
-        self.assertAlmostEqual(party['profile']['attack'] / STAGE_PROFILE[50]['attack'], 1.15)
+        self.assertAlmostEqual(solo['profile']['attack'] / STAGE_PROFILE[55]['attack'], 1.0)
+        self.assertAlmostEqual(party['profile']['attack'] / STAGE_PROFILE[55]['attack'], 1.15)
         self.assertEqual(solo['name'], painting['name'])
 
     def test_contracts_apply_party_benefits_and_violet_checks_target_debuff(self):
@@ -120,7 +120,7 @@ class PaintedMazeBattleTests(unittest.TestCase):
 
     def test_final_routes_apply_contract_benefits_backlash_and_carried_hp(self):
         room = {
-            'status': 'running', 'boss_index': 9, 'seed': 71, 'route': 'noah',
+            'status': 'running', 'boss_index': 3, 'seed': 71, 'route': 'noah',
             'participants': [participant()], 'contracts': ['gold', 'gold', 'black'],
             'party_state': {'1': {'hp': 888}},
         }
@@ -131,7 +131,7 @@ class PaintedMazeBattleTests(unittest.TestCase):
         boss = next(f for f in battle.fighters if f.team == 1 and f.is_boss)
         self.assertEqual((battle.max_rounds, player.hp), (FINAL_MAX_ROUNDS, 888))
         self.assertEqual(player.cooldown_reduction, 1)
-        self.assertEqual(boss.damage_dealt_percent, 3)
+        self.assertEqual(boss.damage_dealt_percent, 8)
         self.assertEqual(battle.mechanics['maze_final_contracts'], {'gold': 2, 'black': 1})
 
         shadow = dict(room, route='shadow')
@@ -139,6 +139,21 @@ class PaintedMazeBattleTests(unittest.TestCase):
         result = simulate_final_battle(shadow)
         self.assertLessEqual(result['rounds'], FINAL_MAX_ROUNDS)
         self.assertIn(result['result'], ('勝利', '戰敗', '平手', '平手（達回合上限）'))
+
+    def test_every_third_contract_variant_keeps_backlash_after_battle_reload(self):
+        from collections import Counter
+        for route in ('noah', 'shadow'):
+            for key, contract in COLOR_CONTRACTS.items():
+                with self.subTest(route=route, third=key):
+                    contracts = ['gold', 'black', key]
+                    battle = load_battle(dump_battle(build_final_battle({
+                        'status': 'running', 'boss_index': 3, 'seed': 71, 'route': route,
+                        'participants': [participant()], 'contracts': contracts})))
+                    colors = [COLOR_CONTRACTS[item]['color'] for item in contracts]
+                    self.assertEqual(battle.mechanics['maze_final_contracts'], dict(Counter(colors)))
+                    self.assertEqual(battle.mechanics['maze_final_skills'][2], contract['color'])
+                    boss = next(f for f in battle.fighters if f.team == 1 and f.is_boss)
+                    self.assertEqual(boss.damage_dealt_percent, 8 * colors.count('black'))
 
     def test_final_contract_backlash_shield_counter_corruption_heal_and_extra_action(self):
         stats = {'HP': 1000, '攻擊': 100, '防禦': 100, '治療量': 0,
@@ -205,7 +220,7 @@ class PaintedMazeBattleTests(unittest.TestCase):
 
     def test_final_phase_transition_add_and_shadow_skill_cycle(self):
         room = {
-            'status': 'running', 'boss_index': 9, 'seed': 888, 'route': 'noah',
+            'status': 'running', 'boss_index': 3, 'seed': 888, 'route': 'noah',
             'participants': [participant()], 'contracts': ['crimson', 'azure', 'violet'],
             'party_state': {'1': {'hp': 1500}},
         }
