@@ -69,6 +69,7 @@ class FarmingView(discord.ui.View):
 
     def embed(self, notice=None):
         state = self.cog.farming.state(self.guild_id, self.owner.id)
+        inventory = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         level, progress, required = farming_progress(state['xp'])
         xp_text = (f'已達最高等級 Lv.{MAX_LEVEL}｜累積 {state["xp"]:,} XP' if required is None
                    else f'{progress:,}／{required:,} XP｜累積 {state["xp"]:,} XP')
@@ -83,12 +84,14 @@ class FarmingView(discord.ui.View):
             else:
                 plant = PLANTS[session['plant_id']]
                 ready = time.time() >= session['ready_at']
-                value = f'{plant.name}｜種植時 Lv.{session["level_snapshot"]}\n' + (
+                value = (f'{plant.name}｜種植時 Lv.{session["level_snapshot"]}\n'
+                         f'背包持有 ×{inventory.get(plant.item_id, 0):,}\n') + (
                     '**已成熟，可以收成！**' if ready else f'<t:{int(session["ready_at"])}:R>成熟')
             embed.add_field(name=location_name, value=value, inline=True)
         selected = PLANTS[self.plant_id]
         embed.add_field(name='目前選擇', value=
                         f'{LOCATIONS[self.location_id]}｜{selected.name}\n'
+                        f'背包持有 ×{inventory.get(selected.item_id, 0):,}\n'
                         f'成長 {growth_text(selected.seconds)}｜基礎收成 {selected.base_yield}｜每份 {selected.xp_each} XP\n'
                         f'料理：{selected.role}', inline=False)
         embed.add_field(name='成熟通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
