@@ -108,7 +108,8 @@ class TavernStoreTests(unittest.TestCase):
         repo = RaidStore(self.store)
         monster = prepare_monster(dict(kind='巨獸', name='測試巨獸', description='測試'), quality='普通')
         raid = repo.create(1, 2, monster, 200,
-                           dict(victory_xp=100, victory_gold=0, drop_chance=0.0), use_dynamic=False)
+                           dict(victory_xp=100, victory_gold=0, drop_chance=0.0),
+                           reward_overrides={'victory_xp': 100}, use_dynamic=False)
         participant['tavern'] = self.tavern.prepare_for_raid(raid['id'], 1, [2], now=200)[2]
         raid.update(status='running', participants=[participant], members=[2])
         repo.save(raid)

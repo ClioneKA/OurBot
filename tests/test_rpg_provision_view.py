@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock
 
+import discord
+
 from core.rpg import RPGStore
 from core.rpg_character import Characters
 from core.rpg_provision_view import ProvisionView
@@ -56,7 +58,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         view.ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
         data = self.provisions.preview(view.ingredients, 1, 1)
         self.tavern.serve_meal.return_value = (
-            SimpleNamespace(jump_url='https://discord.test/meal'), {'data': data})
+            SimpleNamespace(jump_url='https://discord.test/meal'),
+            {'capacity': data['capacity'], 'data': data})
         await view.handle(self.interaction, 'cook')
         self.interaction.response.defer.assert_awaited_once()
         self.tavern.serve_meal.assert_awaited_once()
@@ -70,7 +73,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(view.stop)
         view.ingredients = ['fishing:pond:common'] * 5
         view.rebuild()
-        cook = next(child for child in view.children if child.label == '完成料理並開桌')
+        cook = next(child for child in view.children
+                    if isinstance(child, discord.ui.Button) and child.label == '完成料理並開桌')
         self.assertFalse(cook.disabled)
 
         view.ingredients = ['fishing:pond:common']
@@ -79,7 +83,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.ingredients, [])
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('捐給監獄', embed.fields[-1].value)
-        load = next(child for child in view.children if child.label == '載入上一份配方')
+        load = next(child for child in view.children
+                    if isinstance(child, discord.ui.Button) and child.label == '載入上一份配方')
         self.assertFalse(load.disabled)
         await view.handle(self.interaction, 'repeat')
         self.assertEqual(view.ingredients, ['fishing:pond:common'])
@@ -97,7 +102,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
             {'capacity': data['capacity'], 'data': data})
 
         view.rebuild()
-        cook = next(child for child in view.children if child.label == '完成料理並開桌')
+        cook = next(child for child in view.children
+                    if isinstance(child, discord.ui.Button) and child.label == '完成料理並開桌')
         self.assertFalse(cook.disabled)
         await view.handle(self.interaction, 'cook')
 
@@ -113,7 +119,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
 
-        repeat = next(child for child in view.children if child.label == '載入上一份配方')
+        repeat = next(child for child in view.children
+                      if isinstance(child, discord.ui.Button) and child.label == '載入上一份配方')
         self.assertFalse(repeat.disabled)
         await view.handle(self.interaction, 'repeat')
 
@@ -132,7 +139,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         view = ProvisionView(self.cog, self.interaction)
         self.addCleanup(view.stop)
 
-        repeat = next(child for child in view.children if child.label == '載入上一份配方')
+        repeat = next(child for child in view.children
+                      if isinstance(child, discord.ui.Button) and child.label == '載入上一份配方')
         self.assertTrue(repeat.disabled)
 
     async def test_recipe_presets_save_rename_select_load_and_clear(self):

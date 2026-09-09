@@ -102,14 +102,17 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         battle.result = '勝利'
 
         class FixedRng:
-            values = iter((0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+            def __init__(self):
+                self.values = iter((0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+
             def random(self):
                 return next(self.values)
             @staticmethod
             def choice(values):
                 return values[0]
 
-        with patch('core.rpg_raid_store.random.Random', return_value=FixedRng()):
+        # Equipment/paint and food use independent random streams.
+        with patch('core.rpg_raid_store.random.Random', side_effect=lambda seed: FixedRng()):
             result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.mid_raid)
         self.assertIn(result['rewards'][0]['item'], ('noah:archer:weapon', 'noah:archer:suit'))
         self.assertEqual(result['rewards'][0]['chance_items'], ['paint:red'] * 3)
@@ -394,7 +397,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
     async def test_difficulty_scales_announced_rewards_and_preserves_overrides(self):
         policy = asdict(self.settings.raid)
         cases = [(0.5, '巨獸', {}, 150, 50), (1.5, '巨獸', {}, 450, 150),
-                 (3.0, '巨獸', {}, 900, 300), (1.5, '史萊姆群', {}, 1500, 300),
+                 (3.0, '巨獸', {}, 900, 300), (1.5, '史萊姆群', {}, 450, 300),
                  (1.5, '史萊姆群', {'victory_xp': 7}, 7, 300),
                  (1.5, '巨獸', {'victory_xp': 0, 'victory_gold': 9}, 0, 9),
                  (1.089, '巨獸', {}, 326, 108)]
@@ -500,7 +503,8 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         finish('勝利', 10, quality='首領')
         self.assertEqual(self.repo.difficulty(1, 8), 1.281375)
         finish('戰敗', 10, remaining_percent=80, quality='傳說')
-        self.assertEqual(self.repo.difficulty(1, 8), 1.262154)
+        # 20% HP depleted: defeat penalty is 25%, weighted by legendary's 0.1.
+        self.assertEqual(self.repo.difficulty(1, 8), 1.249341)
 
         with self.store.db:
             self.store.db.execute(
@@ -592,7 +596,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy['victory_xp'], 400)
         self.assertEqual(raid['reward_policy']['drop_chance'], 0)
         text = self.service.lobby_embed(raid).fields[-1].value
-        self.assertIn('800 XP', text)
+        self.assertIn('400 XP', text)
         self.assertIn('300 金幣', text)
         self.assertIn('不掉落飾品', text)
         raid.update(status='running', participants=[self.participant()], members=[1])
@@ -602,7 +606,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         result = self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
         reward = result['rewards'][0]
         self.assertEqual({key: reward[key] for key in ('id', 'xp', 'gold', 'item')},
-                         dict(id=1, xp=800, gold=300, item=None))
+                         dict(id=1, xp=400, gold=300, item=None))
         self.repo.settle(raid['id'], dump_battle(battle), self.settings.raid)
         self.assertEqual(self.store.gold(1, 1), 300)
         inventory = self.characters.inventory(1, 1)
