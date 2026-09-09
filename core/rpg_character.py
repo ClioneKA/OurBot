@@ -676,6 +676,13 @@ def item_display_name(item):
     return f'T{tier}｜{item.name}'
 
 
+def equipment_slot_text(state):
+    return '\n'.join(
+        f'{slot}：{item_display_name(ITEMS[state["equipped"][slot]])}'
+        if slot in state['equipped'] else f'{slot}：空'
+        for slot in state['slots'])
+
+
 def inventory_entry_label(entry, equipped_ids):
     status = '【已裝備】' if entry.instance_id in equipped_ids else ''
     identity = f' #{entry.instance_id}' if entry.instance_id else ''

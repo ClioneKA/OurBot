@@ -1297,7 +1297,7 @@ class Battle:
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
             taunters = [f for f in enemies if f.has('taunt', self.round)]
-            targetable_enemies = (enemies if skill.effect in ('area', 'cleave')
+            targetable_enemies = (enemies if skill.effect in ('area', 'cleave', 'holy_light')
                                   else taunters or enemies)
             threshold = condition_value(rule.condition, rule.condition_value)
             if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * threshold:

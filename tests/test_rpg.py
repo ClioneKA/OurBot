@@ -233,7 +233,12 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await panel.handle(interaction, 'wear')
                 self.assertEqual(cog.characters.snapshot(1, 10)['total'][0], before + 3)
                 equipment = cog.adventurer_embed(1, user).fields[0].value.splitlines()
-                self.assertEqual([line.split('：', 1)[0] for line in equipment], ['武器', '套裝', '飾品5'])
+                self.assertEqual([line.split('：', 1)[0] for line in equipment],
+                                 ['武器', '套裝', '飾品1', '飾品2', '飾品3', '飾品4', '飾品5'])
+                self.assertIn('飾品1：空', equipment)
+                equipment_field = next(field.value for field in panel.embed().fields
+                                       if field.name.startswith('裝備欄・'))
+                self.assertEqual('\n'.join(equipment), equipment_field)
                 await panel.handle(interaction, 'remove')
                 self.assertEqual(cog.characters.snapshot(1, 10)['total'][0], before)
                 await panel.handle(interaction, 'home')

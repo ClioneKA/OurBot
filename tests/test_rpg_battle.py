@@ -13,6 +13,28 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_holy_light_enemy_condition_ignores_taunt_and_keeps_healing_target(self):
+        actor = fighter(job='僧侶', rules=[
+            Rule(1, 1, True, 'enemy_hp_lte', 'lowest', 5, 50)])
+        ally = fighter('injured ally', rules=[])
+        ally.hp = 20
+        tank = fighter('taunting enemy', 1, rules=[])
+        tank.effects['taunt'] = 99
+        other = fighter('injured enemy', 1, rules=[])
+        other.hp = 50
+        battle = Battle([actor, ally, tank, other], seed=1)
+        selected = battle.select(actor)
+        self.assertIsNotNone(selected)
+        rule, skill, target = selected
+        self.assertIs(target, ally)
+        with patch.object(battle, 'hit') as hit:
+            battle.use_skill(actor, rule, skill, target)
+        self.assertEqual([call.args[1] for call in hit.call_args_list], [tank, other])
+        self.assertGreater(ally.hp, 20)
+        actor.ready.clear()
+        other.hp = other.stats['HP']
+        self.assertIsNone(battle.select(actor))
+
     def test_basic_target_applies_with_taunt_fallback_and_snapshot(self):
         actor = fighter(rules=[])
         boss = fighter('boss', 1, rules=[])

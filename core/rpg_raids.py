@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import tasks
 
+from core.rpg import level_for
 from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_expeditions import require_not_expedition
@@ -261,6 +262,11 @@ class RaidService:
             logger.warning('Raid monster generation fallback: %s', type(exc).__name__)
         return monster
 
+    def lobby_roster(self, raid):
+        guild_id = raid['guild_id']
+        return tuple((uid, level_for(self.cog.store.xp(guild_id, uid)),
+                      self.cog.characters.job(guild_id, uid)) for uid in raid['members'])
+
     def lobby_embed(self, raid):
         channel_settings = self.settings_for_channel(raid['channel_id']) if hasattr(self, 'settings_for_channel') else self.settings
         policy = SimpleNamespace(**raid['reward_policy']) if raid.get('reward_policy') else channel_settings
@@ -312,7 +318,9 @@ class RaidService:
         minimum = raid_min_level(raid)
         requirement = f'｜需 Lv.{minimum}' if minimum > 1 else ''
         embed.add_field(name=f'參與者 {len(raid["members"])}/{channel_settings.max_participants}{requirement}',
-                        value=' '.join(f'<@{uid}>' for uid in raid['members']) or '等待冒險者加入', inline=False)
+                        value='\n'.join(f'<@{uid}>｜Lv.{level} {job}'
+                                        for uid, level, job in self.lobby_roster(raid)) or '等待冒險者加入',
+                        inline=False)
         if raid['monster']['kind'] == SPECIAL_KIND:
             primary = PAINT_COLOR_NAMES[raid['monster']['primary_color']]
             embed.add_field(name='階級／起始顏料', value=f'四階｜{primary}', inline=False)
@@ -468,7 +476,7 @@ class RaidService:
                 raid.update(status='cancelled', reason='討伐活動已停用。')
                 self.repo.save(raid)
             elif now < raid['deadline']:
-                roster = tuple(raid['members'])
+                roster = self.lobby_roster(raid)
                 if self.rosters.get(raid['id']) != roster:
                     await message.edit(embed=self.lobby_embed(raid), view=self.signup(raid), allowed_mentions=discord.AllowedMentions.none())
                     self.rosters[raid['id']] = roster

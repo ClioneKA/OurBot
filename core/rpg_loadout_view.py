@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_battle import Rule, TARGETS, condition_text, passive_description, rule_skill
+from core.rpg_battle import Rule, TARGETS, FIXED_TARGETS, condition_text, passive_description, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import add_back, navigate
@@ -79,7 +79,8 @@ class LoadoutView(discord.ui.View):
                     rule = Rule(**raw)
                     skill = rule_skill(data['job'], rule)
                     status = '' if rule.enabled else '【停用】'
-                    rules.append(f'{rule.priority}. {status}{skill.name}｜{condition_text(rule.condition, rule.condition_value)}｜{TARGETS[rule.target]}')
+                    target = FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])
+                    rules.append(f'{rule.priority}. {status}{skill.name}｜{condition_text(rule.condition, rule.condition_value)}｜{target}')
                 except (KeyError, TypeError, IndexError, CharacterError):
                     rules.append('技能資料已失效')
             passive = next((passive for passive in self.cog.tactics.available_passives(
