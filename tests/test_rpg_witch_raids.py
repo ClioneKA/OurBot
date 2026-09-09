@@ -298,6 +298,99 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertEqual(len(buttons), 1)
         self.assertEqual(buttons[0].action['action'], ACTION_ATTACK)
 
+    async def test_round_resolution_refreshes_all_private_panels_and_clears_finished_views(self):
+        room, _, channel = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        for player in b.living(0):
+            player.hp = player.stats['HP'] = 100000
+        b._player(1).ready[1] = 3
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
+                    round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        panels = [SimpleNamespace(edit_original_response=AsyncMock()) for _ in range(2)]
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            for uid, interaction in enumerate(panels, 1):
+                await self.service.refresh_private_panel(room, uid, interaction)
+            old_view = self.service.private_panels[(room['id'], 1)]['view']
+            await self.service._resolve(room, b, timeout=True)
+            for interaction in panels:
+                self.assertEqual(interaction.edit_original_response.await_count, 2)
+                args = interaction.edit_original_response.call_args.kwargs
+                self.assertIn('第 2 回合', args['content'])
+                self.assertEqual(args['view'].planning_round, 2)
+                self.assertTrue(args['view'].confirm.disabled)
+            self.assertTrue(old_view.is_finished())
+            # One vanished private message must not block the other player's update.
+            panels[0].edit_original_response.side_effect = discord.NotFound(SimpleNamespace(status=404, reason='Missing'), 'gone')
+            await self.service._resolve(room, b, timeout=True)
+            self.assertNotIn((room['id'], 1), self.service.private_panels)
+            self.assertIn('第 3 回合', panels[1].edit_original_response.call_args.kwargs['content'])
+            b.result = '戰敗'
+            await self.service._resolve(room, b)
+            self.assertIn('戰鬥已結束', panels[1].edit_original_response.call_args.kwargs['content'])
+            self.assertIsNone(panels[1].edit_original_response.call_args.kwargs['view'])
+            self.assertFalse(self.service.private_panels)
+
+    async def test_private_refresh_runs_even_if_public_update_fails_and_retries_latest_state(self):
+        room, _, channel = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)), round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        interaction = SimpleNamespace(edit_original_response=AsyncMock())
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), patch('core.rpg_total_raids.logger.exception'):
+            await self.service.refresh_private_panel(room, 1, interaction)
+            failure = discord.HTTPException(SimpleNamespace(status=500, reason='Server Error'), 'retry')
+            channel.message.edit.side_effect = failure
+            with self.assertRaises(discord.HTTPException):
+                await self.service._resolve(room, b, timeout=True)
+            self.assertIn('第 2 回合', interaction.edit_original_response.call_args.kwargs['content'])
+            interaction.edit_original_response.side_effect = failure
+            await self.service.refresh_private_panels(room)
+            self.assertIn('retry_at', self.service.private_panels[(room['id'], 1)])
+            interaction.edit_original_response.side_effect = None
+            await self.service.refresh_private_panels(self.service.repo.get(room['id']))
+            self.assertNotIn('retry_at', self.service.private_panels[(room['id'], 1)])
+
+    async def test_surrender_requires_all_living_votes_supports_revoke_and_no_rewards(self):
+        room, _, channel = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        for player in b.living(0)[2:]:
+            player.hp = 0
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)), round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.vote_surrender(room['id'], 1, 1)
+            self.assertEqual(self.service.repo.get(room['id'])['surrender_votes'], [1])
+            await self.service.vote_surrender(room['id'], 1, 1)
+            self.assertEqual(self.service.repo.get(room['id'])['surrender_votes'], [])
+            with self.assertRaises(TotalRaidError):
+                await self.service.vote_surrender(room['id'], 3, 1)
+            with self.assertRaisesRegex(TotalRaidError, '過期'):
+                await self.service.vote_surrender(room['id'], 1, 0)
+            await self.service.vote_surrender(room['id'], 1, 1)
+            self.service = TotalRaidService(self.cog)
+            await self.service.vote_surrender(room['id'], 2, 1)
+        saved = self.service.repo.get(room['id'])
+        ended = load_total_battle(saved['battle'])
+        self.assertEqual(saved['status'], 'completed')
+        self.assertEqual(ended.result, '投降')
+        self.assertEqual(ended.round, 0)
+        self.assertIsNone(saved['round_deadline'])
+        self.assertIn('投降', ended.mechanics['witch_round_logs'][-1][0])
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 0)
+        self.assertFalse(self.characters.unlocked_witch_embroideries(1, 1))
+
+    async def test_partial_surrender_vote_expires_on_round_resolution(self):
+        room, _, _ = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)), round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.vote_surrender(room['id'], 1, 1)
+            room = self.service.repo.get(room['id'])
+            await self.service._resolve(room, b, timeout=True)
+        self.assertEqual(self.service.repo.get(room['id'])['surrender_votes'], [])
+
     async def test_archive_retries_before_deleting_and_does_not_duplicate_on_delete_retry(self):
         room, _, channel = await self.setup_witch_room()
         announcement = FakeChannel(80, channel.guild)

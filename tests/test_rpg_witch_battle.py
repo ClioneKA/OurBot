@@ -82,9 +82,10 @@ class WitchBattleTests(unittest.TestCase):
         b = self.make(ids=('ema', 'hiro', 'margo'))
         first, second = b.living(0)[:2]
         first.status_stacks['factor'] = 3
+        first.effects['factor'] = second.effects['factor'] = 10
         b.prepare(b.witch('ema'))
         self.assertEqual(b.pending['ema']['targets'], [b.key(first)])
-        first.status_stacks['factor'] = 0
+        first.status_stacks['factor'] = 1
         second.status_stacks['factor'] = 3
         b = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
         b.hit = Mock(return_value=True)
@@ -92,6 +93,34 @@ class WitchBattleTests(unittest.TestCase):
         b.spell(b.witch('ema'), b.pending['ema'])
         self.assertEqual(b.hit.call_args.args[1].user_id, first.user_id)
         self.assertIn('魔女因子', '\n'.join(b.log))
+
+    def test_factor_detonation_requires_live_stacks_in_every_phase(self):
+        for phase in range(3):
+            for removed in ('cleanse', 'expired', 'zero'):
+                b = self.make(ids=('ema', 'hiro', 'anan'))
+                b.dead_once.update(('hiro', 'anan')[:phase])
+                p = b.living(0)[0]
+                b.mark(p, 'factor', 30, True)
+                b.prepare(b.witch('ema'))
+                data = b.pending['ema']
+                if removed == 'cleanse':
+                    b.clear_negative_effects(p)
+                elif removed == 'expired':
+                    p.effects['factor'] = 0
+                else:
+                    p.status_stacks['factor'] = 0
+                b.round = 1
+                b.hit = Mock(return_value=True)
+                b.spell(b.witch('ema'), data)
+                b.hit.assert_not_called()
+                self.assertEqual(b.factor_stacks(p), 0)
+        b = self.make(ids=('ema', 'hiro', 'anan'))
+        p = b.living(0)[0]
+        p.status_stacks['factor'] = 3
+        p.effects['factor'] = 0
+        b.round = 1
+        b.mark(p, 'factor', 30, True)
+        self.assertEqual(b.factor_stacks(p), 1)
 
     def test_announced_single_targets_do_not_follow_new_taunts_or_dead_targets(self):
         for key in ('hiro', 'sherry', 'coco', 'noah'):

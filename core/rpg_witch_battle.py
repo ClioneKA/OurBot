@@ -211,9 +211,9 @@ class WitchRaidBattle(WitchBattleV9):
             if taunter:
                 data['targets'] = [self.key(taunter)]
         if actor.job == 'ema' and kind != 'ema_followup':
-            players = self.living(0)
+            players = [p for p in self.living(0) if self.factor_stacks(p)]
             data['targets'] = [self.key(p) for p in (players if data['phase'] == 2 else
-                [max(players, key=lambda p: p.status_stacks.get('factor', 0))] if players else [])]
+                [max(players, key=self.factor_stacks)] if players else [])]
         if actor.job in ('milia', 'margo'):
             target = self.victim(actor)
             data['followup_target'] = self.key(target) if target else None
@@ -230,7 +230,7 @@ class WitchRaidBattle(WitchBattleV9):
                 and self.round == self.next_cast[actor.job] - 1):
             players = self.living(0)
             opportunity = (
-                actor.job == 'ema' and any(p.status_stacks.get('factor', 0) >= 2 for p in players)
+                actor.job == 'ema' and any(self.factor_stacks(p) >= 2 for p in players)
                 or actor.job == 'meruru' and any(w.hp < w.stats['HP'] * .5 for w in self.witches())
                 or actor.job == 'coco' and sum(p.has('watch', self.round) for p in players) >= 2
                 or actor.job == 'arisa' and self.phase(actor) == 2
@@ -266,6 +266,9 @@ class WitchRaidBattle(WitchBattleV9):
                 line += f'\n行動：施放魔法\n魔法：{ability}\n生效：第 {data["due"]} 回合'
                 if target_names:
                     line += f'\n目標：{target_names}'
+                    if witch.job == 'ema' and data['kind'] != 'ema_followup':
+                        line += '\n魔女因子：' + '、'.join(f'{p.name} {self.factor_stacks(p, turn)} 層' for p in targets if p)
+                        line += '；淨化至 0 層可阻止引爆。'
                 elif witch.job != 'meruru':
                     line += '\n目標：' + ('自己' if witch.job in ('reia', 'milia') else '無有效對象')
                 followup = self.fighter_for_key(data.get('followup_target'))

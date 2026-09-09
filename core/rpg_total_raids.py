@@ -100,9 +100,11 @@ def effect_status(fighter, battle):
                            ('vision', '預知：避免重複行動'), ('doubt', '懷疑'), ('watch', '監視'),
                            ('exchange', '交換標記'), ('no_look', '無法指定召喚畫')):
             if fighter.has(key, turn):
+                if key == 'factor' and not battle.factor_stacks(fighter, turn):
+                    continue
                 debuffs.append(label)
                 if key == 'factor':
-                    debuffs[-1] += f' {fighter.status_stacks.get(key, 0)}/3 層'
+                    debuffs[-1] += f' {battle.factor_stacks(fighter, turn)}/3 層'
         if fighter.team == 0 and battle.forced(fighter, turn):
             debuffs.append('強制普攻隊友')
         for key, label in (('spotlight', '聚光：承接單體攻擊'), ('snake_guard', '白蛇守護'),
@@ -209,7 +211,7 @@ def active_effect_notes(battle):
     """Explain only effects actually displayed, once each for the whole party."""
     turn = battle.planning_round if not battle.result else battle.round
     descriptions = {
-        'factor': '魔女因子：最多 3 層；艾瑪引爆時每層提高傷害，引爆後清空。可淨化；預告後不因層數變動改換目標。',
+        'factor': '魔女因子：最多 3 層，至少 1 層且未過期才能引爆；每層提高傷害，引爆後清空。淨化至 0 層可阻止引爆，預告後不轉移目標。',
         'burn': '火傷：回合結束扣除最大 HP 的 3%；可淨化，會影響亞里沙的擴散與引爆。',
         'brainwash': '洗腦：一般階段傷害轉向隊友、治療轉向魔女；一次／二次魔女化改為強制普攻隊友。不可淨化，打斷安安或使她倒下可解除。',
         'vision': '預知：重複上一回合普攻或同名技能時，本次攻擊力降低 40%；奈葉香魔女化後另追加攻擊。',
@@ -489,6 +491,16 @@ class TotalRaidRunningView(discord.ui.View):
     @discord.ui.button(label='選擇／修改本回合行動', style=discord.ButtonStyle.primary,
                        custom_id='total_raid:running:action')
     async def choose(self, interaction, _button):
+        room = self.service.repo.get(self.room_id)
+        if room and room['boss'] == WITCH_BOSS:
+            await interaction.response.defer(ephemeral=True)
+            try:
+                async with self.service.lock(self.room_id):
+                    room, _battle = self.service.running_battle(self.room_id, interaction.user.id)
+                    await self.service.refresh_private_panel(room, interaction.user.id, interaction)
+            except (CharacterError, TotalRaidError) as exc:
+                await interaction.edit_original_response(content=str(exc), view=None)
+            return
         try:
             room, battle = self.service.running_battle(self.room_id, interaction.user.id)
             cls = WitchPrivateActionView if isinstance(battle, WitchRaidBattle) else TotalRaidActionChoiceView
@@ -582,7 +594,7 @@ class WitchPrivateTargetSelect(discord.ui.Select):
 
 class WitchPrivateActionView(discord.ui.View):
     def __init__(self, service, room_id, user_id, battle):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.service, self.room_id, self.user_id = service, room_id, user_id
         self.planning_round = battle.planning_round
         for action in battle.available_actions(user_id):
@@ -595,6 +607,9 @@ class WitchPrivateActionView(discord.ui.View):
                 self.add_item(WitchPrivateTargetSelect(battle, draft, targets))
         self.confirm.disabled = user_id not in battle.choices or bool(draft)
         self.takeover.disabled = user_id not in battle.auto_players
+        votes = set(room.get('surrender_votes', [])) & battle.living_player_ids()
+        self.surrender.label = ('撤回投降' if user_id in votes else
+                                '投降（結束戰鬥）' if len(battle.living_player_ids()) == 1 else '同意投降')
 
     async def interaction_check(self, interaction):
         if interaction.user.id == self.user_id:
@@ -603,20 +618,9 @@ class WitchPrivateActionView(discord.ui.View):
         return False
 
     async def refresh(self, interaction):
-        room = self.service.repo.get(self.room_id)
-        if room['status'] != 'running':
-            await interaction.edit_original_response(content='戰鬥已結束，請查看公開戰報。', view=None)
-            return
-        battle = load_total_battle(room['battle'])
-        if self.user_id not in battle.living_player_ids():
-            await interaction.edit_original_response(content='你已倒下，請查看公開戰鬥面板。', view=None)
-            return
-        view = WitchPrivateActionView(self.service, self.room_id, self.user_id, battle)
-        content = self.service.player_action_text(battle, self.user_id)
-        draft = room.get('action_drafts', {}).get(str(self.user_id))
-        if draft:
-            content += '\n已選擇行動，請在下方指定目標。'
-        await interaction.edit_original_response(content=content, view=view)
+        async with self.service.lock(self.room_id):
+            room = self.service.repo.get(self.room_id)
+            await self.service.refresh_private_panel(room, self.user_id, interaction)
         self.stop()
 
     @discord.ui.button(label='確認本回合', style=discord.ButtonStyle.success, row=3)
@@ -633,6 +637,15 @@ class WitchPrivateActionView(discord.ui.View):
         await interaction.response.defer()
         try:
             await self.service.takeover_action(self.room_id, self.user_id, expected_round=self.planning_round)
+            await self.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+    @discord.ui.button(label='同意投降', style=discord.ButtonStyle.danger, row=4)
+    async def surrender(self, interaction, _button):
+        await interaction.response.defer()
+        try:
+            await self.service.vote_surrender(self.room_id, self.user_id, self.planning_round)
             await self.refresh(interaction)
         except (CharacterError, TotalRaidError) as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
@@ -797,6 +810,7 @@ class TotalRaidService:
         self.refreshed_announcements = set()
         self.pinned_announcements = {}
         self.witch_pin_retry_at = {}
+        self.private_panels = {}
 
     def start(self):
         self.bot.add_view(WitchDailyView(self))
@@ -817,6 +831,9 @@ class TotalRaidService:
                 pass
         for view in self.views.values():
             view.stop()
+        for panel in self.private_panels.values():
+            panel['view'].stop()
+        self.private_panels.clear()
         pending = list(self.private_cleanup_tasks)
         for pending_task in pending:
             pending_task.cancel()
@@ -837,6 +854,54 @@ class TotalRaidService:
 
     def lock(self, room_id):
         return self.locks.setdefault(room_id, asyncio.Lock())
+
+    async def refresh_private_panel(self, room, user_id, interaction):
+        """Edit a player's ephemeral message while the caller holds the room lock."""
+        key = (room['id'], user_id)
+        previous = self.private_panels.get(key)
+        battle = load_total_battle(room['battle'])
+        view = None
+        if room['status'] != 'running':
+            content = '戰鬥已結束，請查看公開戰報。'
+        elif user_id not in battle.living_player_ids():
+            content = '你已倒下，請查看公開戰鬥面板。'
+        else:
+            view = WitchPrivateActionView(self, room['id'], user_id, battle)
+            content = self.player_action_text(battle, user_id)
+            if str(user_id) in room.get('action_drafts', {}):
+                content += '\n已選擇行動，請在下方指定目標。'
+            votes = set(room.get('surrender_votes', [])) & battle.living_player_ids()
+            content += f'\n投降同意：{len(votes)}/{len(battle.living_player_ids())}；需全體存活玩家同意，可撤回，換回合重置。'
+        try:
+            await interaction.edit_original_response(content=content, view=view)
+        except Exception:
+            if view:
+                view.stop()
+            raise
+        if previous:
+            previous['view'].stop()
+        if view:
+            self.private_panels[key] = dict(interaction=interaction, view=view)
+        else:
+            self.private_panels.pop(key, None)
+
+    async def refresh_private_panels(self, room):
+        for key, panel in list(self.private_panels.items()):
+            if key[0] != room['id']:
+                continue
+            interaction = panel['interaction']
+            if hasattr(interaction, 'is_expired') and interaction.is_expired():
+                panel['view'].stop()
+                self.private_panels.pop(key, None)
+                continue
+            try:
+                await self.refresh_private_panel(room, key[1], interaction)
+            except (discord.NotFound, discord.Forbidden):
+                panel['view'].stop()
+                self.private_panels.pop(key, None)
+            except discord.HTTPException:
+                panel['retry_at'] = time.time() + 15
+                logger.exception('Witch private panel refresh failed: %s', key)
 
     def schedule_private_cleanup(self, interaction, delay=PRIVATE_CONFIRMATION_SECONDS):
         task = asyncio.create_task(self._delete_private_response(interaction, delay))
@@ -1157,11 +1222,38 @@ class TotalRaidService:
             await self._edit_public(room, battle)
             return message
 
+    async def vote_surrender(self, room_id, user_id, expected_round):
+        async with self.lock(room_id):
+            room, battle = self.running_battle(room_id, user_id)
+            await self.check_witch_deadline(room, battle)
+            if room['boss'] != WITCH_BOSS or expected_round != battle.planning_round:
+                raise TotalRaidError('此投降面板已過期，請使用最新的個人操作面板。')
+            votes = set(room.get('surrender_votes', [])) & battle.living_player_ids()
+            if user_id in votes:
+                votes.remove(user_id)
+            else:
+                votes.add(user_id)
+            room['surrender_votes'] = sorted(votes)
+            if votes == battle.living_player_ids():
+                notice = '全體存活玩家同意投降，試煉結束。'
+                battle.log.append(notice)
+                battle.mechanics['last_round_log'] = [notice]
+                battle.mechanics.setdefault('witch_round_logs', []).append([notice])
+                battle.result = '投降'
+                await self._resolve(room, battle)
+            else:
+                self.repo.save(room)
+                try:
+                    await self._edit_public(room, battle)
+                finally:
+                    await self.refresh_private_panels(room)
+
     async def _resolve(self, room, battle, timeout=False):
         battle.resolve(use_defaults=timeout)
         room['log_page'] = 0
         room['status_page'] = 0
         room['action_drafts'] = {}
+        room['surrender_votes'] = []
         room['battle'] = dump_total_battle(battle)
         if battle.result:
             room['status'] = 'completed'
@@ -1176,7 +1268,11 @@ class TotalRaidService:
             self.repo.finish_witch(room, battle)
         else:
             self.repo.save(room)
-        await self._edit_public(room, battle)
+        try:
+            await self._edit_public(room, battle)
+        finally:
+            if room['boss'] == WITCH_BOSS:
+                await self.refresh_private_panels(room)
 
     async def _edit_public(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
@@ -1441,6 +1537,10 @@ class TotalRaidService:
         for index, chunk in enumerate(field_chunks(roster), 1):
             name = '隊伍狀態' if index == 1 else f'隊伍狀態（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
+        if isinstance(battle, WitchRaidBattle) and not battle.result and room.get('surrender_votes'):
+            votes = set(room['surrender_votes']) & battle.living_player_ids()
+            embed.add_field(name='投降表決', value=f'{len(votes)}/{len(battle.living_player_ids())} 名存活玩家同意；'
+                            '可於個人面板同意或撤回，換回合重置。', inline=False)
         if isinstance(battle, WitchRaidBattle):
             for index, chunk in enumerate(field_chunks(witch_transformation_notes(battle), 900), 1):
                 embed.add_field(name=f'魔女化效果（{index}）', value=chunk, inline=False)
@@ -1495,6 +1595,13 @@ class TotalRaidService:
         now = time.time()
         await self.announce_witches()
         await self.cleanup_witch_rooms(now)
+        retry_rooms = {key[0] for key, panel in self.private_panels.items()
+                       if panel.get('retry_at', float('inf')) <= now}
+        for room_id in retry_rooms:
+            async with self.lock(room_id):
+                room = self.repo.get(room_id)
+                if room:
+                    await self.refresh_private_panels(room)
         for room in self.repo.active():
             if not isinstance(self.bot.get_channel(room['channel_id']), discord.TextChannel):
                 room['status'] = 'cancelled'

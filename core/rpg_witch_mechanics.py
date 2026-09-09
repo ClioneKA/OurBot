@@ -68,6 +68,10 @@ class WitchBattle(TotalRaidBattle):
     def phase(self, actor):
         return min(2, len(self.dead_once - {actor.job}))
 
+    def factor_stacks(self, actor, turn=None):
+        turn = self.round if turn is None else turn
+        return max(0, min(3, actor.status_stacks.get('factor', 0))) if actor.has('factor', turn) else 0
+
     def check_end(self):
         if self.inside_action:
             return False
@@ -185,9 +189,10 @@ class WitchBattle(TotalRaidBattle):
             self.precise_hit = old_precise
 
     def mark(self, target, key, duration=1, stacks=False):
+        previous = self.factor_stacks(target) if key == 'factor' else target.status_stacks.get(key, 0)
         if self.apply_debuff(target, key, self.round + duration):
             if stacks:
-                target.status_stacks[key] = min(3, target.status_stacks.get(key, 0) + 1)
+                target.status_stacks[key] = min(3, previous + 1)
             if key == 'factor':
                 self.log.append(f'{target.name} 的魔女因子增加至 {target.status_stacks.get(key, 0)}/3 層。')
 
@@ -312,7 +317,7 @@ class WitchBattle(TotalRaidBattle):
         independent = (actor.job in ('hanna', 'reia', 'noah') or actor.job == 'milia' and phase == 2
                        or actor.job in ('arisa', 'coco', 'sherry') and phase == 2)
         if not target and not independent:
-            self.log.append(f'{actor.name} 的預告目標已倒下，本次指定魔法不轉移目標。')
+            self.log.append(f'{actor.name} 沒有有效預告目標，本次指定魔法取消，不轉移目標。')
             return
         self.events['special_casts'] += 1
         if kind in ('hiro_reaction', 'ema_followup'):
@@ -320,7 +325,11 @@ class WitchBattle(TotalRaidBattle):
         elif actor.job == 'ema':
             victims = targets
             for p in list(victims):
-                stacks = p.status_stacks.get('factor', 0)
+                stacks = self.factor_stacks(p)
+                if not stacks:
+                    self.log.append(f'{p.name} 沒有有效魔女因子，本次引爆取消。')
+                    continue
+                self.log.append(f'{p.name} 的 {stacks} 層魔女因子被引爆。')
                 self.hit(actor, p, (.8 + .25 * stacks) if phase == 2 else (1.3 + .3 * stacks), attack_scope='group' if phase == 2 else 'single')
                 p.status_stacks.pop('factor', None)
                 p.effects.pop('factor', None)
