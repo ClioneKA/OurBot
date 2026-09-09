@@ -19,6 +19,7 @@ from core.rpg_total_raids import TotalRaidService, TOTAL_RAID_BOSSES
 from core.rpg_total_battle import TotalRaidError
 from core.rpg_fishing import BIG_FISH, Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
+from core.rpg_expeditions import Expeditions
 from core.rpg_provisions import Provisions
 from core.rpg_divination import Divinations
 from core.rpg_tavern import TavernService, TavernView
@@ -40,6 +41,7 @@ class RPG(commands.Cog):
         self.invitations = AdventurerInvitations(self)
         self.fishing = Fishing(self.store)
         self.farming = Farming(self.store)
+        self.expeditions = Expeditions(self.store, self.settings)
         self.provisions = Provisions(self.store)
         self.divinations = Divinations(self.store)
         self.tracker = VoiceTracker()

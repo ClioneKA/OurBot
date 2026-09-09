@@ -5,7 +5,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_divination import CARDS
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import add_help, add_back, navigate
 
 
 class DivinationView(discord.ui.View):
@@ -33,6 +33,7 @@ class DivinationView(discord.ui.View):
                 await self.handle(interaction, 'summon')
             summon.callback = summon_callback
             self.add_item(summon)
+        add_help(self, 1, 'life', 'divination')
         add_back(self, 1)
         refresh = discord.ui.Button(label='重新整理', row=1)
         close = discord.ui.Button(label='關閉', row=1)

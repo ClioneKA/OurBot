@@ -1,7 +1,7 @@
 """Private Discord equipment panel; mutations retain the character-store checks."""
 import asyncio
 
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import add_help, add_back, navigate
 
 import discord
 
@@ -80,6 +80,7 @@ class EquipmentView(discord.ui.View):
         buttons.extend((self.refresh, self.close_panel))
         for button in buttons:
             self.add_item(button)
+        add_help(self, 4, 'combat', 'equipment')
         add_back(self, 4)
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']

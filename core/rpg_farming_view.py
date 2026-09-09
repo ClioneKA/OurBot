@@ -8,7 +8,7 @@ from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_farming import LOCATION_LEVELS, LOCATIONS, PLANTS, farming_progress, growth_text
-from core.rpg_menu import navigate
+from core.rpg_menu import add_help, navigate
 
 
 class FarmingView(discord.ui.View):
@@ -61,6 +61,7 @@ class FarmingView(discord.ui.View):
         self._button('收成', 'harvest', 2, not ready, discord.ButtonStyle.primary)
         self._button('中斷種植', 'cancel', 2, not active, discord.ButtonStyle.danger)
         self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 2)
+        add_help(self, 3, 'life', 'farming')
         self._button('返回生活', 'life', 3)
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)

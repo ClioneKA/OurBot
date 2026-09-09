@@ -7,7 +7,7 @@ from core.rpg_character import (CharacterError, DYE_PRICE, EMBROIDERIES,
                                 EMBROIDERY_PRICE, ITEMS, PAINT_ITEMS, PAINT_NAMES,
                                 STAT_NAMES, item_text)
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import navigate
+from core.rpg_menu import add_help, navigate
 
 
 PAGE_SIZE = 20
@@ -85,6 +85,7 @@ class TailorView(discord.ui.View):
                      disabled=self.selected is None, style=discord.ButtonStyle.success)
         self._button('上一頁', 'previous', 3, disabled=self.page == 0)
         self._button('下一頁', 'next', 3, disabled=self.page == pages - 1)
+        add_help(self, 4, 'life', 'tailor')
         self._button('返回移動', 'travel', 4)
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)

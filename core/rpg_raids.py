@@ -16,6 +16,7 @@ from discord.ext import tasks
 
 from core.rpg_battle import raid_battle, dump_battle, load_battle
 from core.rpg_character import CharacterError, ITEMS
+from core.rpg_expeditions import require_not_expedition
 from core.rpg_raid_store import (DROP_TABLES, HIGH_RAID_MIN_LEVEL, MID_RAID_MIN_LEVEL,
                                  RAID_PROOFS_BY_POOL, RaidStore, raid_min_level)
 from core.rpg_notifications import RaidNotifications
@@ -569,6 +570,8 @@ class RaidService:
             raise CharacterError('強度倍率必須介於 0.1–10。')
         if name is not None and not 1 <= len(name.strip()) <= 20:
             raise CharacterError('怪物名稱需為 1–20 個字元。')
+        if initial_member is not None:
+            require_not_expedition(self.repo.db, initial_member)
         overrides = {}
         for key, value, limit in (('victory_xp', victory_xp, 100000),
                                   ('victory_gold', victory_gold, 1000000), ('drop_chance', drop_percent, 100)):

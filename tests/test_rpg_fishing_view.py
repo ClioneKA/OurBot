@@ -38,6 +38,32 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         self.view = FishingView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
 
+    async def test_help_shortcut_round_trip_and_stale_callback(self):
+        button = next(child for child in self.view.children
+                      if getattr(child, 'label', None) == '玩法說明')
+        stranger = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=2),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()))
+        await button.callback(stranger)
+        stranger.response.edit_message.assert_not_awaited()
+        await button.callback(self.interaction)
+        guide = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(guide.stop)
+        self.assertEqual(guide.help_topic, 'life')
+        self.assertIn('釣魚', guide.embed().description)
+        self.assertTrue(self.view.closed)
+        self.interaction.response.edit_message.reset_mock()
+        await self.view.on_timeout()
+        self.interaction.edit_original_response.assert_not_awaited()
+        await button.callback(self.interaction)
+        self.interaction.response.edit_message.assert_not_awaited()
+        back = next(child for child in guide.children
+                    if getattr(child, 'label', None) == '返回原功能')
+        await back.callback(self.interaction)
+        fishing = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(fishing.stop)
+        self.assertIsInstance(fishing, FishingView)
+        self.assertTrue(guide.closed)
+
     async def test_start_wait_claim_and_notification_toggle(self):
         self.assertIn('釣魚 Lv.**1**', self.view.embed().description)
         self.assertLessEqual(len(self.view.to_components()), 5)

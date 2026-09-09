@@ -9,6 +9,7 @@ from core.rpg import level_for
 from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS, add_owned_item
 from core.rpg_monsters import TIER_VICTORY_XP
 from core.rpg_fishing_bosses import boss_ingredient
+from core.rpg_expeditions import is_expedition_active, require_not_expedition
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -184,6 +185,8 @@ class RaidStore:
                             discoverer_id=row[1], members=[row[1]], preserve_schedule=True,
                             drop_pool=[], fixed_drop=None, chance_drop=None, food_drop=None,
                             fishing_reward=dict(item=boss_ingredient(row[2]), quantity=1, discoverer_bonus=1))
+                if is_expedition_active(self.db, row[1], now):
+                    raid['members'] = []
                 self.db.execute("UPDATE rpg_fishing_encounters SET raid_id=?,status='assigned' WHERE id=?",
                                 (raid['id'], fishing_encounter))
             if payment_user is not None and payment_gold:
@@ -243,6 +246,10 @@ class RaidStore:
 
     def save(self, raid):
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if raid['status'] in ('posting', 'lobby', 'running'):
+                for user in raid['members']:
+                    require_not_expedition(self.db, user)
             self._save(raid)
 
     def _save(self, raid):
@@ -320,6 +327,7 @@ class RaidStore:
             else:
                 if user in raid['members']:
                     raise CharacterError('你已經報名了。')
+                require_not_expedition(self.db, user, now)
                 minimum = raid_min_level(raid)
                 if level_for(self.store.xp(guild, user)) < minimum:
                     raise CharacterError(f'此討伐需達 Lv.{minimum} 才能參加。')

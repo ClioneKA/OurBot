@@ -259,6 +259,8 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 home = interaction.response.edit_message.call_args.kwargs['view']
                 await home.handle(interaction, 'help')
                 help_view = interaction.response.edit_message.call_args.kwargs['view']
+                self.assertIn('新手入門', help_view.embed().title)
+                await help_view.handle(interaction, 'help_topic', 'growth')
                 self.assertIn('RuneScape', help_view.embed().description)
                 await help_view.handle(interaction, 'close')
                 self.assertTrue(help_view.is_finished())

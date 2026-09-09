@@ -9,7 +9,7 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_fishing import (BIG_FISH, DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
                               fishing_progress, next_rod)
-from core.rpg_menu import navigate
+from core.rpg_menu import add_help, navigate
 from core.rpg_fishing_bosses import encounter_notice
 
 
@@ -80,6 +80,7 @@ class FishingView(discord.ui.View):
         self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
         self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
         self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
+        add_help(self, 4, 'life', 'fishing')
         self._button('返回生活', 'life', 4)
         self._button('大魚圖鑑', 'records', 4)
         self._button('重新整理', 'refresh', 4)

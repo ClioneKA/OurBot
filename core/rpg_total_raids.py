@@ -13,6 +13,7 @@ from discord.ext import tasks
 
 from core.rpg_battle import PASSIVES, rule_skill
 from core.rpg_character import CharacterError
+from core.rpg_expeditions import is_expedition_active, require_not_expedition
 from core.rpg_raids import channel_ids
 from core.rpg_total_battle import (
     ACTION_ATTACK,
@@ -194,6 +195,9 @@ class TotalRaidStore:
             created_at=time.time(),
         )
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if is_expedition_active(self.db, host_id):
+                raise TotalRaidError('你正在遠征，請等待返回或先中斷遠征。')
             self.db.execute(
                 'INSERT INTO rpg_total_raids VALUES (?,?,?,?,?,?)',
                 (room['id'], guild_id, category_id, channel_id, room['status'],
@@ -211,6 +215,10 @@ class TotalRaidStore:
 
     def save(self, room):
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if room['status'] in ('lobby', 'running'):
+                if any(is_expedition_active(self.db, user) for user in room['members']):
+                    raise TotalRaidError('隊員正在遠征，請等待返回或先中斷遠征。')
             self.db.execute('UPDATE rpg_total_raids SET status=?, data=? WHERE id=?',
                             (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
 
@@ -487,6 +495,7 @@ class TotalRaidService:
         raise CharacterError('這個伺服器尚未設定總力戰類別。')
 
     async def create_room(self, guild, host, boss):
+        require_not_expedition(self.repo.db, host.id)
         if not self.settings.enabled:
             raise CharacterError('總力戰目前未開放。')
         if boss not in TOTAL_RAID_BOSSES:
@@ -511,7 +520,11 @@ class TotalRaidService:
             topic=f'總力戰測試房｜房主：{host}｜Boss：{boss}',
             reason=f'{host} 建立總力戰測試房',
         )
-        room = self.repo.create(guild.id, category.id, channel.id, host.id, boss, number)
+        try:
+            room = self.repo.create(guild.id, category.id, channel.id, host.id, boss, number)
+        except TotalRaidError:
+            await channel.delete(reason='房主已開始遠征，取消建立總力戰房間')
+            raise
         try:
             message = await channel.send(embed=self.lobby_embed(room), view=self.view(room),
                                          allowed_mentions=discord.AllowedMentions.none())

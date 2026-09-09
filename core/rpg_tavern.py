@@ -8,7 +8,7 @@ import uuid
 import discord
 
 from core.rpg_character import CharacterError
-from core.rpg_menu import add_back
+from core.rpg_menu import add_help, add_back
 from core.rpg_provisions import effect_text, guest_reward_target
 
 
@@ -415,6 +415,7 @@ class TavernView(discord.ui.View):
         for package_id, package in DRINK_PACKAGES.items():
             self._button(f'{package.name}（{package.price:,}／{package.capacity} 杯）',
                          f'drink:{package_id}', 1, discord.ButtonStyle.success)
+        add_help(self, 3, 'life', 'tavern')
         add_back(self, 3)
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)

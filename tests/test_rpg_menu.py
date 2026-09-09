@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 from weakref import WeakSet
 import tempfile
@@ -10,6 +11,7 @@ from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
 from core.rpg_divination import Divinations
 from core.rpg_menu import AdventureView
+from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
 from core.settings import RPGSettings
 
@@ -37,6 +39,49 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
             edit_original_response=AsyncMock())
         self.view = AdventureView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
+
+    async def test_help_topics_switch_in_place_and_refresh_keeps_selection(self):
+        await self.view.handle(self.interaction, 'help')
+        guide = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(guide.stop)
+        self.assertIn('新手入門', guide.embed().title)
+        self.assertNotIn('三次方根', guide.embed().description)
+        for topic, (label, _) in HELP_TOPICS.items():
+            select = next(child for child in guide.children if isinstance(child, discord.ui.Select))
+            select._values = [topic]
+            await select.callback(self.interaction)
+            self.assertIs(self.interaction.response.edit_message.call_args.kwargs['view'], guide)
+            embed = guide.embed()
+            self.assertIn(label, embed.title)
+            self.assertLessEqual(len(embed.description), 4096)
+            self.assertLessEqual(len(embed), 6000)
+            self.assertTrue(all(len(field.value) <= 1024 for field in embed.fields))
+            self.assertLessEqual(len(guide.to_components()), 5)
+            await guide.handle(self.interaction, 'refresh')
+            select = next(child for child in guide.children if isinstance(child, discord.ui.Select))
+            self.assertEqual([option.value for option in select.options if option.default], [topic])
+        await guide.handle(self.interaction, 'help_topic', 'unknown')
+        self.assertEqual(guide.help_topic, 'advanced')
+
+    async def test_help_topic_rejects_foreign_user_and_closed_panel(self):
+        guide = AdventureView(self.cog, self.interaction, 'help')
+        self.addCleanup(guide.stop)
+        stranger = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=2),
+            response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()))
+        await guide.handle(stranger, 'help_topic', 'advanced')
+        self.assertEqual(guide.help_topic, 'intro')
+        stranger.response.edit_message.assert_not_awaited()
+        await guide.handle(self.interaction, 'close')
+        await guide.handle(self.interaction, 'help_topic', 'advanced')
+        self.assertEqual(guide.help_topic, 'intro')
+
+    async def test_paused_xp_notice_is_visible_on_intro_and_growth(self):
+        self.cog.settings = replace(self.cog.settings, enabled=False)
+        guide = AdventureView(self.cog, self.interaction, 'help')
+        self.addCleanup(guide.stop)
+        for topic in ('intro', 'growth'):
+            await guide.handle(self.interaction, 'help_topic', topic)
+            self.assertTrue(any('暫停聊天與語音經驗' in field.value for field in guide.embed().fields))
 
     async def test_stale_view_and_timeout_cannot_overwrite_new_page(self):
         await self.view.handle(self.interaction, 'help')
