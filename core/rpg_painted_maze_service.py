@@ -9,7 +9,10 @@ from discord.ext import tasks
 
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_crystals import CrystalStore
-from core.rpg_painted_maze import COLOR_CONTRACTS, MODE_NAME, PaintedMazeError, PaintedMazeStore
+from core.rpg_painted_maze import (
+    COLOR_CONTRACTS, ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, MODE_NAME,
+    PaintedMazeError, PaintedMazeStore,
+)
 from core.rpg_painted_maze_battle import simulate_final_battle, simulate_room_painting
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
 
@@ -148,6 +151,8 @@ class PaintedMazeService:
         return None
 
     async def create(self, interaction, entry_item, *, require_entry=True):
+        if not ENTRY_ENABLED:
+            raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
         space = self.cog.spaces.store.get(interaction.guild_id)
         if not space or interaction.channel_id != space.maze_channel_id:
             raise PaintedMazeError('請在「🎨・繪境迷廊」頻道開啟畫作。')
@@ -183,6 +188,8 @@ class PaintedMazeService:
             raise
 
     async def change_member(self, room_id, member, *, leave=False):
+        if not leave and not ENTRY_ENABLED:
+            raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
         if member.bot:
             raise PaintedMazeError('機器人不能進入繪境迷廊。')
         async with self.lock(room_id):
@@ -199,6 +206,8 @@ class PaintedMazeService:
             return room
 
     async def begin(self, room_id, member):
+        if not ENTRY_ENABLED:
+            raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
         async with self.lock(room_id):
             room = self.repo.get(room_id)
             if not room or member.id != room['host_id']:

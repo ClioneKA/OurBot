@@ -5,7 +5,7 @@ import discord
 
 from core.rpg_character import CharacterError, ITEMS, MAZE_CHOICE_BOXES
 from core.rpg_menu import add_back, navigate
-from core.rpg_painted_maze import MODE_NAME
+from core.rpg_painted_maze import ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, ENTRY_ROUTES, MODE_NAME
 
 
 ITEM_ACTIONS = {
@@ -65,6 +65,9 @@ class ItemUseView(discord.ui.View):
                         ('關閉', 'close', discord.ButtonStyle.secondary)))
         for label, action, style in actions:
             button = discord.ui.Button(label=label, row=row, style=style)
+            if action == 'use' and self.selected in ENTRY_ROUTES and not ENTRY_ENABLED:
+                button.label = '暫停開放'
+                button.disabled = True
             async def callback(interaction, action=action):
                 await self.handle(interaction, action)
             button.callback = callback
@@ -80,6 +83,8 @@ class ItemUseView(discord.ui.View):
     def embed(self, notice=None):
         counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         selected_name, selected_description = ITEM_ACTIONS[self.selected]
+        if self.selected in ENTRY_ROUTES and not ENTRY_ENABLED:
+            selected_description = ENTRY_CLOSED_NOTICE
         paints = '、'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}'
                           for key in ('paint:red', 'paint:yellow', 'paint:blue'))
         embed = discord.Embed(

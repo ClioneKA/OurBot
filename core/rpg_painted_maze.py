@@ -9,6 +9,8 @@ from core.rpg_character import CharacterError
 
 
 MODE_NAME = '繪境迷廊'
+ENTRY_ENABLED = False
+ENTRY_CLOSED_NOTICE = '繪境迷廊目前暫停開放，正在調整中；入場畫作不會消耗。'
 MIN_LEVEL = 50
 MAX_PARTICIPANTS = 8
 ROOM_LIFETIME_SECONDS = 24 * 60 * 60
