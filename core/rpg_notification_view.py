@@ -6,6 +6,7 @@ import discord
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_farming import LOCATIONS, PLANTS
 from core.rpg_fishing import DURATIONS, SPOTS
+from core.rpg_fishing_bosses import encounter_notice
 
 
 class _NotificationView(discord.ui.View):
@@ -71,9 +72,12 @@ class FishingNotificationView(_NotificationView):
                                 f'({DURATIONS[self.duration_id][0]})，<t:{int(restart["ready_at"])}:R>可以收竿。')
             elif restart_error:
                 description += f'\n\n重新開始失敗：{restart_error}'
+            description += encounter_notice(result)
             embed = discord.Embed(title='安安大冒險｜收竿完成', description=description, color=0x38BDF8)
             await interaction.response.edit_message(embed=embed, view=None)
             self.stop()
+            if hasattr(self.cog, 'raids'):
+                await self.cog.raids.publish_fishing_encounters(self.guild_id)
 
 
 class FarmingNotificationView(_NotificationView):

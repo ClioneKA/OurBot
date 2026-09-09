@@ -78,7 +78,7 @@ class ProvisionView(discord.ui.View):
             label=ITEMS[key].name, value=key,
             description=(f'持有 {counts.get(key, 0) - selected[key]}｜'
                          + ('調味料' if INGREDIENTS[key].seasoning else
-                            f'{INGREDIENTS[key].tag}・品質 {INGREDIENTS[key].quality}')
+                            f'{INGREDIENTS[key].tag_text}・品質 {INGREDIENTS[key].quality}')
                          + (f'・餘韻 +{INGREDIENTS[key].aftertaste}'
                             if INGREDIENTS[key].aftertaste else ''))[:100])
             for key in shown]
@@ -128,7 +128,7 @@ class ProvisionView(discord.ui.View):
         selected = Counter(self.ingredients)
         lines = [f'{ITEMS[key].name} ×{amount}｜'
                  + ('調味料' if INGREDIENTS[key].seasoning else
-                    f'{INGREDIENTS[key].tag}・品質 {INGREDIENTS[key].quality}')
+                    f'{INGREDIENTS[key].tag_text}・品質 {INGREDIENTS[key].quality}')
                  + (f'・餘韻 +{INGREDIENTS[key].aftertaste}' if INGREDIENTS[key].aftertaste else '')
                  for key, amount in selected.items()]
         selection = '\n'.join(lines) or '尚未選擇食材。'

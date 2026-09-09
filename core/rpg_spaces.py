@@ -10,6 +10,7 @@ SPACE_CHANNELS = {
     'regular_channel_id': ('一般討伐', '一般討伐'),
     'mid_channel_id': ('中階討伐', '中階討伐'),
     'high_channel_id': ('高階討伐', '高階討伐'),
+    'special_channel_id': ('特殊討伐', '特殊討伐'),
     'tavern_channel_id': ('冒險者酒館', '冒險者酒館'),
     'maze_channel_id': ('繪境迷廊', '🎨・繪境迷廊'),
 }
@@ -25,6 +26,7 @@ class AdventureSpace:
     tavern_channel_id: int | None = None
     adventurer_role_id: int | None = None
     maze_channel_id: int | None = None
+    special_channel_id: int | None = None
 
 
 class AdventureSpaceStore:
@@ -41,6 +43,8 @@ class AdventureSpaceStore:
                 adventurer_role_id INTEGER,
                 maze_channel_id INTEGER)''')
             columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_adventure_spaces)')}
+            if 'special_channel_id' not in columns:
+                self.db.execute('ALTER TABLE rpg_adventure_spaces ADD COLUMN special_channel_id INTEGER')
             if 'maze_channel_id' not in columns:
                 self.db.execute('ALTER TABLE rpg_adventure_spaces ADD COLUMN maze_channel_id INTEGER')
 
@@ -50,20 +54,20 @@ class AdventureSpaceStore:
 
     def get(self, guild_id):
         return self._from_row(self.db.execute('''SELECT guild_id,category_id,regular_channel_id,
-            mid_channel_id,high_channel_id,tavern_channel_id,adventurer_role_id,maze_channel_id
+            mid_channel_id,high_channel_id,tavern_channel_id,adventurer_role_id,maze_channel_id,special_channel_id
             FROM rpg_adventure_spaces WHERE guild_id=?''', (guild_id,)).fetchone())
 
     def all(self):
         return [self._from_row(row) for row in self.db.execute('''SELECT guild_id,category_id,
             regular_channel_id,mid_channel_id,high_channel_id,tavern_channel_id,
-            adventurer_role_id,maze_channel_id
+            adventurer_role_id,maze_channel_id,special_channel_id
             FROM rpg_adventure_spaces''').fetchall()]
 
     def save(self, space):
         with self.db:
             self.db.execute('''INSERT INTO rpg_adventure_spaces
                 (guild_id,category_id,regular_channel_id,mid_channel_id,high_channel_id,
-                 tavern_channel_id,adventurer_role_id,maze_channel_id) VALUES (?,?,?,?,?,?,?,?)
+                 tavern_channel_id,adventurer_role_id,maze_channel_id,special_channel_id) VALUES (?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                 category_id=excluded.category_id,
                 regular_channel_id=excluded.regular_channel_id,
@@ -71,10 +75,11 @@ class AdventureSpaceStore:
                 high_channel_id=excluded.high_channel_id,
                 tavern_channel_id=excluded.tavern_channel_id,
                 adventurer_role_id=excluded.adventurer_role_id,
-                maze_channel_id=excluded.maze_channel_id''', (
+                maze_channel_id=excluded.maze_channel_id,
+                special_channel_id=excluded.special_channel_id''', (
                     space.guild_id, space.category_id, space.regular_channel_id,
                     space.mid_channel_id, space.high_channel_id, space.tavern_channel_id,
-                    space.adventurer_role_id, space.maze_channel_id))
+                    space.adventurer_role_id, space.maze_channel_id, space.special_channel_id))
         return space
 
     def player_ids(self, guild_id):
@@ -110,6 +115,7 @@ class AdventureSpaceService:
             'high_channel_id': raids.environment_high_channels,
             'tavern_channel_id': self.cog.tavern.environment_channel_ids,
             'maze_channel_id': (),
+            'special_channel_id': getattr(raids, 'environment_special_channels', ()),
         }
         result = {}
         for field, configured in channel_sets.items():
@@ -226,7 +232,7 @@ class AdventureSpaceService:
         self.store.save(AdventureSpace(
             guild.id, current.category_id, values['regular_channel_id'], values['mid_channel_id'],
             values['high_channel_id'], values['tavern_channel_id'], role.id,
-            values['maze_channel_id']))
+            values['maze_channel_id'], values['special_channel_id']))
 
         category = self._valid_category(guild, current.category_id)
         existing_channels = [self._valid_channel(guild, values[field]) for field in SPACE_CHANNELS]
@@ -243,7 +249,7 @@ class AdventureSpaceService:
             return self.store.save(AdventureSpace(
                 guild.id, category.id, values['regular_channel_id'], values['mid_channel_id'],
                 values['high_channel_id'], values['tavern_channel_id'], role.id,
-                values['maze_channel_id']))
+                values['maze_channel_id'], values['special_channel_id']))
 
         # Persist each Discord object before creating the next one, so a failed
         # Discord request can be retried without duplicating earlier creations.

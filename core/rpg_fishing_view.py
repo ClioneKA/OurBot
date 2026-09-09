@@ -10,6 +10,7 @@ from core.rpg_equipment_view import PanelSelect
 from core.rpg_fishing import (BIG_FISH, DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
                               fishing_progress, next_rod)
 from core.rpg_menu import navigate
+from core.rpg_fishing_bosses import encounter_notice
 
 
 class FishingView(discord.ui.View):
@@ -136,7 +137,8 @@ class FishingView(discord.ui.View):
             embed.add_field(name=f'下一階：{ITEMS[target].name}', value=recipe, inline=False)
         embed.add_field(name='捕獲機率', value=(
             '各釣場稀有魚基礎權重皆為 6%；釣竿加成是相對權重，最高 1.2 倍。\n'
-            '成品釣竿追加捕獲發動後，另有機會改為只供收藏與展示的大魚。'), inline=False)
+            '成品釣竿追加捕獲發動後，另有機會改為只供收藏與展示的大魚。\n'
+            '每次捕獲另有 0.1% 機率釣出特殊討伐 Boss，每趟最多一隻。'), inline=False)
         embed.add_field(name='完成通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
@@ -162,7 +164,7 @@ class FishingView(discord.ui.View):
             text += '\n魔女島湖泊的熟練產量提升至 10%！'
         if result['new_level'] > result['old_level']:
             text += f'\n釣魚等級提升至 Lv.{result["new_level"]}！'
-        return text
+        return text + encounter_notice(result)
 
     async def handle(self, interaction, action, value=None):
         if not await self.interaction_check(interaction):
@@ -224,6 +226,8 @@ class FishingView(discord.ui.View):
             self.rebuild()
             await interaction.response.edit_message(embed=self.embed(notice), view=self,
                                                     allowed_mentions=discord.AllowedMentions.none())
+            if action == 'claim' and hasattr(self.cog, 'raids'):
+                await self.cog.raids.publish_fishing_encounters(self.guild_id)
 
     async def on_timeout(self):
         async with self.lock:

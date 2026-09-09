@@ -102,11 +102,16 @@ class RaidService:
         self.spawn_tasks = set()
 
     def refresh_channels(self):
+        self.environment_special_channels = channel_ids(
+            os.getenv('RPG_SPECIAL_RAID_CHANNEL_IDS', ''), 'RPG_SPECIAL_RAID_CHANNEL_IDS')
+        self.special_channels = set(self.environment_special_channels)
         self.channels = set(self.environment_channels)
         self.mid_channels = set(self.environment_mid_channels)
         self.high_channels = set(self.environment_high_channels)
         spaces = getattr(getattr(self.cog, 'spaces', None), 'store', None)
         for space in spaces.all() if spaces else ():
+            if getattr(space, 'special_channel_id', None):
+                self.special_channels.add(space.special_channel_id)
             if space.regular_channel_id:
                 self.channels.add(space.regular_channel_id)
             if space.mid_channel_id:
@@ -116,6 +121,8 @@ class RaidService:
         if self.channels & self.mid_channels or self.channels & self.high_channels or self.mid_channels & self.high_channels:
             raise ValueError('一般、中階與高階討伐頻道不可重複')
         self.all_channels = self.channels | self.mid_channels | self.high_channels
+        if self.special_channels & self.all_channels:
+            raise ValueError('特殊討伐頻道不可與一般、中階或高階討伐頻道重複')
 
     def start(self):
         for raid in self.repo.pending():
@@ -297,6 +304,9 @@ class RaidService:
         if raid.get('source') == 'bounty':
             embed.title = '酒館懸賞｜' + safe_text(monster_name(raid['monster']), 32)
             embed.description += '\n\n本場不發金幣、不調整頻道動態難度，也不重排正常討伐時間。'
+        if raid.get('source') == 'fishing':
+            embed.title = '釣魚特殊討伐｜' + safe_text(monster_name(raid['monster']), 32)
+            embed.description += f'\n\n發現者：<@{raid["discoverer_id"]}>｜本場採固定階級，不調整頻道動態難度。'
         embed.add_field(name='報名倒數', value=f'<t:{int(raid["deadline"])}:R> 開戰（報名 5 分鐘）', inline=False)
         minimum = raid_min_level(raid)
         requirement = f'｜需 Lv.{minimum}' if minimum > 1 else ''
@@ -346,6 +356,10 @@ class RaidService:
             else:
                 loot_text += f'；勝利每人固定取得 {ITEMS[raid["fixed_drop"]].name}'
         food_drop = raid.get('food_drop')
+        if raid.get('fishing_reward'):
+            reward = raid['fishing_reward']
+            loot_text += (f'；勝利每人取得 {ITEMS[reward["item"]].name} ×{reward["quantity"]}'
+                          f'，發現者實際參戰再多 {reward["discoverer_bonus"]} 份（幸運・餘韻・盛宴）')
         if food_drop:
             loot_text += (f'；另獨立以 {food_drop["chance"] * 100:g}% 判定料理食材，'
                           f'成功時 95% 為 {ITEMS[food_drop["meat"]].name}、'
@@ -420,7 +434,9 @@ class RaidService:
                      + (f'、{ITEMS[r["chance_item"]].name}' if r.get('chance_item') else '')
                      + ''.join(f'、{ITEMS[item].name}' for item in r.get('chance_items', ()))
                      + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '')
-                     + (f'、{ITEMS[r["food_item"]].name}' if r.get('food_item') else '') for r in raid['rewards']]
+                     + (f'、{ITEMS[r["food_item"]].name}' if r.get('food_item') else '')
+                     + (f'、{ITEMS[r["fishing_item"]].name} ×{r["fishing_quantity"]}'
+                        if r.get('fishing_item') else '') for r in raid['rewards']]
             lines = [line + (f'、討伐之證 ×{reward["raid_proofs"]}'
                              if reward.get('raid_proofs') else '')
                      for line, reward in zip(lines, raid['rewards'])]
@@ -444,7 +460,8 @@ class RaidService:
         message = channel.get_partial_message(raid['message_id'])
         settings = self.settings_for_channel(raid['channel_id'])
         if raid['status'] == 'lobby':
-            expected_channels = (self.high_channels if raid.get('pool') == 'high' else
+            expected_channels = (self.special_channels if raid.get('source') == 'fishing' else
+                                 self.high_channels if raid.get('pool') == 'high' else
                                  self.mid_channels if raid.get('pool') in ('mid', 'special') else self.channels)
             if raid['channel_id'] not in expected_channels or not settings.enabled:
                 raid.update(status='cancelled', reason='討伐活動已停用。')
@@ -527,6 +544,7 @@ class RaidService:
                 f'{"".join(", " + ITEMS[item].name for item in r.get("chance_items", ()))}'
                 f'{", " + ITEMS[r["extra_item"]].name if r.get("extra_item") else ""}'
                 f'{", " + ITEMS[r["food_item"]].name if r.get("food_item") else ""}'
+                f'{", " + ITEMS[r["fishing_item"]].name + " ×" + str(r["fishing_quantity"]) if r.get("fishing_item") else ""}'
                 f'{", 討伐之證 ×" + str(r["raid_proofs"]) if r.get("raid_proofs") else ""}'
                 for r in raid['rewards'])
             await message.edit(embed=self.battle_embed(raid, battle), view=None,
@@ -639,6 +657,10 @@ class RaidService:
             self.spawning.discard(channel.id)
             self.spawning_guilds.discard(channel.guild.id)
             self.spawn_tasks.discard(task)
+
+    async def publish_fishing_encounters(self, guild_id=None):
+        from core.rpg_fishing_raids import publish_fishing_encounters
+        await publish_fishing_encounters(self, guild_id)
 
     async def summon_bounty(self, guild, user, pool, price):
         """Publish an extra paid raid without moving the normal channel schedule."""
@@ -792,6 +814,8 @@ class RaidService:
         now = time.time()
         pending = self.repo.pending()
         for raid in pending:
+            if raid['status'] == 'posting':
+                continue
             channel = self.bot.get_channel(raid['channel_id'])
             if channel is None or channel.guild.unavailable:
                 continue
@@ -816,6 +840,7 @@ class RaidService:
                 logger.exception('Raid update failed: %s', raid['id'])
         if not self.settings.enabled and not self.mid_settings.enabled and not self.high_settings.enabled:
             return
+        await self.publish_fishing_encounters()
         current = self.repo.pending()
         occupied = {r['channel_id'] for r in current}
         busy_guilds = {r['guild_id'] for r in current} | self.spawning_guilds

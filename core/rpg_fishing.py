@@ -4,9 +4,11 @@ from dataclasses import dataclass
 import json
 import random
 import time
+import uuid
 
 from core.rpg import MAX_LEVEL, level_floor, level_for
 from core.rpg_character import CharacterError, ITEMS
+from core.rpg_fishing_bosses import BOSS_CHANCE_PER_CATCH, FISHING_BOSSES
 
 
 @dataclass(frozen=True)
@@ -118,10 +120,15 @@ def _big_fish_weight(spot_id, duration_id, rod_id, rng):
 
 
 class Fishing:
-    def __init__(self, store, rng=None):
+    def __init__(self, store, rng=None, boss_rng=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
+        self.boss_rng = boss_rng or random.Random()
         with self.db:
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_encounters (
+                id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                spot_id TEXT NOT NULL, created_at REAL NOT NULL, raid_id TEXT UNIQUE,
+                status TEXT NOT NULL DEFAULT 'queued')''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 xp INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0),
@@ -314,6 +321,15 @@ class Fishing:
                           mastery_percent=mastery_percent, mastery_bonus=mastery_bonus,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
+            # Separate RNG keeps encounter rolls independent of fish/rod quality.
+            # Duplicate mastery items are not additional catches; a trophy is.
+            trials = catches + int(big_fish is not None)
+            if any(self.boss_rng.random() < BOSS_CHANCE_PER_CATCH for _ in range(trials)):
+                encounter_id = uuid.uuid4().hex
+                self.db.execute('''INSERT INTO rpg_fishing_encounters
+                    (id,guild_id,user_id,spot_id,created_at) VALUES (?,?,?,?,?)''',
+                    (encounter_id, guild, user, spot_id, now))
+                result['boss_encounter'] = dict(id=encounter_id, name=FISHING_BOSSES[spot_id].name)
             self.db.execute('''UPDATE rpg_fishing_sessions SET status='claimed',result=?
                 WHERE guild_id=? AND user_id=?''',
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')), guild, user))

@@ -7,6 +7,7 @@ import uuid
 
 from core.rpg import MAX_LEVEL, level_floor, level_for
 from core.rpg_character import CharacterError, ITEMS
+from core.rpg_fishing_bosses import FISHING_BOSSES, boss_ingredient
 
 
 INGREDIENT_COUNT = 5
@@ -35,6 +36,15 @@ class Ingredient:
     aftertaste: int = 0
     score_bonus: int = 0
     seasoning: bool = False
+    extra_tags: tuple = ()
+
+    @property
+    def tags(self):
+        return ((self.tag,) if self.tag else ()) + self.extra_tags
+
+    @property
+    def tag_text(self):
+        return '・'.join(self.tags)
 
 
 INGREDIENTS = {
@@ -69,6 +79,11 @@ INGREDIENTS = {
     'cooking:seasoning:mid': Ingredient(None, 0, 3, 8, True),
     'cooking:seasoning:high': Ingredient(None, 0, 4, 12, True),
 }
+
+for spot_id, boss in FISHING_BOSSES.items():
+    INGREDIENTS[boss_ingredient(spot_id)] = Ingredient(
+        FORTUNE, boss.quality, aftertaste=1, extra_tags=(FEAST,))
+
 
 PAIRINGS = (
     ('fishing:pond:common', 'farming:potato'),
@@ -204,9 +219,9 @@ def evaluate_ingredients(ingredient_ids, cooking_level=1):
     first_tag = {}
     for index, key in enumerate(ingredient_ids):
         ingredient = INGREDIENTS[key]
-        if ingredient.tag:
-            tags[ingredient.tag] += 1
-            first_tag.setdefault(ingredient.tag, index)
+        for tag in ingredient.tags:
+            tags[tag] += 1
+            first_tag.setdefault(tag, index)
         quality += ingredient.quality
         aftertaste += ingredient.aftertaste
         seasoning_bonus += ingredient.score_bonus

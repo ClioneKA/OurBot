@@ -8,6 +8,7 @@ from decimal import Decimal
 from core.rpg import level_for
 from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS, add_owned_item
 from core.rpg_monsters import TIER_VICTORY_XP
+from core.rpg_fishing_bosses import boss_ingredient
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -17,6 +18,8 @@ RAID_PROOFS_BY_POOL = {'regular': 1, 'mid': 3, 'high': 5}
 
 
 def raid_min_level(raid):
+    if raid.get('source') == 'fishing':
+        return 1
     return HIGH_RAID_MIN_LEVEL if raid.get('monster', {}).get('kind') in HIGH_KINDS else (
         MID_RAID_MIN_LEVEL if raid.get('pool') in ('mid', 'special') else 1)
 
@@ -137,7 +140,8 @@ class RaidStore:
         return row[0]
 
     def create(self, guild, channel, monster, now, reward_policy=None, reward_overrides=None,
-               pool='regular', use_dynamic=True, payment_user=None, payment_gold=0):
+               pool='regular', use_dynamic=True, payment_user=None, payment_gold=0,
+               fishing_encounter=None):
         if 'quality' in monster:
             from dataclasses import asdict
             from core.settings import RaidSettings
@@ -171,6 +175,17 @@ class RaidStore:
             raid['payment'] = dict(user_id=payment_user, gold=payment_gold, refunded=False)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
+            if fishing_encounter is not None:
+                row = self.db.execute('''SELECT guild_id,user_id,spot_id FROM rpg_fishing_encounters
+                    WHERE id=? AND status='queued' AND raid_id IS NULL''', (fishing_encounter,)).fetchone()
+                if not row or row[0] != guild:
+                    raise CharacterError('這次釣魚遭遇已經安排討伐。')
+                raid.update(source='fishing', fishing_encounter=fishing_encounter,
+                            discoverer_id=row[1], members=[row[1]], preserve_schedule=True,
+                            drop_pool=[], fixed_drop=None, chance_drop=None, food_drop=None,
+                            fishing_reward=dict(item=boss_ingredient(row[2]), quantity=1, discoverer_bonus=1))
+                self.db.execute("UPDATE rpg_fishing_encounters SET raid_id=?,status='assigned' WHERE id=?",
+                                (raid['id'], fishing_encounter))
             if payment_user is not None and payment_gold:
                 paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
                     WHERE guild_id=? AND user_id=? AND gold>=?''',
@@ -418,6 +433,13 @@ class RaidStore:
                     reward['extra_item'] = extra_item
                 if food_item:
                     reward['food_item'] = food_item
+                fishing_reward = raid.get('fishing_reward')
+                if victory and fishing_reward:
+                    quantity = fishing_reward['quantity'] + (
+                        fishing_reward['discoverer_bonus'] if p['id'] == raid.get('discoverer_id') else 0)
+                    add_owned_item(self.db, raid['guild_id'], p['id'], fishing_reward['item'], quantity)
+                    reward['fishing_item'] = fishing_reward['item']
+                    reward['fishing_quantity'] = quantity
                 if raid_proofs:
                     reward['raid_proofs'] = raid_proofs
                 rewards.append(reward)

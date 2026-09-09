@@ -31,10 +31,10 @@ class ProvisionTests(unittest.TestCase):
                 DO UPDATE SET quantity=quantity+excluded.quantity''', (user, key, quantity))
 
     def test_all_fish_crops_weeds_and_herbs_are_cooking_ingredients(self):
-        self.assertEqual(len(INGREDIENTS), 30)
+        self.assertEqual(len(INGREDIENTS), 34)
         tags = {ingredient.tag for ingredient in INGREDIENTS.values()}
         self.assertEqual(tags, {None, GROWTH, ASSAULT, VITALITY, FEAST, NOURISHMENT, FORTUNE})
-        rare = [key for key, ingredient in INGREDIENTS.items() if ingredient.aftertaste]
+        rare = [key for key, ingredient in INGREDIENTS.items() if ingredient.seasoning]
         self.assertEqual(rare, ['cooking:seasoning:low', 'cooking:seasoning:mid',
                                 'cooking:seasoning:high'])
         self.assertEqual([INGREDIENTS[key].aftertaste for key in rare], [2, 3, 4])

@@ -5,6 +5,7 @@ import math
 import time
 
 from core.rpg import level_for
+from core.rpg_fishing_bosses import FISHING_BOSSES, boss_ingredient
 
 
 STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
@@ -456,6 +457,13 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
 def _cooking_ingredient_description(tag, quality, pairing, aftertaste=0):
     echo = f'+{aftertaste}' if aftertaste else '—'
     return f'料理標籤：{tag}｜品質：{quality}｜餘韻：{echo}｜推薦搭配：{pairing}。'
+
+
+for spot_id, fishing_boss in FISHING_BOSSES.items():
+    ITEMS[boss_ingredient(spot_id)] = Item(
+        fishing_boss.ingredient_name, '料理素材', '', 0, (0, 0, 0, 0, 0), category='料理素材',
+        description=_cooking_ingredient_description('幸運・盛宴・餘韻', fishing_boss.quality, '—', 1),
+        sell_price=400)
 
 
 # Fishing items use the existing stackable inventory while remaining separate from

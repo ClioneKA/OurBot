@@ -130,13 +130,15 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             message = await self.service.setup(self.guild)
             self.assertIn('繪境迷廊', message)
             self.guild.create_category.assert_not_awaited()
-            self.guild.create_text_channel.assert_awaited_once()
+            self.assertEqual(self.guild.create_text_channel.await_count, 2)
             maze_id = self.service.store.get(9).maze_channel_id
-            self.assertEqual(self.service.store.get(9), AdventureSpace(9, 10, 11, 12, 13, 14, 3, maze_id))
+            special_id = self.service.store.get(9).special_channel_id
+            self.assertEqual(self.service.store.get(9), AdventureSpace(9, 10, 11, 12, 13, 14, 3, maze_id, special_id))
             self.assertIn('必要權限尚未一致', self.service.status_text(self.guild))
 
             await self.service.repair(self.guild)
             self.assertIs(self.channels[11].overwrites_for(self.adventurer_role).send_messages, False)
+            self.assertIs(self.channels[special_id].overwrites_for(self.adventurer_role).send_messages, False)
             self.assertIs(self.channels[14].overwrites_for(self.adventurer_role).send_messages, True)
             self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages, False)
             self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages_in_threads, True)
@@ -156,7 +158,7 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             space = self.service.store.get(9)
             self.assertIsNotNone(space.category_id)
             self.assertIsNotNone(space.adventurer_role_id)
-            self.assertEqual(self.guild.create_text_channel.await_count, 5)
+            self.assertEqual(self.guild.create_text_channel.await_count, 6)
             self.assertEqual(self.channels[space.tavern_channel_id].name, '冒險者酒館')
             self.assertEqual(self.channels[space.maze_channel_id].name, '🎨・繪境迷廊')
             self.assertIn('皆正常', self.service.status_text(self.guild))

@@ -46,6 +46,7 @@
 | `[rpg.mid_raid]` | 三、四階的中階討伐，預設 90–180 分鐘隨機間隔、勝利 200 金幣；XP 依怪物階層為 600／750，專用頻道在 `.env` 的 `RPG_MID_RAID_CHANNEL_IDS` 設定 |
 | `[rpg.high_raid]` | 五、六階的高階討伐，預設 90–180 分鐘隨機間隔、勝利 250 金幣；XP 依怪物階層為 900／1,050，專用頻道在 `.env` 的 `RPG_HIGH_RAID_CHANNEL_IDS` 設定 |
 | 酒館公開頻道 | `.env` 的 `RPG_TAVERN_CHANNEL_IDS` 設定各伺服器的酒館文字頻道；公開料理與請客都會發布於此 |
+| 釣魚特殊討伐 | `.env` 的 `RPG_SPECIAL_RAID_CHANNEL_IDS` 或 `/冒險區域 建立／匯入` 配置獨立頻道；沿用 `[rpg.raid]` 的開關、人數與金幣，詳見 [釣魚 Boss](../docs/fishing-bosses.md) |
 | `[rpg.total_raid]` | 手動總力戰測試房：最多 6 人、每回合選擇期限與回合上限；暫時頻道類別在 `.env` 的 `RPG_TOTAL_RAID_CATEGORY_IDS` 設定 |
 | `persona.txt`、`prompt_*.txt` | 人格與情境提示詞 |
 
