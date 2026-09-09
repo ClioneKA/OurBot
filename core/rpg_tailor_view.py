@@ -7,7 +7,8 @@ from core.rpg_character import (CharacterError, DYE_PRICE, EMBROIDERIES,
                                 EMBROIDERY_PRICE, ITEMS, PAINT_ITEMS, PAINT_NAMES,
                                 STAT_NAMES, inventory_entry_label, item_text)
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_witch_embroideries import DESCRIPTIONS
+from core.rpg_witch_embroideries import DESCRIPTIONS, REQUIREMENTS
+from core.rpg_witch_catalog import PROFILE
 from core.rpg_menu import add_help, navigate
 
 
@@ -43,6 +44,7 @@ class TailorView(discord.ui.View):
         self.add_item(button)
 
     def rebuild(self):
+        self.unlocked = self.cog.characters.unlocked_witch_embroideries(self.guild_id, self.owner.id)
         entries = self.cog.characters.inventory_entries(self.guild_id, self.owner.id)
         self.equipped_ids = set(self.cog.characters.snapshot(
             self.guild_id, self.owner.id)['equipped_instances'].values())
@@ -80,13 +82,15 @@ class TailorView(discord.ui.View):
             if self.option not in EMBROIDERIES:
                 self.option = 'heart'
             self.add_item(PanelSelect('option', row=2, placeholder='選擇刺繡圖樣', options=[
-                discord.SelectOption(label=name, value=key,
-                    description=(DESCRIPTIONS[key] if key in DESCRIPTIONS else
+                discord.SelectOption(label=('🔒 ' if key in REQUIREMENTS and key not in self.unlocked else '') + name, value=key,
+                    description=(f'解鎖：通關包含{PROFILE[REQUIREMENTS[key]][1]}的魔女試煉'
+                                 if key in REQUIREMENTS and key not in self.unlocked else DESCRIPTIONS[key] if key in DESCRIPTIONS else
                                  f'{STAT_NAMES[int(effect.split(":")[1])]} +{value}')[:100],
                     default=self.option == key)
                 for key, (name, effect, value) in EMBROIDERIES.items()]))
         self._button(f'確認{"染色" if self.mode == "dye" else "刺繡"}', 'apply', 3,
-                     disabled=self.selected is None, style=discord.ButtonStyle.success)
+                     disabled=self.selected is None or (self.mode == 'embroidery' and self.option in REQUIREMENTS
+                                                        and self.option not in self.unlocked), style=discord.ButtonStyle.success)
         self._button('上一頁', 'previous', 3, disabled=self.page == 0)
         self._button('下一頁', 'next', 3, disabled=self.page == pages - 1)
         add_help(self, 4, 'life', 'tailor')
@@ -111,9 +115,14 @@ class TailorView(discord.ui.View):
                            '再次染色會取代原顏色，舊顏料與費用不返還。')
         else:
             description = (f'支付 **{EMBROIDERY_PRICE:,} 金幣**，在具有刺繡格的討伐飾品上縫製圖樣。'
-                           '魔女刺繡另需 3 個魔女繡線。再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
+                           '魔女刺繡需先通關對應魔女的試煉，另需 3 個魔女繡線。再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
         embed = discord.Embed(title='安安大冒險｜漢娜的裁縫所',
                               description=description, color=0xE85D75)
+        if self.mode == 'embroidery' and self.option in REQUIREMENTS:
+            name = PROFILE[REQUIREMENTS[self.option]][1]
+            status = '已解鎖' if self.option in self.unlocked else f'未解鎖：請先通關包含{name}的魔女試煉'
+            embed.add_field(name=EMBROIDERIES[self.option][0],
+                            value=f'{DESCRIPTIONS[self.option]}\n{status}', inline=False)
         entry = self.entries.get(self.selected)
         if entry:
             details = item_text(entry.item)

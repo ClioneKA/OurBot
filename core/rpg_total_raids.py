@@ -17,6 +17,7 @@ from core.rpg_battle import PASSIVES, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_character import add_owned_item
 from core.rpg_witch_catalog import WITCH_BOSS, IDS, PROFILE
+from core.rpg_witch_embroideries import backfill_victories, record_victory
 from core.rpg_witch_battle import WitchRaidBattle, witch_battle_from_participants, ACTION_DEFEND, SPELL_DESCRIPTIONS, WITCH_TRAITS
 from core.rpg_expeditions import is_expedition_active, require_not_expedition
 from core.rpg_raids import channel_ids
@@ -271,6 +272,10 @@ class TotalRaidStore:
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_witch_rewards (room_id TEXT PRIMARY KEY)')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_channels (
                 guild_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_unpin_queue (
+                channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                PRIMARY KEY(channel_id,message_id))''')
+            backfill_victories(self.db)
 
     def daily_witches(self, now=None):
         day = witch_day(now)
@@ -298,10 +303,13 @@ class TotalRaidStore:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             claimed = self.db.execute('INSERT OR IGNORE INTO rpg_witch_rewards VALUES (?)', (room['id'],))
+            if battle.result == '勝利':
+                record_victory(self.db, room['guild_id'], room['members'], battle.ids, room['id'])
             if claimed.rowcount and battle.result == '勝利':
                 for uid in room['members']:
                     add_owned_item(self.db, room['guild_id'], uid, 'witch:thread', 1)
-            room['reward_text'] = '每位參戰者獲得 1 個魔女繡線。' if battle.result == '勝利' else '本次未勝，沒有繡線報酬。'
+            room['reward_text'] = ('每位參戰者獲得 1 個魔女繡線，並解鎖本次三位魔女的刺繡圖樣。'
+                                   if battle.result == '勝利' else '本次未勝，沒有繡線報酬，也不解鎖刺繡。')
             room['public_pending'] = True
             self.db.execute('UPDATE rpg_total_raids SET status=?,data=? WHERE id=?',
                 (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
@@ -787,6 +795,8 @@ class TotalRaidService:
         self.private_cleanup_tasks = set()
         self.witch_channel_retry_at = {}
         self.refreshed_announcements = set()
+        self.pinned_announcements = {}
+        self.witch_pin_retry_at = {}
 
     def start(self):
         self.bot.add_view(WitchDailyView(self))
@@ -1246,7 +1256,8 @@ class TotalRaidService:
                                     view_channel=True, send_messages=False, read_message_history=True),
                                 guild.me: discord.PermissionOverwrite(
                                     view_channel=True, send_messages=True, read_message_history=True,
-                                    embed_links=True, manage_channels=True),
+                                    embed_links=True, manage_channels=True, manage_messages=True,
+                                    **({'pin_messages': True} if 'pin_messages' in discord.Permissions.VALID_FLAGS else {})),
                             }, reason='建立每日魔女試煉公告頻道')
                     with self.repo.db:
                         self.repo.db.execute('''INSERT INTO rpg_witch_channels VALUES (?,?)
@@ -1258,6 +1269,35 @@ class TotalRaidService:
                     logger.exception('Cannot create or find witch announcement channel: %s', gid)
         return channels
 
+    async def pin_witch_announcement(self, channel, message_id):
+        cid = channel.id
+        if time.time() < self.witch_pin_retry_at.get(cid, 0):
+            return
+        try:
+            if self.pinned_announcements.get(cid) != message_id:
+                try:
+                    await channel.get_partial_message(message_id).pin(reason='置頂當日魔女試煉公告')
+                except discord.NotFound:
+                    with self.repo.db:
+                        self.repo.db.execute('DELETE FROM rpg_witch_announcements WHERE channel_id=? AND message_id=?',
+                                             (cid, message_id))
+                    self.pinned_announcements.pop(cid, None)
+                    return
+                self.pinned_announcements[cid] = message_id
+            # Only retire our previous daily announcements, after the new pin succeeds.
+            rows = self.repo.db.execute('SELECT message_id FROM rpg_witch_unpin_queue WHERE channel_id=?', (cid,)).fetchall()
+            for old_id, in rows:
+                if old_id != message_id:
+                    try:
+                        await channel.get_partial_message(old_id).unpin(reason='魔女試煉每日公告已更新')
+                    except discord.NotFound:
+                        pass
+                with self.repo.db:
+                    self.repo.db.execute('DELETE FROM rpg_witch_unpin_queue WHERE channel_id=? AND message_id=?', (cid, old_id))
+        except discord.HTTPException:
+            self.witch_pin_retry_at[cid] = time.time() + 300
+            logger.exception('Witch daily pin update failed: %s', cid)
+
     async def announce_witches(self):
         if not self.settings.enabled:
             return
@@ -1267,11 +1307,13 @@ class TotalRaidService:
             saved = self.repo.db.execute('SELECT day,message_id FROM rpg_witch_announcements WHERE channel_id=?', (cid,)).fetchone()
             if saved and saved[0] == day:
                 if (cid, day) in self.refreshed_announcements:
+                    await self.pin_witch_announcement(channel, saved[1])
                     continue
                 try:
                     await channel.get_partial_message(saved[1]).edit(embed=self.daily_embed(), view=WitchDailyView(self),
                                                                     allowed_mentions=discord.AllowedMentions.none())
                     self.refreshed_announcements.add((cid, day))
+                    await self.pin_witch_announcement(channel, saved[1])
                     continue
                 except discord.NotFound:
                     pass
@@ -1282,10 +1324,13 @@ class TotalRaidService:
                 message = await channel.send(embed=self.daily_embed(), view=WitchDailyView(self),
                                              allowed_mentions=discord.AllowedMentions.none())
                 with self.repo.db:
+                    if saved and saved[1] != message.id:
+                        self.repo.db.execute('INSERT OR IGNORE INTO rpg_witch_unpin_queue VALUES (?,?)', (cid, saved[1]))
                     self.repo.db.execute('''INSERT INTO rpg_witch_announcements VALUES (?,?,?)
                         ON CONFLICT(channel_id) DO UPDATE SET day=excluded.day,message_id=excluded.message_id''',
                         (cid, day, message.id))
                 self.refreshed_announcements.add((cid, day))
+                await self.pin_witch_announcement(channel, message.id)
             except discord.HTTPException:
                 logger.exception('Witch daily announcement failed: %s', cid)
 

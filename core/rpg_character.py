@@ -6,6 +6,8 @@ import time
 
 from core.rpg import level_for
 from core.rpg_fishing_bosses import FISHING_BOSSES, boss_ingredient
+from core.rpg_witch_embroideries import REQUIREMENTS, ensure_unlock_table
+from core.rpg_witch_catalog import PROFILE as WITCH_PROFILE
 
 
 STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
@@ -411,6 +413,15 @@ PAINT_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
 DYE_PRICE = 1_000
 EMBROIDERY_PRICE = 500
 EMBROIDERIES = {
+    'witch_flower': ('斷罪之花', 'witch_flower', 5),
+    'witch_wish': ('無聲的心願', 'witch_wish', 4),
+    'witch_canvas': ('未乾的畫布', 'witch_canvas', 6),
+    'witch_star': ('聚光之星', 'witch_star', 4),
+    'witch_afterimage': ('昨日的殘影', 'witch_afterimage', 4),
+    'witch_embers': ('餘燼之火', 'witch_embers', 4),
+    'witch_fist': ('破籠之拳', 'witch_fist', 4),
+    'witch_feather': ('浮空之羽', 'witch_feather', 4),
+    'witch_camera': ('注視的鏡頭', 'witch_camera', 3),
     'witch_dawn': ('輪迴的黎明', 'witch_dawn', 1),
     'witch_exchange': ('交換的溫柔', 'witch_exchange', 1),
     'witch_echo': ('借來的回聲', 'witch_echo', 4),
@@ -778,6 +789,7 @@ class Characters:
         self.settings = settings
         # Separate tables leave all legacy XP and cooldown values intact.
         with self.db:
+            ensure_unlock_table(self.db)
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_characters (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, job TEXT NOT NULL,
                 PRIMARY KEY (guild_id, user_id))''')
@@ -1473,6 +1485,11 @@ class Characters:
             updated = self._instance(guild, user, instance.instance_id)
         return updated.token if isinstance(item_id, int) or str(item_id).startswith('instance:') else self.instance_item_id(updated)
 
+    def unlocked_witch_embroideries(self, guild, user):
+        defeated = {row[0] for row in self.db.execute(
+            'SELECT witch_id FROM rpg_witch_unlocks WHERE guild_id=? AND user_id=?', (guild, user))}
+        return {key for key, witch in REQUIREMENTS.items() if witch in defeated}
+
     def embroider_accessory(self, guild, user, item_id, embroidery_id):
         embroidery = EMBROIDERIES.get(embroidery_id)
         if embroidery is None:
@@ -1488,6 +1505,9 @@ class Characters:
             if current and current[1] == affix_id:
                 raise CharacterError(f'這件飾品已經具有{embroidery[0]}。')
             if embroidery_id.startswith('witch_'):
+                if embroidery_id not in self.unlocked_witch_embroideries(guild, user):
+                    name = WITCH_PROFILE[REQUIREMENTS[embroidery_id]][1]
+                    raise CharacterError(f'尚未解鎖{embroidery[0]}；請先通關包含{name}的魔女試煉。')
                 paid_thread = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-3
                     WHERE guild_id=? AND user_id=? AND item_id='witch:thread' AND quantity>=3''', (guild, user))
                 if not paid_thread.rowcount:

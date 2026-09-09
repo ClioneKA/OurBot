@@ -505,6 +505,7 @@ class Battle:
                                 paint = Fighter('未乾色塊', 1, '未乾色塊', stats, 35, [],
                                                 is_boss=False, mechanic_priority=2)
                                 paint.effects['mechanic_target'] = self.round + 3
+                                paint.status_stacks['mechanism_object'] = 1
                                 self.fighters.append(paint)
                                 self.mechanics['maze_wet_paint_round'] = self.round
                                 self.log.append('【未乾色塊】出現；若不及時擊倒將強化色彩技能。')
@@ -1152,6 +1153,8 @@ class Battle:
         target.effects[effect] = max(target.effects.get(effect, 0), until)
         if source is not None and source.user_id is not None:
             target.effect_sources[effect] = source.user_id
+        from core import rpg_witch_embroideries
+        rpg_witch_embroideries.debuff_applied(self, target, source)
         return True
 
     def tick_poison_arrows(self, target):
@@ -1388,6 +1391,10 @@ class Battle:
         context = (self._passive_action if passive_trigger and self._passive_action
                    and self._passive_action['actor'] is actor else None)
         passive_multiplier = context.get('multiplier', 1) if context else 1
+        from core import rpg_witch_embroideries
+        embroidery_multiplier, embroidery_accuracy = rpg_witch_embroideries.direct_modifiers(
+            self, actor, target, context, attack_scope)
+        passive_multiplier *= embroidery_multiplier
         force_hit = bool(context and context.get('force_hit'))
         tempo = None
         if passive_trigger and self.passive(actor, '弓兵', 1):
@@ -1397,7 +1404,7 @@ class Battle:
         if stored_attack:
             actor.stored_defense_attack = 0
             self.log.append(f'{actor.name} 釋放【吞城鯨飾品】蓄積的 {stored_attack} 點攻擊力。')
-        chance = self.hit_chance(actor, target)
+        chance = min(100, self.hit_chance(actor, target) + embroidery_accuracy)
         if not precise and not force_hit and self.rng.random() * 100 >= chance:
             actor.combat_stats['misses'] += 1
             if actor.status_stacks.get('crystal_endless_arrow'):
@@ -1485,6 +1492,7 @@ class Battle:
         vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
         target_hp_before = target.hp
         target_actual, partner, partner_actual = self.apply_damage(target, damage, direct=True)
+        rpg_witch_embroideries.record_direct_hit(self, actor, target, target_actual)
         actual_damage = target_actual + partner_actual
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
@@ -1930,6 +1938,7 @@ class Battle:
             circle = Fighter(f'{actor.name}・逆潮法陣', 1, '逆潮法陣', circle_stats, 1, [],
                              is_boss=False, mechanic_priority=1)
             circle.effects.update(charging=self.round + 1, mechanic_target=self.round + 1)
+            circle.status_stacks['mechanism_object'] = 1
             self.fighters.append(circle)
             self.record_skill(actor, '召喚逆潮法陣')
             self.log.append(f'{actor.name} 召喚【逆潮法陣】，下一回合將爆發！')
@@ -2320,6 +2329,8 @@ class Battle:
                         'source_id': actor.user_id, 'damage': max(1, int(attack * 0.7)),
                         'next_round': self.round + 1, 'remaining': duration,
                     })
+                    from core import rpg_witch_embroideries
+                    rpg_witch_embroideries.debuff_applied(self, target, actor)
                     self.log.append(f'{target.name} 遭毒箭侵蝕，後續 {duration} 回合將受到無視防禦傷害。')
             if hit and target.hp > 0 and effect == 'shield_bash':
                 if self._passive_action is not None and self._passive_action.get('shield_followup'):
@@ -2794,6 +2805,8 @@ def raid_battle(participants, monster, seed):
                              monster['kind'] == '星蝕巨神' and i == 1 else 0)
         fighters.append(Fighter(name, 1, job, individual, fighter_speed, [],
                                 is_boss=is_boss, mechanic_priority=mechanic_priority))
+        if i > 0 and monster['kind'] in ('王城傀儡師', '迷霧菌后', '星蝕巨神'):
+            fighters[-1].status_stacks['mechanism_object'] = 1
     battle = Battle(fighters, seed=seed)
     if monster['kind'] == '深淵鐘龍':
         battle.mechanics['next_clock_charge'] = 3

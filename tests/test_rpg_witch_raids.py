@@ -8,6 +8,7 @@ from core.rpg_total_battle import ACTION_ATTACK, load_total_battle, dump_total_b
 from core.rpg_total_raids import TotalRaidError, TotalRaidStore, TotalRaidService, witch_day, WitchDailyView
 from core.rpg_witch_catalog import WITCH_BOSS
 from core.rpg_witch_battle import WitchRaidBattle
+from core.rpg_witch_embroideries import REQUIREMENTS, record_victory
 from core.rpg_total_raids import WitchBattleView, WitchPrivateActionView, WitchActionButton, WitchPrivateTargetSelect, active_effect_notes, field_chunks, effect_status
 from tests import test_rpg_witch_battle as battle_fixtures
 from tests.test_rpg_total_raids import TotalRaidRoomTests, HashableMember, FakeChannel, FakeCategory
@@ -340,6 +341,36 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertIn('免費入場', embed.description)
         self.assertEqual(len(embed.fields), 3)
         self.assertTrue(all('二次魔女化' in f.value for f in embed.fields))
+        channel.message.pin.assert_awaited_once()
+
+    async def test_daily_pin_rotation_retries_without_reposting_or_losing_old_pin(self):
+        _, channel = self.announcement_fixture(existing=True)
+        self.bot.channels[80] = channel
+        self.service.witch_channel_ids = {80}
+        old = SimpleNamespace(id=998, pin=AsyncMock(), unpin=AsyncMock())
+        channel.get_partial_message = lambda mid: old if mid == 998 else channel.message
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_witch_announcements VALUES (?,?,?)', (80, '2000-01-01', 998))
+        forbidden = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'no pin permission')
+        channel.message.pin.side_effect = forbidden
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), patch('core.rpg_total_raids.logger.exception'):
+            await self.service.announce_witches()
+            await self.service.announce_witches()
+            channel.send.assert_awaited_once()
+            channel.message.pin.assert_awaited_once()
+            old.unpin.assert_not_awaited()
+            channel.message.pin.side_effect = None
+            old.unpin.side_effect = forbidden
+            self.service.witch_pin_retry_at.clear()
+            await self.service.announce_witches()
+            self.assertEqual(self.service.pinned_announcements[80], 999)
+            self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rpg_witch_unpin_queue').fetchone()[0], 1)
+            old.unpin.side_effect = None
+            restarted = TotalRaidService(self.cog)
+            restarted.witch_channel_ids = {80}
+            await restarted.announce_witches()
+            channel.send.assert_awaited_once()
+            self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rpg_witch_unpin_queue').fetchone()[0], 0)
 
     async def test_embroidery_consumption_and_snapshot(self):
         room, host, channel = await self.setup_witch_room()
@@ -353,7 +384,39 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 3)
         with self.store.db:
             self.store.db.execute('INSERT OR REPLACE INTO rpg_wallets(guild_id,user_id,gold) VALUES (1,1,1000)')
+        with self.assertRaisesRegex(Exception, '尚未解鎖'):
+            self.characters.embroider_accessory(1, 1, instance.token, 'witch_dawn')
+        self.assertEqual(self.store.gold(1, 1), 1000)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 3)
+        with self.store.db:
+            record_victory(self.store.db, 1, [1], ['hiro'], 'old-win')
         self.characters.embroider_accessory(1, 1, instance.token, 'witch_dawn')
         self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 0)
         saved = self.characters._instance(1, 1, instance.instance_id)
         self.assertTrue(any(a[1] == 'embroidery:witch_dawn' for a in saved.affixes))
+
+    async def test_win_unlocks_all_participants_only_and_backfills_existing_wins(self):
+        room, _, _ = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make(ids=('hiro', 'margo', 'anan'))
+        room.update(status='completed', members=[1, 2], witch_ids=list(b.ids))
+        b.result = '戰敗'
+        room['battle'] = dump_total_battle(b)
+        self.service.repo.finish_witch(room, b)
+        self.assertFalse(self.characters.unlocked_witch_embroideries(1, 1))
+        # Historical victory before the unlock migration, including a dead participant.
+        b.result = '勝利'
+        b._player(2).hp = 0
+        room['battle'] = dump_total_battle(b)
+        self.service.repo.save(room)
+        with self.store.db:
+            self.store.db.execute('DELETE FROM rpg_witch_unlock_migrations')
+        TotalRaidStore(self.store)
+        expected = {'witch_dawn', 'witch_echo', 'witch_wish'}
+        self.assertEqual(self.characters.unlocked_witch_embroideries(1, 1), expected)
+        self.assertEqual(self.characters.unlocked_witch_embroideries(1, 2), expected)
+        self.assertFalse(self.characters.unlocked_witch_embroideries(1, 3))
+        self.assertFalse(self.characters.unlocked_witch_embroideries(2, 1))
+        self.service.repo.finish_witch(room, b)
+        TotalRaidStore(self.store)
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rpg_witch_unlocks').fetchone()[0], 6)
+        self.assertEqual(len(REQUIREMENTS), 13)

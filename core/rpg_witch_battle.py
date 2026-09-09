@@ -186,10 +186,12 @@ class WitchRaidBattle(WitchBattleV9):
     def add_object(self, owner, kind, hp_fraction, power=0, group=False):
         key = super().add_object(owner, kind, hp_fraction, power, group)
         self.fighter_for_key(key).name = OBJECT_NAMES.get(kind, kind)
+        self.fighter_for_key(key).status_stacks['mechanism_object'] = 1
         return key
 
     def _resolve_player(self, actor, choice):
         if choice.action == ACTION_DEFEND and not self.forced(actor, self.round):
+            actor.passive_state.pop('witch_camera_target', None)
             self.mechanics.setdefault('embroidery_last_action', {})[str(actor.team)] = dict(
                 user_id=actor.user_id, damage=False, healing=False)
             self.log.append(f'{actor.name} 防禦，本回合承受傷害減半。')

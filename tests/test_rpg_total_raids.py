@@ -32,7 +32,7 @@ class FakeChannel:
     def __init__(self, channel_id, guild):
         self.id, self.guild = channel_id, guild
         self.mention = f'<#{channel_id}>'
-        self.message = SimpleNamespace(id=999, edit=AsyncMock())
+        self.message = SimpleNamespace(id=999, edit=AsyncMock(), pin=AsyncMock(), unpin=AsyncMock())
         self.send = AsyncMock(return_value=self.message)
 
     def get_partial_message(self, _message_id):

@@ -11,6 +11,7 @@ from core.rpg_character import Characters, DYE_PRICE, EMBROIDERY_PRICE, ITEMS
 from core.rpg_crystal_view import CrystalTailorView
 from core.rpg_crystals import CrystalStore
 from core.rpg_tailor_view import TailorView
+from core.rpg_witch_embroideries import record_victory
 from core.settings import RPGSettings
 
 
@@ -79,6 +80,21 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(stranger, 'close')
         self.assertFalse(self.view.closed)
         stranger.response.send_message.assert_awaited_once()
+
+    async def test_witch_patterns_display_lock_requirement_and_enable_after_win(self):
+        await self.view.handle(self.interaction, 'mode:embroidery')
+        await self.view.handle(self.interaction, 'item', f'instance:{self.raid_id}')
+        await self.view.handle(self.interaction, 'option', 'witch_echo')
+        select = next(child for child in self.view.children if getattr(child, 'action', '') == 'option')
+        option = next(o for o in select.options if o.value == 'witch_echo')
+        self.assertIn('🔒', option.label)
+        self.assertIn('瑪格', option.description)
+        self.assertTrue(next(c for c in self.view.children if getattr(c, 'label', '') == '確認刺繡').disabled)
+        self.assertIn('未解鎖', self.view.embed().fields[0].value)
+        with self.store.db:
+            record_victory(self.store.db, 1, [1], ['margo'], 'win')
+        await self.view.handle(self.interaction, 'refresh')
+        self.assertFalse(next(c for c in self.view.children if getattr(c, 'label', '') == '確認刺繡').disabled)
 
     def add_crystal(self, crystal_type, reward_slot=0):
         definitions = {

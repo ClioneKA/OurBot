@@ -1,5 +1,6 @@
 import unittest
-from core.rpg_battle import Battle, Fighter, Skill, Rule
+from unittest.mock import Mock
+from core.rpg_battle import Battle, Fighter, Skill, Rule, dump_battle, load_battle
 from core import rpg_witch_embroideries as effects
 
 
@@ -9,6 +10,91 @@ def player(uid, job='僧侶'):
 
 
 class WitchEmbroideryTests(unittest.TestCase):
+    def duel(self, embroidery, defensive=False):
+        a, target = player(1), player(2, '騎士')
+        target.team = 1
+        (target if defensive else a).status_stacks['embroidery_' + embroidery] = 1
+        return Battle([a, target], seed=1), a, target
+
+    def damage(self, battle, actor, target, **kwargs):
+        before = target.hp
+        battle.hit(actor, target, precise=True, counterable=False, **kwargs)
+        return before - target.hp
+
+    def test_flower_strict_threshold_and_canvas_requires_explicit_object_tag(self):
+        b, a, target = self.duel('witch_flower')
+        target.hp = 300
+        self.assertEqual(self.damage(b, a, target), 100)
+        target.hp = 299
+        self.assertEqual(self.damage(b, a, target), 105)
+        b, a, target = self.duel('witch_canvas')
+        target.name = '動物召喚畫'
+        self.assertEqual(self.damage(b, a, target), 100)
+        target.status_stacks['mechanism_object'] = 1
+        self.assertEqual(self.damage(b, a, target), 106)
+
+    def test_wish_requires_successful_enemy_debuff_and_consumes_once(self):
+        b, a, target = self.duel('witch_wish')
+        target.effects['immunity'] = 1
+        self.assertFalse(b.apply_debuff(target, 'poison', 1, a))
+        self.assertEqual(self.damage(b, a, target), 100)
+        target.effects.clear()
+        b.apply_debuff(target, 'poison', 1, a)
+        b.apply_debuff(target, 'poison', 2, a)
+        self.assertEqual(self.damage(b, a, target), 104)
+        self.assertEqual(self.damage(b, a, target), 100)
+
+    def test_embers_does_not_double_stack_and_fist_requires_long_single_skill(self):
+        b, a, target = self.duel('witch_embers')
+        target.effects.update(burn=1, poison=1)
+        self.assertEqual(self.damage(b, a, target), 104)
+        b, a, target = self.duel('witch_fist')
+        for effect, cooldown, scope, expected in [('strike', 3, 'single', 104),
+                                                  ('strike', 2, 'single', 100), ('area', 3, 'group', 100)]:
+            context = b._begin_passive_action(a, Skill('測試', effect, cooldown, ''), target)
+            self.assertEqual(self.damage(b, a, target, attack_scope=scope), expected)
+            b._finish_passive_action(context)
+
+    def test_star_and_feather_only_reduce_matching_direct_damage(self):
+        b, a, target = self.duel('witch_star', defensive=True)
+        self.assertEqual(self.damage(b, a, target), 100)
+        target.effects['taunt'] = 1
+        self.assertEqual(self.damage(b, a, target), 96)
+        b, a, target = self.duel('witch_feather', defensive=True)
+        self.assertEqual(self.damage(b, a, target), 100)
+        self.assertEqual(self.damage(b, a, target, attack_scope='group'), 96)
+        hp = target.hp
+        b.apply_damage(target, 100)
+        self.assertEqual(hp - target.hp, 100)
+
+    def test_afterimage_tracks_enemy_and_consecutive_rounds_across_save(self):
+        b, a, target = self.duel('witch_afterimage', defensive=True)
+        b.round = 1
+        self.assertEqual(self.damage(b, a, target), 100)
+        b = load_battle(dump_battle(b))
+        a, target = b.fighters
+        b.round = 2
+        self.assertEqual(self.damage(b, a, target), 96)
+        self.assertEqual(self.damage(b, a, target), 96)
+        b.round = 4
+        self.assertEqual(self.damage(b, a, target), 100)
+
+    def test_camera_bonuses_are_per_action_and_reset_on_non_attack(self):
+        b, a, target = self.duel('witch_camera')
+        a.stats['命中率'] = 90
+        b.rng.random = Mock(return_value=.915)
+        context = b._begin_passive_action(a, target=target, basic=True)
+        self.assertFalse(b.hit(a, target, counterable=False))
+        b._finish_passive_action(context)
+        context = b._begin_passive_action(a, target=target, basic=True)
+        self.assertTrue(b.hit(a, target, counterable=False))
+        b._finish_passive_action(context)
+        context = b._begin_passive_action(a, Skill('祝福', 'bless', 1, ''), a)
+        b._finish_passive_action(context)
+        context = b._begin_passive_action(a, target=target, basic=True)
+        self.assertFalse(b.hit(a, target, counterable=False))
+        b._finish_passive_action(context)
+
     def test_dawn_threshold_once_and_multihit(self):
         for hp, expected in ((500, 0), (501, 1)):
             p = player(1)
