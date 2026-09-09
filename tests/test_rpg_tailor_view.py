@@ -60,6 +60,19 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.gold(1, 1), 5000 - DYE_PRICE - EMBROIDERY_PRICE)
         self.assertEqual(self.view.current_embroidery(raid), '羽翼刺繡')
 
+    async def test_equipped_marker_tracks_exact_copy_and_refresh(self):
+        duplicate = self.characters.grant_item(1, 1, 'noah:archer:weapon')[0]
+        self.characters.equip(1, 1, f'instance:{self.noah_id}')
+        await self.view.handle(self.interaction, 'item', f'instance:{self.noah_id}')
+        select = next(child for child in self.view.children if getattr(child, 'action', '') == 'item')
+        options = {option.value: option.label for option in select.options}
+        self.assertIn('【已裝備】', options[f'instance:{self.noah_id}'])
+        self.assertNotIn('【已裝備】', options[f'instance:{duplicate}'])
+        self.assertIn('【已裝備】', self.view.embed().fields[0].name)
+        self.characters.unequip(1, 1, '武器')
+        await self.view.handle(self.interaction, 'refresh')
+        self.assertNotIn('【已裝備】', self.view.embed().fields[0].name)
+
     async def test_other_users_cannot_operate_panel(self):
         stranger = SimpleNamespace(user=SimpleNamespace(id=2), guild_id=1,
                                    response=SimpleNamespace(send_message=AsyncMock()))

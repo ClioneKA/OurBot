@@ -68,6 +68,33 @@ class TradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('raid:0', self.characters.inventory(1, 1))
         self.assertNotIn('raid:0', self.characters.inventory(2, 2))
 
+    async def test_equipped_copy_is_visible_but_cannot_be_confirmed(self):
+        self.characters.equip(1, 1, 'raid:0')
+        worn = self.characters.snapshot(1, 1)['equipped_instances']['飾品1']
+        token = f'instance:{worn}'
+        for mode in ('sell', 'give'):
+            with self.subTest(mode=mode):
+                view = TradeView(self.cog, self.interaction, mode)
+                self.addCleanup(view.stop)
+                view.recipient = 2
+                await view.handle(self.interaction, 'item', token)
+                options = {option.value: option for option in view.children[1].options}
+                self.assertIn('【已裝備】', options[token].label)
+                other = next(key for key in view.catalog
+                             if view.entries[key].item_id == 'raid:0' and key != token)
+                self.assertNotIn('【已裝備】', options[other].label)
+                confirm = next(child for child in view.children if getattr(child, 'label', '') == '填寫數量並確認')
+                self.assertTrue(confirm.disabled)
+                self.assertIn('請先卸下', view.embed().fields[1].value)
+                await view.handle(self.interaction, 'confirm')
+                self.interaction.response.send_modal.assert_not_awaited()
+        self.characters.unequip(1, 1, '飾品1')
+        await view.handle(self.interaction, 'refresh')
+        self.assertFalse(view.selected_equipped)
+        await view.handle(self.interaction, 'confirm')
+        modal = self.interaction.response.send_modal.call_args.args[0]
+        self.addCleanup(modal.stop)
+
     async def test_invalid_actions_and_atomic_sale_rollback(self):
         for key, amount, recipient in (('starter:club', 1, 2), ('raid:0', 0, None),
                                        ('raid:0', 4, None), ('raid:0', 1, 1)):

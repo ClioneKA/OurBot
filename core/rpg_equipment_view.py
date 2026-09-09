@@ -5,7 +5,7 @@ from core.rpg_menu import add_help, add_back, navigate
 
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, SET_BONUSES, item_level, item_text
+from core.rpg_character import CharacterError, ITEMS, SET_BONUSES, item_display_name, item_level, item_text
 
 
 PAGE_SIZE = 25
@@ -61,9 +61,15 @@ class EquipmentView(discord.ui.View):
         self.add_item(PanelSelect('slot', placeholder='選擇裝備欄位', row=0, options=[
             discord.SelectOption(label=slot, value=slot, default=slot == self.slot)
             for slot in state['slots']]))
-        options = [discord.SelectOption(label=f'{self.available_items[token].name} #{token.split(":")[1]}', value=token,
-                                        description=item_text(self.available_items[token])[:100], default=token == self.item_id)
-                   for token in self.available]
+        equipped = {f'instance:{identity}' for identity in state['equipped_instances'].values()}
+        options = [discord.SelectOption(
+            label=(f'{"【已裝備】" if token in equipped else ""}'
+                   f'{item_display_name(self.available_items[token])}')[:100],
+            value=token,
+            description=(f'#{token.split(":")[1]}｜'
+                         f'{item_text(self.available_items[token])}')[:100],
+            default=token == self.item_id)
+            for token in self.available]
         self.add_item(PanelSelect('item', placeholder='選擇要穿戴的物品' if options else '這個欄位沒有可用裝備',
                                  row=1, disabled=not options, options=options or [
                                      discord.SelectOption(label='沒有可用裝備', value='empty')]))
@@ -91,7 +97,9 @@ class EquipmentView(discord.ui.View):
         embed = self.cog.character_embed(self.guild_id, self.owner)
         embed.title = '裝備與能力值｜' + embed.title
         selected = self.available_items.get(self.item_id)
-        embed.add_field(name='目前選擇', value=f'{self.slot}：{selected.name if selected else "請選擇物品"}', inline=False)
+        selection = (f'{item_display_name(selected)}\n{item_text(selected)}\n'
+                     f'編號 #{self.item_id.split(":")[1]}' if selected else '請選擇物品')
+        embed.add_field(name='目前選擇', value=f'{self.slot}：{selection}'[:1024], inline=False)
         if state.get('active_set'):
             embed.add_field(name='套裝效果：2/2（已啟動）', value=state['set_bonus_text'], inline=False)
         else:
@@ -151,7 +159,7 @@ class EquipmentView(discord.ui.View):
                         raise CharacterError('請先選擇可穿戴的物品。')
                     slot_number = int(self.slot[2:]) if self.slot.startswith('飾品') else 1
                     self.cog.characters.equip(self.guild_id, self.owner.id, self.item_id, slot_number)
-                    notice = f'{self.slot} 已穿戴 {self.available_items[self.item_id].name}。'
+                    notice = f'{self.slot} 已穿戴 {item_display_name(self.available_items[self.item_id])}。'
                 elif action == 'remove':
                     self.cog.characters.unequip(self.guild_id, self.owner.id, self.slot)
                     notice = f'已卸下{self.slot}，物品保留在背包。'

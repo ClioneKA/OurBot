@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, level_floor, level_for, scaled_chat_xp
 from core.settings import get_settings
 from core.rpg_menu import AdventureView
-from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, item_text, stage_level
+from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, item_display_name, item_text, stage_level
 from core.rpg_battle import Tactics, TARGETS, FIXED_TARGETS, condition_text, rule_skill, skill_description
 from core.rpg_loadouts import Loadouts
 from core.rpg_raids import RaidService
@@ -309,15 +309,19 @@ class RPG(commands.Cog):
         embed.add_field(name='武器穩定度', value=(f'{state["stability"][0]}–{state["stability"][1]}% 傷害'
                         if '武器' in state['equipped'] else '未裝備武器，無法造成傷害'))
         embed.add_field(name=f'裝備欄・飾品 {state["capacity"]} 格', value='\n'.join(
-            (f'{slot}：{ITEMS[state["equipped"][slot]].name} '
-             f'`#{state["equipped_instances"][slot]}`' if slot in state['equipped'] else f'{slot}：空')
+            (f'{slot}：{item_display_name(ITEMS[state["equipped"][slot]])}'
+             if slot in state['equipped'] else f'{slot}：空')
             for slot in state['slots']), inline=False)
         equipped_ids = set(state.get('equipped_instances', {}).values())
         socketed = [crystal for crystal in self.painted_maze.crystals.inventory(guild_id, member.id)
                     if crystal.equipment_instance_id in equipped_ids]
         if socketed:
+            equipment_names = {
+                identity: item_display_name(ITEMS[state['equipped'][slot]])
+                for slot, identity in state['equipped_instances'].items()
+            }
             embed.add_field(name='已鑲嵌顏料結晶', value='\n'.join(
-                f'裝備 `#{crystal.equipment_instance_id}`｜{crystal_affix_name(crystal)}：'
+                f'{equipment_names[crystal.equipment_instance_id]}｜{crystal_affix_name(crystal)}：'
                 f'{crystal_effect_text(crystal)}' for crystal in socketed)[:1024], inline=False)
         if state['job'] == '民兵':
             embed.description = 'Lv.10 起可使用 `/冒險 → 轉職` 選擇職業。'
@@ -379,7 +383,7 @@ class RPG(commands.Cog):
                                            f'{roles[state["job"]]}\n\n'
                                            f'{self.adventurer_comment(state, showcase)}'))
         embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-        equipment = [f'{slot}：{ITEMS[state["equipped"][slot]].name}'
+        equipment = [f'{slot}：{item_display_name(ITEMS[state["equipped"][slot]])}'
                      for slot in state['slots'] if slot in state['equipped']]
         embed.add_field(name='目前裝備', value='\n'.join(equipment) or '沒有裝備', inline=False)
         rules = sorted(self.tactics.rules(guild_id, member.id, state['job']), key=lambda rule: rule.slot)

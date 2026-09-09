@@ -2,7 +2,7 @@
 import asyncio
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, item_sell_price, item_sellable, item_text
+from core.rpg_character import CharacterError, ITEMS, inventory_entry_label, item_sell_price, item_sellable, item_text
 from core.rpg_menu import BACKPACK_CATEGORIES, add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
@@ -55,14 +55,17 @@ class TradeView(discord.ui.View):
     def rebuild(self):
         chars = self.cog.characters
         self.entries = {entry.reference: entry for entry in chars.inventory_entries(self.guild_id, self.owner.id)}
+        self.equipped_ids = set(chars.snapshot(self.guild_id, self.owner.id)['equipped_instances'].values())
         self.catalog = [reference for reference, entry in self.entries.items()
                         if (item_sellable(entry.item) if self.mode == 'sell' else entry.item.transferable)
                         and (self.category == '全部' or entry.item.category == self.category)
-                        and chars.available_quantity(self.guild_id, self.owner.id, reference) > 0]
+                        and (entry.instance_id in self.equipped_ids
+                             or chars.available_quantity(self.guild_id, self.owner.id, reference) > 0)]
         self.pages = max(1, (len(self.catalog) + 9) // 10)
         self.page = min(self.page, self.pages - 1)
         if self.selected not in self.catalog:
             self.selected = None
+        self.selected_equipped = bool(self.selected and self.entries[self.selected].instance_id in self.equipped_ids)
         self.clear_items()
         self.add_item(PanelSelect('category', row=0, placeholder='選擇物品分類', options=[
             discord.SelectOption(label=category, value=category, default=category == self.category)
@@ -70,10 +73,10 @@ class TradeView(discord.ui.View):
         keys = self.catalog[self.page * 10:(self.page + 1) * 10]
         self.add_item(PanelSelect('item', row=1, placeholder=f'{self.category}｜選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
             options=[discord.SelectOption(
-                label=(f'{self.entries[key].item.name} #{self.entries[key].instance_id}'
-                       if self.entries[key].instance_id else self.entries[key].item.name),
+                label=inventory_entry_label(self.entries[key], self.equipped_ids),
                 value=key, default=key == self.selected,
-                description=(('獨立裝備｜一次一件' if self.entries[key].instance_id else
+                description=(('請先卸下，再賣出或給予' if self.entries[key].instance_id in self.equipped_ids else
+                              '獨立裝備｜一次一件' if self.entries[key].instance_id else
                               f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件')
                              + (f'｜收購 {item_sell_price(self.entries[key].item)} 金幣／件'
                                 if self.mode == 'sell' else '')))
@@ -82,7 +85,7 @@ class TradeView(discord.ui.View):
             self.add_item(RecipientSelect())
         for label, action, disabled in (
             ('上一頁', 'previous', self.page == 0), ('下一頁', 'next', self.page == self.pages-1),
-            ('填寫數量並確認', 'confirm', not self.selected or self.mode == 'give' and not self.recipient),
+            ('填寫數量並確認', 'confirm', not self.selected or self.selected_equipped or self.mode == 'give' and not self.recipient),
             ('重新整理', 'refresh', False), ('關閉', 'close', False)):
             button = discord.ui.Button(label=label, row=3, disabled=disabled)
             async def callback(interaction, action=action):
@@ -106,7 +109,9 @@ class TradeView(discord.ui.View):
             value = item_text(item)
             if self.mode == 'sell':
                 value += f'\n收購價 {item_sell_price(item)} 金幣／件'
-            embed.add_field(name=item.name, value=value, inline=False)
+            if self.selected_equipped:
+                value += '\n這件裝備正在穿戴中，請先卸下再賣出或給予。'
+            embed.add_field(name=inventory_entry_label(self.entries[self.selected], self.equipped_ids), value=value, inline=False)
         if self.mode == 'give':
             embed.add_field(name='收件人', value=f'<@{self.recipient}>' if self.recipient else '尚未選擇')
         else:
@@ -138,7 +143,7 @@ class TradeView(discord.ui.View):
                 self.stop()
                 return
             self.rebuild()
-            if action == 'confirm' and self.selected and (self.mode == 'sell' or self.recipient):
+            if action == 'confirm' and self.selected and not self.selected_equipped and (self.mode == 'sell' or self.recipient):
                 await interaction.response.send_modal(QuantityModal(self))
                 return
             self.revision += 1

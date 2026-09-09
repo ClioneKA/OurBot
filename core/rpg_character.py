@@ -668,6 +668,20 @@ def speed_from_equipment(job, equipped=()):
     return max(1, min(100, BASE_SPEED.get(job, 50) + sum(ITEMS[key].speed for key in keys if key in ITEMS)))
 
 
+def item_display_name(item):
+    """Show canonical equipment tier, independent of configurable wear levels."""
+    if item.slot not in ('武器', '套裝', '飾品'):
+        return item.name
+    tier = item.required_level if item.required_level is not None else (10, 20, 50, 90)[item.stage]
+    return f'T{tier}｜{item.name}'
+
+
+def inventory_entry_label(entry, equipped_ids):
+    status = '【已裝備】' if entry.instance_id in equipped_ids else ''
+    identity = f' #{entry.instance_id}' if entry.instance_id else ''
+    return f'{status}{item_display_name(entry.item)}{identity}'[:100]
+
+
 def item_text(item):
     parts = [f'{name} +{value}' for name, value in zip(STAT_NAMES, item.stats) if value]
     parts += [f'{name} +{value}' for name, value in zip(COMBAT_NAMES, item.combat) if value]

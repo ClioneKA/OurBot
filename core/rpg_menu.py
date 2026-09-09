@@ -4,7 +4,7 @@ import asyncio
 import discord
 
 from core.rpg_help import HELP_TOPICS, guide_embed
-from core.rpg_character import CharacterError, ITEMS, JOBS, item_level, item_sell_price, item_sellable, item_text
+from core.rpg_character import CharacterError, ITEMS, JOBS, item_display_name, item_level, item_sell_price, item_sellable, item_text
 
 
 BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '製作材料', '換金道具', '釣竿')
@@ -182,11 +182,11 @@ class AdventureView(discord.ui.View):
                 requirement = (f'{item.job} Lv.{item_level(item, self.cog.settings)}' if item.job
                                else '全職業通用' if item.category == '裝備' else item.category)
                 sale = item_sell_price(item)
-                identity = f' #{entry.instance_id}' if entry.instance_id else ''
-                lines.append(f'**{item.name}{identity}** ×{entry.quantity} '
+                identity = f'｜編號 #{entry.instance_id}' if entry.instance_id else ''
+                lines.append(f'**{item_display_name(item)}** ×{entry.quantity} '
                              f'{"【已裝備】" if entry.instance_id in equipped else ""}\n'
                              f'{requirement}｜{item_text(item)}'
-                             + (f'｜收購 {sale} 金幣／件' if item_sellable(item) else ''))
+                             + (f'｜收購 {sale} 金幣／件' if item_sellable(item) else '') + identity)
             embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}',
                                   description='\n\n'.join(lines) or '目前沒有此類物品。', color=0x8B5CF6)
         elif self.page == 'life':

@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, item_text
+from core.rpg_character import CharacterError, inventory_entry_label, item_text
 from core.rpg_crystals import (CRYSTAL_TYPES,
                                QUALITY_SELL_PRICES, crystal_affix_name,
                                crystal_effect_text)
@@ -69,6 +69,8 @@ class CrystalTailorView(discord.ui.View):
     def rebuild(self):
         all_crystals = self.cog.painted_maze.crystals.inventory(self.guild_id, self.owner.id)
         equipment = self._equipment_entries()
+        self.equipped_ids = set(self.cog.characters.snapshot(
+            self.guild_id, self.owner.id)['equipped_instances'].values())
         self.crystals = {crystal.instance_id: crystal for crystal in all_crystals}
         self.equipment = {entry.reference: entry for entry in equipment}
         if self.selected_equipment not in self.equipment:
@@ -96,7 +98,7 @@ class CrystalTailorView(discord.ui.View):
                                 else discord.ButtonStyle.secondary))
         if self.mode == 'socket':
             equipment_options = [discord.SelectOption(
-                label=f'{item.item.name} #{item.instance_id}', value=item.reference,
+                label=inventory_entry_label(item, self.equipped_ids), value=item.reference,
                 description=item_text(item.item)[:100],
                 default=item.reference == self.selected_equipment)
                 for item in equipment[self.equipment_page * PAGE_SIZE:(self.equipment_page + 1) * PAGE_SIZE]]
@@ -159,7 +161,7 @@ class CrystalTailorView(discord.ui.View):
                 f'狀態：{location}{job}\n來源：第 {crystal.source_stage} 幕'), inline=False)
         entry = self.equipment.get(self.selected_equipment)
         if entry and self.mode == 'socket':
-            embed.add_field(name=f'{entry.item.name} #{entry.instance_id}',
+            embed.add_field(name=inventory_entry_label(entry, self.equipped_ids),
                             value=item_text(entry.item), inline=False)
             if self.mode == 'socket':
                 for slot in entry.item.crystal_slots:

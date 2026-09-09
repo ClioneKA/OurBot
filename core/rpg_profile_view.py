@@ -3,7 +3,7 @@ import asyncio
 
 import discord
 
-from core.rpg_character import CharacterError, item_text
+from core.rpg_character import CharacterError, inventory_entry_label, item_text
 from core.rpg_menu import add_back, navigate
 
 
@@ -13,8 +13,10 @@ PAGE_SIZE = 24
 class ShowcaseSelect(discord.ui.Select):
     def __init__(self, view, owned):
         current = view.cog.characters.showcase_reference(view.guild_id, view.owner.id)
+        equipped_ids = set(view.cog.characters.snapshot(
+            view.guild_id, view.owner.id)['equipped_instances'].values())
         options = [discord.SelectOption(
-            label=(f'{entry.item.name} #{entry.instance_id}' if entry.instance_id else entry.item.name)[:100],
+            label=inventory_entry_label(entry, equipped_ids),
             value=entry.reference,
             description=f'{entry.item.category}｜{item_text(entry.item)}'[:100],
             default=entry.reference == current) for entry in owned]

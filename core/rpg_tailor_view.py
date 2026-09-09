@@ -5,7 +5,7 @@ import discord
 
 from core.rpg_character import (CharacterError, DYE_PRICE, EMBROIDERIES,
                                 EMBROIDERY_PRICE, ITEMS, PAINT_ITEMS, PAINT_NAMES,
-                                STAT_NAMES, item_text)
+                                STAT_NAMES, inventory_entry_label, item_text)
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import add_help, navigate
 
@@ -43,6 +43,8 @@ class TailorView(discord.ui.View):
 
     def rebuild(self):
         entries = self.cog.characters.inventory_entries(self.guild_id, self.owner.id)
+        self.equipped_ids = set(self.cog.characters.snapshot(
+            self.guild_id, self.owner.id)['equipped_instances'].values())
         if self.mode == 'dye':
             entries = [entry for entry in entries if entry.instance_id and entry.item.socket_base]
         else:
@@ -62,7 +64,7 @@ class TailorView(discord.ui.View):
                      style=discord.ButtonStyle.primary if self.mode == 'embroidery' else discord.ButtonStyle.secondary)
         self._button('顏料結晶', 'crystals', 0)
         options = [discord.SelectOption(
-            label=f'{self.entries[reference].item.name} #{self.entries[reference].instance_id}',
+            label=inventory_entry_label(self.entries[reference], self.equipped_ids),
             value=reference, description=item_text(self.entries[reference].item)[:100],
             default=reference == self.selected) for reference in visible]
         self.add_item(PanelSelect('item', row=1,
@@ -120,7 +122,7 @@ class TailorView(discord.ui.View):
                 details += f'\n目前顏色：{color}'
             else:
                 details += f'\n目前刺繡：{self.current_embroidery(self.selected) or "無"}'
-            embed.add_field(name=f'{entry.item.name} #{entry.instance_id}', value=details, inline=False)
+            embed.add_field(name=inventory_entry_label(entry, self.equipped_ids), value=details, inline=False)
         counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         embed.add_field(name='加工資源', value=(
             f'金幣：{self.cog.store.gold(self.guild_id, self.owner.id):,}\n'
