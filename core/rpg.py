@@ -36,6 +36,28 @@ def level_floor(level):
     return XP_THRESHOLDS[level - 1]
 
 
+def scaled_chat_xp(base, xp):
+    """Cube-root growth relative to Lv.10, rounded down with exact integers.
+
+    At the level cap reuse the final available level gap (119 -> 120).
+    """
+    level = min(level_for(xp), MAX_LEVEL - 1)
+    required = max(level_floor(level + 1) - level_floor(level),
+                   level_floor(11) - level_floor(10))
+    baseline = level_floor(11) - level_floor(10)
+    target = base ** 3 * required // baseline
+    low, high = 0, max(1, base)
+    while high ** 3 <= target:
+        high *= 2
+    while low + 1 < high:
+        middle = (low + high) // 2
+        if middle ** 3 <= target:
+            low = middle
+        else:
+            high = middle
+    return low
+
+
 def title_for(level):
     for threshold, title in ((30, '傳說英雄'), (20, '精英冒險者'),
                              (10, '資深冒險者'), (5, '見習冒險者')):
@@ -119,7 +141,7 @@ class RPGStore:
                             (guild, user, self.day_key(now), source, amount))
         return amount
 
-    def award_text(self, guild_id, user_id, now, amount, cooldown, daily_limit=None):
+    def award_text(self, guild_id, user_id, now, amount, cooldown, daily_limit=None, *, scale=False):
         # Conditional UPSERT makes cooldown and XP one atomic, restart-safe write.
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -127,6 +149,11 @@ class RPGStore:
                                   (guild_id, user_id)).fetchone()
             if row and row[0] is not None and now - row[0] < cooldown:
                 return
+            if scale:
+                xp = self.xp(guild_id, user_id)
+                amount = scaled_chat_xp(amount, xp)
+                if daily_limit is not None:
+                    daily_limit = scaled_chat_xp(daily_limit, xp)
             amount = self._daily_award(guild_id, user_id, 'text', now, amount, daily_limit)
             self.db.execute('''INSERT INTO players (guild_id, user_id, xp, last_text_at)
                 VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET
@@ -134,12 +161,23 @@ class RPGStore:
                 WHERE players.last_text_at IS NULL OR ?-players.last_text_at>=?''',
                 (guild_id, user_id, amount, now, now, cooldown))
 
-    def award_voice(self, awards, daily_limit=None, now=None):
+    def award_voice(self, awards, daily_limit=None, now=None, *, xp_per_minute=None):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             now = time.time() if now is None else now
-            awards = [(guild, user, self._daily_award(guild, user, 'voice', now, amount, daily_limit))
-                      for guild, user, amount in awards]
+            if xp_per_minute is not None:
+                # In this mode tracker amounts are complete minutes, not XP.
+                scaled_awards = []
+                for guild, user, minutes in awards:
+                    xp = self.xp(guild, user)
+                    amount = minutes * scaled_chat_xp(xp_per_minute, xp)
+                    limit = None if daily_limit is None else scaled_chat_xp(daily_limit, xp)
+                    scaled_awards.append((guild, user, self._daily_award(
+                        guild, user, 'voice', now, amount, limit)))
+                awards = scaled_awards
+            else:
+                awards = [(guild, user, self._daily_award(guild, user, 'voice', now, amount, daily_limit))
+                          for guild, user, amount in awards]
             self.db.executemany('''INSERT INTO players (guild_id, user_id, xp)
                 VALUES (?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET
                 xp=players.xp+excluded.xp''', awards)

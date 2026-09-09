@@ -65,6 +65,7 @@ model = "speech-2.6-turbo"
 
 [rpg]
 enabled = true
+# 聊天 XP 與每日上限為基礎值，依目前等級的升級需求套用三次方根倍率（Lv.10 基準，最低 1 倍）。
 text_xp = 15
 text_daily_xp_limit = 1000
 voice_daily_xp_limit = 3000

@@ -178,9 +178,10 @@ class AdventureView(discord.ui.View):
         else:
             s = self.cog.settings
             embed = discord.Embed(title='安安大冒險｜冒險指南', description=
-                f'每日聊天上限：文字 {s.text_daily_xp_limit:,} XP、語音 {s.voice_daily_xp_limit:,} XP，分開計算，台灣時間 00:00 重置；討伐經驗不計入。\n\n'
-                f'文字至少 {s.text_min_chars} 個非空白字元，每 {s.text_cooldown_seconds} 秒 {s.text_xp} XP，跨頻道共用冷卻。\n'
-                f'一般語音至少 {s.voice_min_members} 位未靜音、未拒聽真人，每完整分鐘 {s.voice_xp_per_minute} XP。AFK、舞台與 Bot 不計入；未滿分鐘及離線時間不補發，不偵測實際說話。\n\n'
+                f'每日聊天基礎上限：文字 {s.text_daily_xp_limit:,} XP、語音 {s.voice_daily_xp_limit:,} XP，分開計算，台灣時間 00:00 重置；討伐經驗不計入。\n'
+                '聊天獎勵與上限乘上「當級升級需求 ÷ Lv.10 升級需求」的三次方根，最低 1 倍，小數捨去；依目前等級計算，滿級沿用 Lv.119 倍率。實際數額見角色能力頁。\n\n'
+                f'文字至少 {s.text_min_chars} 個非空白字元，每 {s.text_cooldown_seconds} 秒基礎 {s.text_xp} XP，跨頻道共用冷卻。\n'
+                f'一般語音至少 {s.voice_min_members} 位未靜音、未拒聽真人，每完整分鐘基礎 {s.voice_xp_per_minute} XP。AFK、舞台與 Bot 不計入；未滿分鐘及離線時間不補發，不偵測實際說話。\n\n'
                 f'採 RuneScape 標準經驗曲線，上限 Lv.120。Lv.10 可轉職，Lv.{s.regular_level}／{s.veteran_level}／{s.elite_level} 晉升，轉職後飾品格 2／3／4／5 格（民兵 1 格）。\n\n'
                 f'每職業固定三個主動技能格，Lv.{s.regular_level} 解鎖進階主動技能；Lv.{s.veteran_level} 解鎖一格三選一職業被動，可在技能面板自由更換。\n\n'
                 '初始裝備木棒；空手無法造成傷害。武器／套裝增加戰鬥數值，飾品增加基礎能力，同名限穿一件。進階裝備從商店購買；魔像專屬武器、妖樹專屬套裝僅由討伐掉落。\n\n'

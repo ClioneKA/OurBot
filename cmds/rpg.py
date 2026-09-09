@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, level_floor, level_for
+from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, level_floor, level_for, scaled_chat_xp
 from core.settings import get_settings
 from core.rpg_menu import AdventureView
 from core.rpg_character import Characters, CharacterError, ITEMS, STAT_NAMES, item_text, stage_level
@@ -95,7 +95,7 @@ class RPG(commands.Cog):
             return
         self.store.award_text(message.guild.id, message.author.id, time.time(),
                               self.settings.text_xp, self.settings.text_cooldown_seconds,
-                              self.settings.text_daily_xp_limit)
+                              self.settings.text_daily_xp_limit, scale=True)
 
     def update_voice(self, guild):
         if not self.settings.enabled or guild.unavailable:
@@ -104,9 +104,10 @@ class RPG(commands.Cog):
         eligible = eligible_voice_members(guild, self.settings.voice_min_members)
         eligible = {user_id for user_id in eligible if self.store.has_player(guild.id, user_id)}
         awards = self.tracker.update(guild.id, eligible, time.monotonic(),
-                                     self.settings.voice_xp_per_minute)
+                                     1)
         if awards:
-            self.store.award_voice(awards, daily_limit=self.settings.voice_daily_xp_limit, now=time.time())
+            self.store.award_voice(awards, daily_limit=self.settings.voice_daily_xp_limit, now=time.time(),
+                                   xp_per_minute=self.settings.voice_xp_per_minute)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -272,9 +273,10 @@ class RPG(commands.Cog):
                 f'{SPOTS[fish_id].name}｜{ITEMS[fishing_record["best_rod_id"]].name}'), inline=False)
         now = time.time()
         embed.add_field(name='今日聊天經驗（台灣時間）', value=
-                        f'文字：{self.store.daily_xp(guild_id, member.id, "text", now):,} / {self.settings.text_daily_xp_limit:,} XP\n'
-                        f'語音：{self.store.daily_xp(guild_id, member.id, "voice", now):,} / {self.settings.voice_daily_xp_limit:,} XP\n'
-                        '每日 00:00 重置；討伐經驗不計入。', inline=False)
+                        f'文字：{self.store.daily_xp(guild_id, member.id, "text", now):,} / {scaled_chat_xp(self.settings.text_daily_xp_limit, xp):,} XP\n'
+                        f'語音：{self.store.daily_xp(guild_id, member.id, "voice", now):,} / {scaled_chat_xp(self.settings.voice_daily_xp_limit, xp):,} XP\n'
+                        f'目前文字每次 {scaled_chat_xp(self.settings.text_xp, xp):,} XP；語音每分鐘 {scaled_chat_xp(self.settings.voice_xp_per_minute, xp):,} XP。\n'
+                        '上限隨目前等級成長；每日 00:00 重置，討伐經驗不計入。', inline=False)
         embed.add_field(name='基礎能力＋飾品加成', value='\n'.join(
             f'{name}：{total}（{base} + {bonus}）' for name, total, base, bonus in
             zip(STAT_NAMES, state['total'], state['base'], state['bonus'])), inline=False)
