@@ -493,7 +493,9 @@ class TotalRaidRunningView(discord.ui.View):
     async def choose(self, interaction, _button):
         room = self.service.repo.get(self.room_id)
         if room and room['boss'] == WITCH_BOSS:
-            await interaction.response.defer(ephemeral=True)
+            # Component deferral otherwise edits the public source message;
+            # thinking=True creates a separate ephemeral original response.
+            await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 async with self.service.lock(self.room_id):
                     room, _battle = self.service.running_battle(self.room_id, interaction.user.id)

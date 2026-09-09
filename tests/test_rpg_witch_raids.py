@@ -298,6 +298,33 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertEqual(len(buttons), 1)
         self.assertEqual(buttons[0].action['action'], ACTION_ATTACK)
 
+    async def test_open_private_panel_creates_separate_response_and_buttons_refresh_it(self):
+        room, _, channel = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
+                    round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1),
+                                      response=SimpleNamespace(defer=AsyncMock()),
+                                      edit_original_response=AsyncMock())
+        public = WitchBattleView(self.service, room['id'])
+        await public.choose.callback(interaction)
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+        channel.message.edit.assert_not_awaited()
+        private = interaction.edit_original_response.call_args.kwargs['view']
+        self.assertIsInstance(private, WitchPrivateActionView)
+        click = SimpleNamespace(response=SimpleNamespace(defer=AsyncMock()),
+                                edit_original_response=AsyncMock())
+        attack = next(item for item in private.children
+                      if isinstance(item, WitchActionButton) and item.action['action'] == ACTION_ATTACK)
+        await attack.callback(click)
+        # In-panel components edit their existing private message, without a new response.
+        click.response.defer.assert_awaited_once_with()
+        refreshed = click.edit_original_response.call_args.kwargs['view']
+        self.assertTrue(any(isinstance(item, WitchPrivateTargetSelect) for item in refreshed.children))
+        self.assertIs(self.service.private_panels[(room['id'], 1)]['interaction'], click)
+        self.assertTrue(private.is_finished())
+
     async def test_round_resolution_refreshes_all_private_panels_and_clears_finished_views(self):
         room, _, channel = await self.setup_witch_room()
         b = battle_fixtures.WitchBattleTests().make()
