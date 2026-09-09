@@ -8,7 +8,7 @@ from core.rpg_total_battle import ACTION_ATTACK, load_total_battle, dump_total_b
 from core.rpg_total_raids import TotalRaidError, TotalRaidStore, TotalRaidService, witch_day, WitchDailyView
 from core.rpg_witch_catalog import WITCH_BOSS
 from core.rpg_witch_battle import WitchRaidBattle
-from core.rpg_total_raids import WitchBattleView, active_effect_notes, field_chunks, effect_status
+from core.rpg_total_raids import WitchBattleView, WitchPrivateActionView, WitchActionButton, WitchPrivateTargetSelect, active_effect_notes, field_chunks, effect_status
 from tests import test_rpg_witch_battle as battle_fixtures
 from tests.test_rpg_total_raids import TotalRaidRoomTests, HashableMember, FakeChannel, FakeCategory
 import discord
@@ -179,7 +179,7 @@ class WitchRoomTests(TotalRaidRoomTests):
         channel.delete.assert_awaited_once()
         self.assertTrue(self.service.repo.get(room['id'])['channel_deleted'])
 
-    async def test_shared_panel_keeps_each_players_draft_and_validates_round_and_target(self):
+    async def test_private_panel_keeps_each_players_draft_and_validates_round_and_target(self):
         room, host, channel = await self.setup_witch_room()
         b = battle_fixtures.WitchBattleTests().make()
         room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
@@ -189,24 +189,24 @@ class WitchRoomTests(TotalRaidRoomTests):
             view = self.service.view(room)
             self.assertIsInstance(view, WitchBattleView)
             self.assertTrue(view.is_persistent())
-            self.assertFalse(any(c.custom_id == 'total_raid:running:action' for c in view.children))
-            await self.service.public_choice(room['id'], 1, 1, 'attack')
-            await self.service.public_choice(room['id'], 2, 1, 'attack')
+            self.assertTrue(any(c.custom_id == 'total_raid:running:action' for c in view.children))
+            await self.service.private_choice(room['id'], 1, 1, 'attack')
+            await self.service.private_choice(room['id'], 2, 1, 'attack')
             target = b.valid_targets(1, ACTION_ATTACK)[0]
             with self.assertRaisesRegex(TotalRaidError, '有效'):
-                await self.service.public_choice(room['id'], 1, 1, 'p:2', True)
+                await self.service.private_choice(room['id'], 1, 1, 'p:2', True)
             with self.assertRaisesRegex(TotalRaidError, '先選擇目標'):
                 await self.service.confirm_action(room['id'], 1)
-            await self.service.public_choice(room['id'], 1, 1, target, True)
+            await self.service.private_choice(room['id'], 1, 1, target, True)
             await self.service.confirm_action(room['id'], 1)
             updated = self.service.repo.get(room['id'])
             self.assertIn('2', updated['action_drafts'])
             self.assertNotIn('1', updated['action_drafts'])
             self.assertEqual(load_total_battle(updated['battle']).confirmed, {1})
-            await self.service.public_choice(room['id'], 1, 1, 'defend')
+            await self.service.private_choice(room['id'], 1, 1, 'defend')
             self.assertFalse(load_total_battle(self.service.repo.get(room['id'])['battle']).confirmed)
             with self.assertRaisesRegex(TotalRaidError, '回合已更新'):
-                await self.service.public_choice(room['id'], 1, 0, target, True)
+                await self.service.private_choice(room['id'], 1, 0, target, True)
 
     async def test_all_summary_and_status_pages_fit_discord_and_preserve_text(self):
         room, _, _ = await self.setup_witch_room()
@@ -248,6 +248,54 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertEqual('**魔女化（0 階）**', effect_status(b.witch('ema'), b)[0])
         self.assertIn('引爆最多魔女因子', text)
         self.assertIn('**魔女因子 3/3 層**', text)
+
+    async def test_private_buttons_target_confirmation_cooldown_and_stale_panel(self):
+        room, _, channel = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        b._player(1).ready[1] = 3
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
+                    round_deadline=time.time()+120)
+        self.service.repo.save(room)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            public = self.service.view(room)
+            self.assertFalse(any(isinstance(c, discord.ui.Select) for c in public.children))
+            self.assertNotIn(public.confirm, public.children)
+            private = WitchPrivateActionView(self.service, room['id'], 1, b)
+            skill = next(c for c in private.children if isinstance(c, WitchActionButton) and c.action.get('skill_slot') == 1)
+            self.assertTrue(skill.disabled)
+            self.assertIn('CD 2', skill.label)
+            attack = next(c for c in private.children if isinstance(c, WitchActionButton) and c.action['action'] == ACTION_ATTACK)
+            await attack.callback(interaction)
+            updated = interaction.edit_original_response.call_args.kwargs['view']
+            target = next(c for c in updated.children if isinstance(c, WitchPrivateTargetSelect))
+            target._values = [b.valid_targets(1, ACTION_ATTACK)[0]]
+            await target.callback(interaction)
+            updated = interaction.edit_original_response.call_args.kwargs['view']
+            self.assertFalse(updated.confirm.disabled)
+            self.assertIn('目標：', interaction.edit_original_response.call_args.kwargs['content'])
+            await updated.confirm.callback(interaction)
+            self.assertEqual(load_total_battle(self.service.repo.get(room['id'])['battle']).confirmed, {1})
+            self.assertIn('已確認', interaction.edit_original_response.call_args.kwargs['content'])
+            with self.assertRaisesRegex(TotalRaidError, '回合已結束'):
+                await self.service.confirm_action(room['id'], 1, expected_round=0)
+            await self.service.private_choice(room['id'], 1, 1, 'attack')
+            with self.assertRaisesRegex(TotalRaidError, '另一個面板修改'):
+                await self.service.private_choice(room['id'], 1, 1, target._values[0], True,
+                    expected_action=dict(action='skill', slot=2, round=1))
+            interaction.user.id = 2
+            self.assertFalse(await updated.interaction_check(interaction))
+        b = battle_fixtures.WitchBattleTests().make(phase=2)
+        b.prepare(b.witch('anan'))
+        user = b.fighter_for_key(next(iter(b.commands))).user_id
+        room.update(battle=dump_total_battle(b), action_drafts={})
+        self.service.repo.save(room)
+        private = WitchPrivateActionView(self.service, room['id'], user, b)
+        buttons = [c for c in private.children if isinstance(c, WitchActionButton)]
+        self.assertEqual(len(buttons), 1)
+        self.assertEqual(buttons[0].action['action'], ACTION_ATTACK)
 
     async def test_archive_retries_before_deleting_and_does_not_duplicate_on_delete_retry(self):
         room, _, channel = await self.setup_witch_room()

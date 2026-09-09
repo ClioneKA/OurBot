@@ -5,13 +5,13 @@ from itertools import combinations
 
 from core.rpg_battle import Rule
 from core.rpg_total_battle import ACTION_ATTACK, ACTION_SKILL, TotalRaidError, dump_total_battle, load_total_battle
-from core.rpg_witch_battle import witch_battle_from_participants, ACTION_DEFEND, STATE_FIELDS
+from core.rpg_witch_battle import witch_battle_from_participants, ACTION_DEFEND, STATE_FIELDS, WITCH_RHYTHMS
 from core.rpg_witch_catalog import IDS
 from dataclasses import asdict
 
 
 class WitchBattleTests(unittest.TestCase):
-    def make(self, phase=0, ids=('anan', 'noah', 'meruru')):
+    def make(self, phase=0, ids=('anan', 'noah', 'meruru'), seed=44):
         jobs = ('裝甲步兵', '裝甲步兵', '騎士', '弓兵', '弓兵', '僧侶')
         participants = [dict(id=i, name=f'玩家{i}', state=dict(
             job=job, level=50, stage=2, total=(100, 100, 100, 100, 100), speed=50,
@@ -20,7 +20,7 @@ class WitchBattleTests(unittest.TestCase):
             equipped={'武器': 'starter:club'}),
             rules=[asdict(Rule(slot, slot, True, 'always', 'lowest', skill_id=slot))
                    for slot in (1, 2, 3)]) for i, job in enumerate(jobs, 1)]
-        b = witch_battle_from_participants(participants, ids, seed=44)
+        b = witch_battle_from_participants(participants, ids, seed=seed)
         b.dead_once.update(('noah', 'meruru')[:phase])
         return b
 
@@ -170,3 +170,63 @@ class WitchBattleTests(unittest.TestCase):
                 for field in STATE_FIELDS:
                     self.assertEqual(getattr(restored, field), getattr(uninterrupted, field), (ids, field))
                 restored = load_total_battle(json.loads(json.dumps(dump_total_battle(restored))))
+
+    def test_opening_rhythms_vary_without_synchronizing_the_trio(self):
+        schedules = set()
+        for seed in range(20):
+            b = self.make(seed=seed)
+            schedules.add(tuple(b.next_cast.values()))
+            self.assertGreater(len(set(b.next_cast.values())), 1)
+            for key, turn in b.next_cast.items():
+                low, high = WITCH_RHYTHMS[key][0]
+                self.assertTrue(low <= turn <= high)
+        self.assertGreater(len(schedules), 1)
+        for ids in combinations(IDS, 3):
+            b = self.make(ids=ids)
+            self.assertGreater(len(set(b.next_cast.values())), 1, ids)
+
+    def test_cast_cadence_keeps_a_full_telegraph_turn(self):
+        for key in IDS:
+            others = [k for k in IDS if k != key][:2]
+            b = self.make(ids=(key, *others))
+            intervals = set()
+            for turn in range(1, 30):
+                b.round = turn
+                b.prepare(b.witch(key))
+                self.assertEqual(b.pending[key]['due'], turn + 1)
+                interval = b.next_cast[key] - turn
+                low, high = WITCH_RHYTHMS[key][1]
+                self.assertTrue(low <= interval <= high, key)
+                intervals.add(interval)
+            self.assertGreater(len(intervals), 1, key)
+
+    def test_low_hp_rescue_advances_only_one_turn_and_still_announces(self):
+        b = self.make()
+        b.link_spent = set()
+        b.next_cast['meruru'] = 3
+        b.witch('noah').hp = 1
+        b.hit = Mock(return_value=True)
+        b.round = 1
+        b.act(b.witch('meruru'))
+        self.assertNotIn('meruru', b.pending)
+        b.round = 2
+        b.act(b.witch('meruru'))
+        self.assertEqual(b.pending['meruru']['due'], 3)
+        self.assertEqual(b.pending['meruru']['rescue_target'], b.key(b.witch('noah')))
+        self.assertEqual(b.witch('noah').hp, 1)
+
+    def test_intent_distinguishes_attack_preparation_and_announced_cast_without_mutation(self):
+        b = self.make()
+        b.next_cast.update(anan=1, noah=3, meruru=3)
+        before = dump_total_battle(b)
+        intent = b.intent()
+        self.assertEqual(intent.name, '第 1 回合行動預告')
+        self.assertIn('行動：準備魔法（預計）', intent.description)
+        self.assertIn('行動：普通攻擊（預計）', intent.description)
+        self.assertNotIn('或準備魔法', intent.description)
+        self.assertEqual(dump_total_battle(b), before)
+        b.prepare(b.witch('noah'))
+        intent = b.intent()
+        self.assertIn('行動：施放魔法\n魔法：畫作單體打擊\n生效：第 1 回合\n目標：', intent.description)
+        b.recovery['noah'] = 1
+        self.assertIn('行動：恢復中，使用弱化普攻', b.intent().description)

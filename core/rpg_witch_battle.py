@@ -31,7 +31,7 @@ SPELL_DESCRIPTIONS = {
     'meruru': ('預告救援 18% HP，溢補轉盾', '預告救援 20% HP、淨化與護盾', '預告救援 22% HP、淨化與護盾'),
 }
 WITCH_TRAITS = {
-    'ema': '普攻命中累積魔女因子（最多 3 層）；可淨化。',
+    'ema': '普攻命中累積魔女因子（最多 3 層）；可淨化。有人達 2 層時，即將就緒的魔法可提前一回合準備。',
     'hiro': '每場僅一次倒下回溯；二次魔女化時無法發動。',
     'anan': '洗腦不可淨化；打斷或擊倒安安可解除，至少保留一位存活玩家不受洗腦。',
     'noah': '拆除畫作可阻止相應攻擊。',
@@ -39,11 +39,22 @@ WITCH_TRAITS = {
     'milia': '交換／適應魔法後，追加一次預告的普通攻擊。',
     'margo': '懷疑使傷害與治療降低 30%；魔法後追加一次預告的普通攻擊。',
     'nanoka': '預知下重複普攻或同名技能，本次攻擊力降低 40%。',
-    'arisa': '火傷於回合結束扣除最大 HP 的 3%。',
+    'arisa': '火傷於回合結束扣除最大 HP 的 3%。二次魔女化且至少兩人火傷時，即將就緒的魔法可提前一回合準備。',
     'sherry': '二次魔女化的重擊後遭破甲，下一回合進入恢復。',
     'hanna': '奇數回合或浮游期間，承受裝甲步兵／騎士的非必中攻擊減傷 30%；落石可拆除。',
-    'coco': '普攻命中施加監視標記。',
-    'meruru': '溢出治療轉為護盾，上限為救援對象最大 HP 的 12%。',
+    'coco': '普攻命中施加監視標記。至少兩人被監視時，即將就緒的魔法可提前一回合準備。',
+    'meruru': '溢出治療轉為護盾，上限為救援對象最大 HP 的 12%。有魔女低於半血時，即將就緒的救援可提前一回合準備。',
+}
+# Opening preparation windows and later preparation intervals. Every cast still
+# resolves one turn after its announcement; randomness uses the saved battle RNG.
+WITCH_RHYTHMS = {
+    'ema': ((2, 3), (3, 4)), 'hiro': ((1, 2), (3, 4)),
+    'anan': ((1, 2), (3, 4)), 'noah': ((2, 3), (3, 4)),
+    'reia': ((1, 2), (3, 4)), 'milia': ((2, 3), (4, 5)),
+    'margo': ((1, 2), (3, 4)), 'nanoka': ((1, 2), (3, 4)),
+    'arisa': ((1, 3), (3, 4)), 'sherry': ((2, 3), (4, 5)),
+    'hanna': ((1, 3), (3, 5)), 'coco': ((2, 3), (3, 4)),
+    'meruru': ((2, 3), (3, 4)),
 }
 
 
@@ -52,6 +63,11 @@ class WitchRaidBattle(WitchBattleV9):
         if len(ids) != 3 or len(set(ids)) != 3 or any(k not in IDS for k in ids):
             raise TotalRaidError('每日總力戰需要三位不同魔女。')
         super().__init__(fighters, ids, seed=seed, max_rounds=max_rounds, tuning=True)
+        self.next_cast = {key: self.rng.randint(*WITCH_RHYTHMS[key][0]) for key in ids}
+        if len(set(self.next_cast.values())) == 1:
+            key = self.rng.choice(list(ids))
+            low, high = WITCH_RHYTHMS[key][0]
+            self.next_cast[key] = low if self.next_cast[key] != low else high
         self.confirmed = set()
         self.auto_players = set()
         self.timeout_streak = {}
@@ -181,6 +197,10 @@ class WitchRaidBattle(WitchBattleV9):
 
     def prepare(self, actor, kind=None):
         super().prepare(actor, kind)
+        interval = self.rng.randint(*WITCH_RHYTHMS[actor.job][1])
+        if self.phase(actor) == 2 and actor.job in ('ema', 'margo', 'arisa', 'meruru'):
+            interval += 1
+        self.next_cast[actor.job] = self.round + interval
         if actor.job == 'margo' and self.pending[actor.job]['phase'] == 1:
             self.pending[actor.job]['targets'] = self.pending[actor.job]['targets'][:1]
         data = self.pending[actor.job]
@@ -199,12 +219,38 @@ class WitchRaidBattle(WitchBattleV9):
             self.log.append(f'{actor.name}：「啊啊啊啊啊啊啊啊啊啊」')
         self.log.append(f'【{actor.name}】準備特殊魔法，下回合生效。')
 
+    def act(self, actor):
+        # Public battle conditions may advance an almost-ready spell by one turn.
+        # Already announced spells, recovery and partner reactions keep priority.
+        if (actor.job in self.ids and actor.job not in self.pending
+                and actor.job not in self.link_spent and actor.job not in self.reactions
+                and self.round > self.recovery.get(actor.job, -1)
+                and self.round == self.next_cast[actor.job] - 1):
+            players = self.living(0)
+            opportunity = (
+                actor.job == 'ema' and any(p.status_stacks.get('factor', 0) >= 2 for p in players)
+                or actor.job == 'meruru' and any(w.hp < w.stats['HP'] * .5 for w in self.witches())
+                or actor.job == 'coco' and sum(p.has('watch', self.round) for p in players) >= 2
+                or actor.job == 'arisa' and self.phase(actor) == 2
+                and sum(p.has('burn', self.round) for p in players) >= 2
+            )
+            if opportunity:
+                self.next_cast[actor.job] = self.round
+                self.log.append(f'{actor.name} 因戰況提前準備魔法；仍於下一回合生效。')
+        return super().act(actor)
+
     def intent(self):
         lines = []
+        turn = self.planning_round
         for witch in self.witches():
-            phase = self.phase(witch)
             data = self.pending.get(witch.job)
-            line = f'{witch.name}（魔女化 {phase}）'
+            line = f'**{witch.name}**'
+            if turn <= self.recovery.get(witch.job, -1):
+                lines.append(line + '\n行動：恢復中，使用弱化普攻\n目標：行動時依挑釁選擇；無挑釁時隨機。')
+                continue
+            if self.active_link and witch.job in self.active_link['pair']:
+                lines.append(line + f'\n行動：參與連動\n生效：第 {self.active_link["due"]} 回合；詳見下方連動預告。')
+                continue
             if data:
                 targets = [self.fighter_for_key(k) for k in data.get('targets', [])]
                 target_names = '、'.join(p.name + ('（已倒下）' if p.hp <= 0 else '') for p in targets if p)
@@ -212,29 +258,48 @@ class WitchRaidBattle(WitchBattleV9):
                     target_names = '全體玩家'
                 if witch.job == 'meruru' or witch.job == 'reia' and data['phase'] < 2 or witch.job == 'milia' and data['phase'] == 2:
                     target_names = ''
-                line += f'：第 {data["due"]} 回合／{SPELL_DESCRIPTIONS[witch.job][data["phase"]]}'
+                ability = SPELL_DESCRIPTIONS[witch.job][data['phase']]
                 if data['kind'] in ('hiro_reaction', 'ema_followup'):
-                    line = f'{witch.name}：第 {data["due"]} 回合／' + ('啊啊啊啊啊啊啊啊啊啊・單體反擊' if data['kind'] == 'hiro_reaction' else '回溯救援後的單體追擊')
-                if witch.job == 'anan':
-                    line += '／強制普攻隊友' if any(self.forced(p, data['due']) for p in targets if p) else '／攻擊與治療反轉'
+                    ability = '啊啊啊啊啊啊啊啊啊啊・單體反擊' if data['kind'] == 'hiro_reaction' else '回溯救援後的單體追擊'
+                line += f'\n行動：施放魔法\n魔法：{ability}\n生效：第 {data["due"]} 回合'
                 if target_names:
-                    line += f'；目標 {target_names}'
+                    line += f'\n目標：{target_names}'
+                elif witch.job != 'meruru':
+                    line += '\n目標：' + ('自己' if witch.job in ('reia', 'milia') else '無有效對象')
                 followup = self.fighter_for_key(data.get('followup_target'))
                 if followup:
-                    line += f'；追加普攻 {followup.name}'
+                    line += f'\n追加普攻 {followup.name}'
                 if data.get('objects'):
-                    line += '；可拆除物件阻止'
+                    line += '\n應對：可拆除物件阻止相應攻擊。'
                 if data.get('rescue_target'):
-                    line += f'；救援 {self.fighter_for_key(data["rescue_target"]).name}'
+                    target = self.fighter_for_key(data['rescue_target'])
+                    line += f'\n救援目標：{target.name}' + ('（已倒下，救援取消）' if target.hp <= 0 else '')
                 if witch.job == 'arisa' and data['phase'] == 1:
                     line += '；來源火傷未淨化時，隨機向一名未燃燒玩家擴散'
             else:
-                line += '：普攻（依挑釁／隨機選擇）或準備魔法'
+                if witch.job in self.reactions:
+                    action = '同伴倒下反應'
+                    detail = ('對全體玩家追加魔女因子。' if witch.job == 'ema' else
+                              f'準備反應魔法，預計第 {turn + 1} 回合生效；目標於準備後公布。')
+                elif (witch.job == 'ema' and self.ema_followup) or turn >= self.next_cast[witch.job]:
+                    action = '準備魔法（預計）'
+                    detail = f'本回合蓄力，預計第 {turn + 1} 回合生效；目標於準備後公布。'
+                else:
+                    action = '普通攻擊（預計）'
+                    detail = '目標：行動時依挑釁選擇；無挑釁時隨機。'
+                    trigger = {
+                        'ema': '任一玩家魔女因子達 2 層', 'meruru': '任一魔女低於半血',
+                        'coco': '至少兩名玩家被監視',
+                        'arisa': '二次魔女化且至少兩名玩家有火傷',
+                    }.get(witch.job)
+                    if trigger and turn == self.next_cast[witch.job] - 1:
+                        detail += f'\n戰況觸發：{trigger}時，改為提前蓄力；仍於第 {turn + 1} 回合生效。'
+                line += f'\n行動：{action}\n{detail}'
             lines.append(line)
         if self.active_link:
             name = {('hiro', 'ema'): '希羅與艾瑪・回溯救援', ('sherry', 'hanna'): '我們有飛得這麼高過嗎？',
                     ('noah', 'anan'): '動物召喚'}[tuple(self.active_link['pair'])]
-            lines.append(f'連動【{name}】：第 {self.active_link["due"]} 回合；可打斷。')
+            lines.append(f'**連動｜{name}**\n生效：第 {self.active_link["due"]} 回合\n應對：可打斷。')
             target = self.fighter_for_key(self.active_link.get('target'))
             if target:
                 lines.append(f'全體攻擊後追擊 {target.name}。')
@@ -245,8 +310,9 @@ class WitchRaidBattle(WitchBattleV9):
             if spec.get('charging'):
                 target = self.fighter_for_key(spec.get('target'))
                 detail = '全體噴火' if obj.job == 'rabbit' else f'利爪攻擊 {target.name if target else "存活玩家"}'
-                lines.append(f'{obj.name}：第 {spec["next"]} 回合／{detail}。')
-        return EnemyIntent(self.planning_round, '魔女預告', '\n'.join(lines))
+                lines.append(f'**{obj.name}**\n行動：{detail}\n生效：第 {spec["next"]} 回合。')
+        lines.append('預告依目前戰況顯示；打斷、倒下與連動可能改變行動。已公布的指定目標不會重新抽選。')
+        return EnemyIntent(turn, f'第 {turn} 回合行動預告', '\n\n'.join(lines))
 
 
 def witch_battle_from_participants(participants, ids, seed=None):

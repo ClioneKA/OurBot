@@ -483,7 +483,8 @@ class TotalRaidRunningView(discord.ui.View):
     async def choose(self, interaction, _button):
         try:
             room, battle = self.service.running_battle(self.room_id, interaction.user.id)
-            view = TotalRaidActionChoiceView(self.service, room['id'], interaction.user.id, battle)
+            cls = WitchPrivateActionView if isinstance(battle, WitchRaidBattle) else TotalRaidActionChoiceView
+            view = cls(self.service, room['id'], interaction.user.id, battle)
         except (CharacterError, TotalRaidError) as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
@@ -493,39 +494,12 @@ class TotalRaidRunningView(discord.ui.View):
         )
 
 
-class WitchPublicSelect(discord.ui.Select):
-    def __init__(self, parent, battle, target=False):
-        self.parent_view, self.target = parent, target
-        self.round = battle.planning_round
-        if target:
-            options = [discord.SelectOption(label=f.name[:100], value=battle.key(f),
-                       description=f'{"隊友" if f.team == 0 else "敵方"} HP {f.hp:,}')
-                       for f in battle.fighters if f.hp > 0][:25]
-        else:
-            options = [discord.SelectOption(label=label, value=value) for label, value in
-                       [('普通攻擊', ACTION_ATTACK), ('防禦', ACTION_DEFEND),
-                        ('技能槽 1', 'skill:1'), ('技能槽 2', 'skill:2'), ('技能槽 3', 'skill:3')]]
-        super().__init__(placeholder='② 選擇自己的行動目標' if target else '① 選擇自己的行動（技能名稱見隊伍狀態）',
-                         options=options, row=2 if target else 1,
-                         custom_id=f'witch_raid:public:{"target" if target else "action"}:{self.round}')
-
-    async def callback(self, interaction):
-        await interaction.response.defer(ephemeral=True)
-        try:
-            message = await self.parent_view.service.public_choice(
-                self.parent_view.room_id, interaction.user.id, self.round, self.values[0], self.target)
-            await interaction.followup.send(message, ephemeral=True)
-        except (CharacterError, TotalRaidError) as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
-
-
 class WitchBattleView(TotalRaidRunningView):
     def __init__(self, service, room_id):
         super().__init__(service, room_id)
-        self.remove_item(self.choose)
-        battle = load_total_battle(service.repo.get(room_id)['battle'])
-        self.add_item(WitchPublicSelect(self, battle))
-        self.add_item(WitchPublicSelect(self, battle, target=True))
+        self.remove_item(self.confirm)
+        self.remove_item(self.takeover)
+        self.choose.label = '開啟個人操作面板'
 
     async def page(self, interaction, delta, status=False):
         await interaction.response.defer()
@@ -556,6 +530,104 @@ class WitchBattleView(TotalRaidRunningView):
     @discord.ui.button(label='狀態／說明下一頁', custom_id='witch_raid:status:next', row=3)
     async def next_status(self, interaction, _button):
         await self.page(interaction, 1, status=True)
+
+
+class WitchActionButton(discord.ui.Button):
+    def __init__(self, action):
+        self.action = action
+        cooldown = action.get('cooldown_remaining', 0)
+        label = action['name'] + (f'（CD {cooldown}）' if cooldown else '')
+        super().__init__(label=label[:80], disabled=bool(cooldown),
+                         style=discord.ButtonStyle.primary if action['action'] == ACTION_SKILL else discord.ButtonStyle.secondary,
+                         row=0 if action['action'] == ACTION_SKILL else 1)
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        parent = self.view
+        value = self.action['action']
+        if value == ACTION_SKILL:
+            value += f':{self.action["skill_slot"]}'
+        try:
+            await parent.service.private_choice(parent.room_id, parent.user_id, parent.planning_round, value)
+            await parent.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+
+class WitchPrivateTargetSelect(discord.ui.Select):
+    def __init__(self, battle, draft, targets):
+        self.draft = draft
+        super().__init__(placeholder='選擇這次行動的目標', row=2, options=[
+            discord.SelectOption(label=battle.fighter_for_key(key).name[:100], value=key,
+                                 description=f'HP {battle.fighter_for_key(key).hp:,}') for key in targets])
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        parent = self.view
+        try:
+            await parent.service.private_choice(parent.room_id, parent.user_id, parent.planning_round,
+                                                self.values[0], True, expected_action=self.draft)
+            await parent.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+
+class WitchPrivateActionView(discord.ui.View):
+    def __init__(self, service, room_id, user_id, battle):
+        super().__init__(timeout=120)
+        self.service, self.room_id, self.user_id = service, room_id, user_id
+        self.planning_round = battle.planning_round
+        for action in battle.available_actions(user_id):
+            self.add_item(WitchActionButton(action))
+        room = service.repo.get(room_id)
+        draft = room.get('action_drafts', {}).get(str(user_id))
+        if draft and draft['round'] == self.planning_round:
+            targets = battle.valid_targets(user_id, draft['action'], draft['slot'])
+            if targets:
+                self.add_item(WitchPrivateTargetSelect(battle, draft, targets))
+        self.confirm.disabled = user_id not in battle.choices or bool(draft)
+        self.takeover.disabled = user_id not in battle.auto_players
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.user_id:
+            return True
+        await interaction.response.send_message('這不是你的個人操作面板。', ephemeral=True)
+        return False
+
+    async def refresh(self, interaction):
+        room = self.service.repo.get(self.room_id)
+        if room['status'] != 'running':
+            await interaction.edit_original_response(content='戰鬥已結束，請查看公開戰報。', view=None)
+            return
+        battle = load_total_battle(room['battle'])
+        if self.user_id not in battle.living_player_ids():
+            await interaction.edit_original_response(content='你已倒下，請查看公開戰鬥面板。', view=None)
+            return
+        view = WitchPrivateActionView(self.service, self.room_id, self.user_id, battle)
+        content = self.service.player_action_text(battle, self.user_id)
+        draft = room.get('action_drafts', {}).get(str(self.user_id))
+        if draft:
+            content += '\n已選擇行動，請在下方指定目標。'
+        await interaction.edit_original_response(content=content, view=view)
+        self.stop()
+
+    @discord.ui.button(label='確認本回合', style=discord.ButtonStyle.success, row=3)
+    async def confirm(self, interaction, _button):
+        await interaction.response.defer()
+        try:
+            await self.service.confirm_action(self.room_id, self.user_id, expected_round=self.planning_round)
+            await self.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+    @discord.ui.button(label='接管自動普攻', style=discord.ButtonStyle.secondary, row=3)
+    async def takeover(self, interaction, _button):
+        await interaction.response.defer()
+        try:
+            await self.service.takeover_action(self.room_id, self.user_id, expected_round=self.planning_round)
+            await self.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
 
 
 class TotalRaidActionSelect(discord.ui.Select):
@@ -960,6 +1032,9 @@ class TotalRaidService:
                     rule = next(rule for rule in actor.rules if rule.slot == choice.skill_slot)
                     selected = f'【{rule_skill(actor.job, rule).name}】'
             lines.extend(('', f'目前已登記：{selected}（可在結算前修改）'))
+            if isinstance(battle, WitchRaidBattle):
+                target = battle.fighter_for_key(choice.target)
+                lines.append(f'目標：{target.name if target else "不需指定"}')
         paint = battle.paint_mask(actor)
         if battle.noah_phase() == 2:
             effect = f'（{PAINT_EFFECTS[paint]}）' if paint else ''
@@ -969,16 +1044,21 @@ class TotalRaidService:
             if receiver is not None:
                 lines.append(f'已登記給予：{receiver.name}')
         if isinstance(battle, WitchRaidBattle):
+            buffs, debuffs = effect_status(actor, battle)
+            lines.extend((f'Buff：{buffs}', f'Debuff：{debuffs}'))
+            lines.append('✅ 已確認，等待其他玩家。' if user_id in battle.confirmed else '尚未確認本回合。')
             lines.append('選擇後請按「確認本回合」；修改行動會取消確認。')
             if battle.washed(actor, battle.planning_round):
                 lines.append('洗腦：強制普攻隊友。' if battle.forced(actor, battle.planning_round) else '洗腦：攻擊打隊友，治療給魔女；可防禦或安全支援。')
         lines.extend(('', '請選擇本回合行動。'))
         return '\n'.join(lines)
 
-    async def confirm_action(self, room_id, user_id):
+    async def confirm_action(self, room_id, user_id, expected_round=None):
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
             await self.check_witch_deadline(room, battle)
+            if expected_round is not None and expected_round != battle.planning_round:
+                raise TotalRaidError('此面板的回合已結束，請重新開啟個人操作面板。')
             if str(user_id) in room.get('action_drafts', {}):
                 raise TotalRaidError('請先選擇目標，完成本回合行動。')
             battle.confirm(user_id)
@@ -989,10 +1069,12 @@ class TotalRaidService:
             else:
                 await self._edit_public(room, battle)
 
-    async def takeover_action(self, room_id, user_id):
+    async def takeover_action(self, room_id, user_id, expected_round=None):
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
             await self.check_witch_deadline(room, battle)
+            if expected_round is not None and expected_round != battle.planning_round:
+                raise TotalRaidError('此面板的回合已結束，請重新開啟個人操作面板。')
             battle.takeover(user_id)
             room['battle'] = dump_total_battle(battle)
             self.repo.save(room)
@@ -1025,7 +1107,7 @@ class TotalRaidService:
             self.repo.save(room)
             await self._edit_public(room, battle)
 
-    async def public_choice(self, room_id, user_id, expected_round, value, is_target=False):
+    async def private_choice(self, room_id, user_id, expected_round, value, is_target=False, expected_action=None):
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
             await self.check_witch_deadline(room, battle)
@@ -1035,7 +1117,9 @@ class TotalRaidService:
             if is_target:
                 draft = drafts.get(str(user_id))
                 if not draft or draft['round'] != expected_round:
-                    raise TotalRaidError('請先在第一個選單選擇行動，再選擇目標。')
+                    raise TotalRaidError('請先點擊行動按鈕，再選擇目標。')
+                if expected_action is not None and draft != expected_action:
+                    raise TotalRaidError('行動已在另一個面板修改，請重新開啟個人操作面板。')
                 battle.submit(user_id, draft['action'], value, draft['slot'])
                 drafts.pop(str(user_id))
                 message = '行動已登記，請按「確認本回合」。'
@@ -1052,7 +1136,7 @@ class TotalRaidService:
                     battle.confirmed.discard(user_id)
                     battle.choices.pop(user_id, None)
                     battle.auto_players.discard(user_id)
-                    message = '已選擇行動，請在第二個選單選擇目標：' + '、'.join(
+                    message = '已選擇行動，請在目標選單選擇：' + '、'.join(
                         battle.fighter_for_key(k).name for k in targets)
                 else:
                     battle.submit(user_id, action, None, slot)
@@ -1298,7 +1382,8 @@ class TotalRaidService:
         else:
             action = '戰鬥已結束。'
         for index, chunk in enumerate(field_chunks(action.splitlines()), 1):
-            embed.add_field(name='Boss 行動' if index == 1 else f'Boss 行動（{index}）', value=chunk, inline=False)
+            label = '下回合行動' if isinstance(battle, WitchRaidBattle) else 'Boss 行動'
+            embed.add_field(name=label if index == 1 else f'{label}（{index}）', value=chunk, inline=False)
         waiting = battle.waiting_player_ids() if not battle.result else set()
         roster = []
         for fighter in (item for item in battle.fighters if item.team == 0):
@@ -1308,20 +1393,6 @@ class TotalRaidService:
             buffs, debuffs = effect_status(fighter, battle)
             roster.append(f'{marker} <@{fighter.user_id}>：{fighter.hp:,}/{fighter.stats["HP"]:,}\n'
                           f'　Buff：{buffs}\n　Debuff：{debuffs}')
-            if isinstance(battle, WitchRaidBattle) and fighter.hp > 0:
-                skills = [f'{a["skill_slot"]}：{a["name"]}（CD {a.get("cooldown_remaining", 0)}）'
-                          for a in battle.available_actions(fighter.user_id) if a['action'] == ACTION_SKILL]
-                choice = battle.choices.get(fighter.user_id)
-                selected = '尚未選擇'
-                if choice:
-                    selected = (f'技能 {choice.skill_slot}' if choice.action == ACTION_SKILL else
-                                '防禦' if choice.action == ACTION_DEFEND else '普攻')
-                    target = battle.fighter_for_key(choice.target)
-                    if target:
-                        selected += f' → {target.name}'
-                if str(fighter.user_id) in room.get('action_drafts', {}):
-                    selected = '已選行動，等待指定目標'
-                roster[-1] += '\n　' + '／'.join(skills) + f'\n　行動：{selected}'
         for index, chunk in enumerate(field_chunks(roster), 1):
             name = '隊伍狀態' if index == 1 else f'隊伍狀態（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
@@ -1369,7 +1440,7 @@ class TotalRaidService:
         else:
             embed.set_footer(text='測試版不發放獎勵；頻道目前保留供檢查戰報。')
         if room['boss'] == WITCH_BOSS:
-            embed.set_footer(text=room.get('reward_text', '選擇後需確認；逾時普攻，連續三次轉自動。🤖 可接管。'))
+            embed.set_footer(text=room.get('reward_text', '點擊「開啟個人操作面板」選擇並確認；逾時普攻，連續三次轉自動。🤖 可於個人面板接管。'))
         return embed
 
     @tasks.loop(seconds=5)
