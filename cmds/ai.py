@@ -1445,6 +1445,12 @@ class AI(Cog_Extension):
     async def on_message(self, message: discord.Message):
         if self.client is None or message.author.bot:
             return
+        channel = message.channel
+        if isinstance(channel, discord.Thread):
+            channel = channel.parent
+        category = getattr(channel, "category", None)
+        if category is not None and category.name == "安安大冒險":
+            return
         if not self._has_ai_role(message):
             return
         if not message.content.strip():

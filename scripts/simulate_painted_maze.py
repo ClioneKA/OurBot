@@ -134,6 +134,50 @@ def offered_contract(seed, checkpoint, chosen):
     return min(candidates, key=lambda key: (colors[COLOR_CONTRACTS[key]['color']], BALANCED_PRIORITY.index(key)))
 
 
+def trait_tactics(participants, colors):
+    """A declared skill preset for testing combo traits, shared by same-colour choices."""
+    players = deepcopy(participants)
+    for player in players:
+        job = player['state']['job']
+        if 'crimson' in colors and job == '裝甲步兵':
+            player['rules'] = [asdict(item) for item in (
+                rule(1, 1, 'always', 'boss', 2), rule(2, 2, 'always', 'lowest', 5),
+                rule(3, 3, 'always', 'lowest', 1))]
+        if 'violet' in colors and job == '弓兵':
+            player['rules'] = [asdict(item) for item in (
+                rule(1, 1, 'always', 'boss', 5), rule(2, 2, 'always', 'boss', 2),
+                rule(3, 3, 'always', 'lowest', 1))]
+        if 'verdant' in colors and job == '僧侶':
+            player['rules'] = [asdict(item) for item in (
+                rule(1, 1, 'ally_debuff', 'debuffed', 3),
+                rule(2, 2, 'ally50', 'lowest', 4, 65),
+                rule(3, 3, 'ally50', 'lowest', 5, 80))]
+    return players
+
+
+def compare_contracts(seeds=100, *, seed_start=50000):
+    """Controlled third-choice comparison, not a legal-offer completion estimate."""
+    participants = build_participants(60, 8, accessories=True)
+    rows = []
+    for key, contract in COLOR_CONTRACTS.items():
+        background = [color for color in ('crimson', 'azure', 'gold') if color != contract['color']][:2]
+        players = trait_tactics(participants, [contract['color']])
+        wins = Counter()
+        triggers = Counter()
+        for route in ('shadow', 'noah'):
+            for seed in range(seed_start, seed_start + seeds):
+                result = simulate_final_battle(dict(status='running', boss_index=3, seed=seed,
+                    participants=deepcopy(players), route=route, contracts=background + [key]))
+                wins[route] += result['result'] == '勝利'
+                name = contract['name'].split('・')[-1]
+                triggers[route] += sum(f'【{name}】' in line for line in result['battle'].get('log', ()))
+        rows.append(dict(contract=key, name=contract['name'], background=background, seeds=seeds,
+            tactics='same_colour_combo_preset',
+            win_rates={route: wins[route] / seeds for route in ('shadow', 'noah')},
+            triggers_per_battle={route: triggers[route] / seeds for route in ('shadow', 'noah')}))
+    return rows
+
+
 def independent_benchmark(seeds=200, *, counts=(8,), level=60, accessories=True, seed_start=0):
     """Every encounter starts at full HP, regardless of earlier victories."""
     rows = []
@@ -252,11 +296,17 @@ def main():
                         help='Use current T60 raid gear (default) or cleared Painted Maze gear.')
     parser.add_argument('--benchmark', action='store_true', help='Benchmark Lv.60, 4/8 players with actual contract offers.')
     parser.add_argument('--independent', action='store_true', help='Benchmark eight players at full HP for each encounter.')
+    parser.add_argument('--compare-contracts', action='store_true', help='Controlled comparison of all 18 third contracts.')
     parser.add_argument('--accessories', action='store_true', help='Fill four Lv.60 accessory slots with legal embroidery (benchmark).')
     parser.add_argument('--seed-start', type=int, default=0, help='First deterministic benchmark seed.')
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error('--seeds must be positive')
+    if args.compare_contracts:
+        import json
+        for row in compare_contracts(args.seeds, seed_start=args.seed_start):
+            print(json.dumps(row, ensure_ascii=False), flush=True)
+        return
     if args.benchmark or args.independent:
         import json
         run = independent_benchmark if args.independent else benchmark

@@ -329,8 +329,28 @@ class RPG(commands.Cog):
         """A deterministic Anan-flavoured line. This never calls an AI model."""
         if '武器' not in state['equipped']:
             return '安安：「連武器都忘了帶……吾輩先站遠一點。」'
+        showcase_comments = {
+            'paint:red': '安安：「紅色還是有點可怕……不過，有諾亞的蝴蝶在就沒事。」',
+            'paint:yellow': '安安：「諾亞還是喜歡這麼亮的顏色……吾輩已經習慣一點了。」',
+            'paint:blue': '安安：「這種藍色很安靜……放在吾輩和諾亞的房間也可以。」',
+            'paint:set': '安安：「又要讓諾亞畫畫了？……這次先開窗。吾輩會陪她畫完。」',
+            'noah:unfinished': '安安：「諾亞還沒畫完。……沒關係，吾輩會在這裡等她。」',
+            'painting:balloon': '安安：「『氣球』就是諾亞。……不管這幅畫有沒有魔法，吾輩都不會認錯。」',
+        }
+        if showcase in showcase_comments:
+            return showcase_comments[showcase]
         if showcase and showcase.startswith('noah:'):
-            return '安安：「這上面都是顏料……諾亞看到一定會很高興吧。」'
+            if showcase.endswith(':red'):
+                return '安安：「紅色還是有點可怕……但諾亞說會變成蝴蝶，那就沒關係。」'
+            if showcase.endswith(':yellow'):
+                return '安安：「亮得吾輩眼睛好痛……算了，諾亞高興就好。」'
+            if showcase.endswith(':blue'):
+                return '安安：「安靜的藍色……很像吾輩和諾亞待在房間裡的時候。」'
+            return '安安：「是諾亞畫的。……不管魔法有沒有幫忙，都是真的。」'
+        if showcase and showcase.startswith('maze:choice_box:'):
+            return '安安：「繪境把選擇也裝進箱子裡了……你自己選，吾輩不替你決定。」'
+        if showcase and showcase.startswith('maze:'):
+            return '安安：「這些線條還沒有結局……沒關係，諾亞還在，總有一天會畫完。」'
         if showcase and showcase.startswith(('clock:', 'puppet:', 'plague:')):
             return '安安：「居然把這種戰利品帶回來了……有點厲害。」'
         comments = {

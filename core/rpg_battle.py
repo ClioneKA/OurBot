@@ -6,6 +6,7 @@ import random
 from core.rpg_character import CharacterError, ITEMS, combat_from_stats, speed_from_equipment
 from core.rpg_monsters import REFERENCE_LEVELS, monster_name
 from core.rpg import level_for
+from core import rpg_maze_traits as maze_traits
 
 
 CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 指定比例',
@@ -516,6 +517,17 @@ class Battle:
                 self.log.append(
                     f'{target.name} 受到紫蝕侵染，腐敗變為 {target.status_stacks["corruption"]}/3 層。')
 
+    def _maze_party_round_end(self):
+        if self.result or self.round % 3:
+            return
+        for fighter in self.living(0):
+            percent = fighter.status_stacks.get('maze_renewal_percent', 0)
+            if percent:
+                amount = self.restore(fighter, fighter.stats['HP'] * percent / 100
+                                      * self.healing_received_multiplier(fighter))
+                if amount:
+                    self.log.append(f'{fighter.name} 的【回春契約】恢復 {amount} HP。')
+
     def _maze_final_round_end(self):
         if not self.mechanics.get('maze_final') or self.result:
             return
@@ -525,7 +537,7 @@ class Battle:
             return
         verdant = contracts.get('verdant', 0)
         if verdant and self.round % 3 == 0:
-            healing = boss.stats['HP'] * verdant // 100
+            healing = boss.stats['HP'] * verdant // 200
             if boss.has('break', self.round):
                 healing //= 2
             amount = self.restore(boss, healing)
@@ -557,7 +569,7 @@ class Battle:
         return 1.0
 
     def healing_received_multiplier(self, target):
-        return max(0, 100 + target.healing_received_percent) / 100
+        return max(0, 100 + target.healing_received_percent) / 100 * maze_traits.healing_multiplier(target, self.round)
 
     @staticmethod
     def passive(actor, job, passive_id):
@@ -748,6 +760,7 @@ class Battle:
                     self.log.append(f'{actor.name} 消耗 {radiance} 層輝光，治療提高 {radiance * 15}%。')
 
         self._passive_action = context
+        maze_traits.begin_action(self, context)
         return context
 
     def _finish_passive_action(self, context):
@@ -880,6 +893,7 @@ class Battle:
             if context.get('gain_discipline') and context['heals']:
                 state['discipline'] = min(3, state.get('discipline', 0) + 1)
 
+        maze_traits.end_action(self, context)
         self._passive_action = None
 
     def basic_attack(self, actor, target):
@@ -889,7 +903,7 @@ class Battle:
         finally:
             self._finish_passive_action(context)
 
-    def heal(self, actor, target, requested, trigger_share=True, passive_trigger=True):
+    def heal(self, actor, target, requested, trigger_share=True, passive_trigger=True, maze_trigger=True):
         context = self._passive_action if self._passive_action and self._passive_action['actor'] is actor else None
         if context is not None:
             requested = int(requested * context.get('healing_multiplier', 1))
@@ -901,6 +915,7 @@ class Battle:
         actor.combat_stats['healing_done'] += amount
         actor.combat_stats['overhealing'] += requested - amount
         target.combat_stats['healing_received'] += amount
+        maze_traits.healed(self, target, amount, maze_trigger and context is not None and context['skill'] is not None)
         if amount and trigger_share and target.team == 0 and target.status_stacks.get('corruption', 0):
             beast = next((f for f in self.living(1) if f.job == '瘟疫縫合獸'), None)
             if beast is not None:
@@ -997,7 +1012,7 @@ class Battle:
             target.food_regen_left = target.food_regen_rounds
             target.food_regen_start = self.round + 1
 
-    def apply_damage(self, target, damage, share_link=True):
+    def apply_damage(self, target, damage, share_link=True, direct=False):
         """Apply final damage, including tarot survival and Lovers sharing."""
         partner = None
         if share_link and target.team == 0 and target.linked_user_id is not None:
@@ -1006,6 +1021,7 @@ class Battle:
 
         def apply_one(victim, requested):
             before = victim.hp
+            requested = maze_traits.before_damage(self, victim, requested, direct)
             crystal_shield = victim.status_stacks.get('crystal_shield', 0)
             if crystal_shield > 0:
                 absorbed = min(crystal_shield, max(0, int(requested)))
@@ -1036,7 +1052,9 @@ class Battle:
                 actual = max(0, before - 1)
                 victim.effects['fortune_judgement_used'] = True
                 self.log.append(f'{victim.name} 的【審判】生效，在致死傷害中保留 1 HP。')
+            actual = maze_traits.survive(self, victim, actual, direct)
             victim.hp -= actual
+            maze_traits.after_damage(self, victim)
             victim.combat_stats['damage_taken'] += actual
             if actual and victim.hp == 0:
                 victim.combat_stats['deaths'] += 1
@@ -1101,6 +1119,8 @@ class Battle:
             self.log.append(f'{target.name} 受到【護衛】保護，免疫負面狀態。')
             self._gain_watch(target)
             return False
+        if source is not None and source.team == 0 and target.team != source.team and effect in ('poison', 'weak'):
+            until += source.status_stacks.get('maze_debuff_duration_bonus', 0)
         target.effects[effect] = max(target.effects.get(effect, 0), until)
         if source is not None and source.user_id is not None:
             target.effect_sources[effect] = source.user_id
@@ -1373,7 +1393,7 @@ class Battle:
                         * self.direct_damage_multiplier(actor)
                         * self.debuff_damage_multiplier(actor, target)
                         * self.crystal_damage_multiplier(actor, target))
-        attack = paint_attack * (1.25 if blessed else 1)
+        attack = paint_attack * (1.25 if blessed else 1) * maze_traits.damage_multiplier(actor, self.round)
         base_defense = target.stats['防禦']
         if target.has('guard', self.round):
             base_defense += target.guard_bonus
@@ -1436,7 +1456,7 @@ class Battle:
         bless_assist = max(0, pre_vulnerable_actual - broken_actual) if blessed else 0
         vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
         target_hp_before = target.hp
-        target_actual, partner, partner_actual = self.apply_damage(target, damage)
+        target_actual, partner, partner_actual = self.apply_damage(target, damage, direct=True)
         actual_damage = target_actual + partner_actual
         actor.combat_stats['hits'] += 1
         actor.combat_stats['critical_hits'] += int(critical)
@@ -1538,7 +1558,7 @@ class Battle:
                 target.effect_sources.pop('vulnerable', None)
             self.log.append(f'{target.name} 陷入易傷，受到的直接傷害 +{actor.vulnerable_percent}% 至第 {self.round + 1} 回合結束。')
         drain = actor.lifesteal if lifesteal is None else lifesteal
-        healing = self.heal(actor, actor, actual_damage * drain // 100)
+        healing = self.heal(actor, actor, actual_damage * drain // 100, maze_trigger=False)
         if healing > 0 and actor.hp > 0:
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
         if (counterable and target.job == '騎士' and target.hp > 0 and actor.hp > 0
@@ -1568,6 +1588,7 @@ class Battle:
                 if linked is not None:
                     actor.combat_stats['knockouts'] += int(linked_damage and linked.hp == 0)
                 self.log.append(f'{actor.name} 引爆猛毒，{target.name} 受到 {total} 點無視防禦傷害。')
+        maze_traits.after_hit(self, actor, target, actual_damage, context)
         return True
 
     def add_corruption(self, target, amount=1):
@@ -2009,7 +2030,7 @@ class Battle:
             for enemy in self.living(0):
                 self.hit(actor, enemy, .6, attack_scope='group')
         elif color == 'verdant':
-            amount = self.restore(actor, actor.stats['HP'] * 3 // 200)
+            amount = self.restore(actor, actor.stats['HP'] // 200)
             self.log.append(f'{actor.name} 使用【翠綠回影】，恢復 {amount} HP。')
         elif color == 'violet':
             self.log.append(f'{actor.name} 使用【紫蝕波紋】。')
@@ -2264,11 +2285,13 @@ class Battle:
                     attack *= (self.damage_dealt_multiplier(actor)
                                * self.debuff_damage_multiplier(actor, target))
                     attack *= 1.25 if actor.has('bless', self.round) else 1
+                    duration = 2 + (actor.status_stacks.get('maze_debuff_duration_bonus', 0)
+                                    if actor.team == 0 and target.team != actor.team else 0)
                     target.status_stacks.setdefault('poison_arrows', []).append({
                         'source_id': actor.user_id, 'damage': max(1, int(attack * 0.7)),
-                        'next_round': self.round + 1, 'remaining': 2,
+                        'next_round': self.round + 1, 'remaining': duration,
                     })
-                    self.log.append(f'{target.name} 遭毒箭侵蝕，後續兩回合將受到無視防禦傷害。')
+                    self.log.append(f'{target.name} 遭毒箭侵蝕，後續 {duration} 回合將受到無視防禦傷害。')
             if hit and target.hp > 0 and effect == 'shield_bash':
                 if self._passive_action is not None and self._passive_action.get('shield_followup'):
                     self.log.append(f'{actor.name} 消耗衝勢，盾擊追加 40% 傷害。')
@@ -2403,6 +2426,8 @@ class Battle:
             if self.check_end():
                 break
         self._maze_final_round_end()
+        self._maze_party_round_end()
+        maze_traits.round_end(self)
         if not self.result:
             for fighter in list(self.living(0)):
                 marks = fighter.status_stacks.get('drowning_mark', 0)

@@ -9,6 +9,34 @@ from core.settings import SettingsError, load_settings
 
 
 class RPGTests(unittest.TestCase):
+    def test_adventurer_comments_for_noah_and_painted_maze_showcases(self):
+        from cmds.rpg import RPG
+
+        state = {'equipped': {'武器': 'starter:club'}, 'job': '民兵'}
+        cases = {
+            'paint:red': '安安：「紅色還是有點可怕……不過，有諾亞的蝴蝶在就沒事。」',
+            'paint:yellow': '安安：「諾亞還是喜歡這麼亮的顏色……吾輩已經習慣一點了。」',
+            'paint:blue': '安安：「這種藍色很安靜……放在吾輩和諾亞的房間也可以。」',
+            'paint:set': '安安：「又要讓諾亞畫畫了？……這次先開窗。吾輩會陪她畫完。」',
+            'noah:unfinished': '安安：「諾亞還沒畫完。……沒關係，吾輩會在這裡等她。」',
+            'painting:balloon': '安安：「『氣球』就是諾亞。……不管這幅畫有沒有魔法，吾輩都不會認錯。」',
+            'noah:archer:weapon': '安安：「是諾亞畫的。……不管魔法有沒有幫忙，都是真的。」',
+            'noah:archer:weapon:red': '安安：「紅色還是有點可怕……但諾亞說會變成蝴蝶，那就沒關係。」',
+            'noah:archer:weapon:yellow': '安安：「亮得吾輩眼睛好痛……算了，諾亞高興就好。」',
+            'noah:archer:weapon:blue': '安安：「安靜的藍色……很像吾輩和諾亞待在房間裡的時候。」',
+            'maze:infantry:weapon': '安安：「這些線條還沒有結局……沒關係，諾亞還在，總有一天會畫完。」',
+            'maze:choice_box:infantry': '安安：「繪境把選擇也裝進箱子裡了……你自己選，吾輩不替你決定。」',
+        }
+        for showcase, expected in cases.items():
+            with self.subTest(showcase=showcase):
+                self.assertEqual(RPG.adventurer_comment(state, showcase), expected)
+
+        # Raid proofs deliberately keep the profession fallback comment.
+        self.assertEqual(
+            RPG.adventurer_comment(state, 'proof:raid'),
+            '安安：「還在摸索也沒關係，木棒拿穩就好了。」',
+        )
+
     def test_level_boundaries(self):
         for level in range(1, MAX_LEVEL):
             floor = level_floor(level)

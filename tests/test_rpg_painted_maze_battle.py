@@ -3,6 +3,7 @@ import unittest
 
 from core.rpg_battle import Battle, Fighter, SKILLS, default_rules, dump_battle, load_battle
 from core.rpg_painted_maze import COLOR_CONTRACTS, draw_painting_route
+from core import rpg_maze_traits
 from core.rpg_painted_maze_battle import (
     FINAL_MAX_ROUNDS,
     PAINTING_MAX_ROUNDS,
@@ -41,6 +42,59 @@ def participant(user_id=1):
 
 
 class PaintedMazeBattleTests(unittest.TestCase):
+    def test_gold_cooldown_counts_color_variants_but_requires_swift_contract(self):
+        for contracts, expected in ((['gold', 'gold:aim'], 1), (['gold', 'gold:evasion'], 1),
+                                    (['gold'], 0), (['gold:aim', 'gold:evasion'], 0)):
+            with self.subTest(contracts=contracts):
+                battle = build_painting_battle([participant()], draw_painting_route(1)[0], 1, contracts)
+                self.assertEqual(battle.fighters[0].cooldown_reduction, expected)
+
+    def test_shelter_heals_living_players_every_third_round_after_reload(self):
+        battle = build_final_battle(dict(status='running', boss_index=3, seed=1, route='noah',
+            participants=[participant(1), participant(2)], contracts=['azure', 'gold', 'verdant:shelter']))
+        player, fallen = [f for f in battle.fighters if f.team == 0]
+        player.hp, fallen.hp = 100, 0
+        battle = load_battle(dump_battle(battle))
+        player, fallen = [f for f in battle.fighters if f.team == 0]
+        battle.round = 2
+        rpg_maze_traits.round_end(battle)
+        self.assertEqual(player.hp, 100)
+        battle.round = 3
+        rpg_maze_traits.round_end(battle)
+        self.assertEqual(player.hp, 180)
+        self.assertEqual(fallen.hp, 0)
+        player.hp = player.stats['HP'] - 1
+        battle.round = 6
+        rpg_maze_traits.round_end(battle)
+        self.assertEqual(player.hp, player.stats['HP'])
+        player.hp = 100
+        battle.result = '勝利'
+        rpg_maze_traits.round_end(battle)
+        self.assertEqual(player.hp, 100)
+
+    def test_infection_extends_damage_and_weakness_without_extending_control(self):
+        battle = build_painting_battle([participant()], draw_painting_route(1)[0], 1, ['violet'])
+        battle = load_battle(dump_battle(battle))
+        player = next(f for f in battle.fighters if f.team == 0)
+        enemy = next(f for f in battle.fighters if f.team == 1)
+        battle.round = 1
+        for effect, expected in (('poison', 3), ('weak', 3), ('stun', 2), ('break', 2)):
+            self.assertTrue(battle.apply_debuff(enemy, effect, 2, player))
+            self.assertEqual(enemy.effects[effect], expected)
+        battle.apply_debuff(enemy, 'weak', 2, player)
+        self.assertEqual(enemy.effects['weak'], 3)  # Reapplying does not add duration repeatedly.
+        enemy.effects['immunity'] = 5
+        self.assertFalse(battle.apply_debuff(enemy, 'weak', 4, player))
+        self.assertEqual(enemy.effects['weak'], 3)
+        battle.apply_debuff(player, 'poison', 2, enemy)
+        self.assertEqual(player.effects['poison'], 2)
+        enemy.effects.clear()
+        player.job = '弓兵'
+        player.stats['命中率'] = 10000
+        skill = next(s for s in SKILLS['弓兵'] if s.effect == 'poison_arrow')
+        battle.use_skill(player, default_rules('弓兵')[0], skill, enemy)
+        self.assertEqual(enemy.status_stacks['poison_arrows'][0]['remaining'], 3)
+
     def test_independent_benchmark_runs_every_encounter_even_after_a_loss(self):
         from unittest.mock import patch
         from scripts.simulate_painted_maze import independent_benchmark
@@ -203,7 +257,7 @@ class PaintedMazeBattleTests(unittest.TestCase):
         calls = []
         battle.act = lambda actor: calls.append(actor.name)
         battle._maze_final_round_end()
-        self.assertEqual(boss.hp, 510)
+        self.assertEqual(boss.hp, 505)
         self.assertEqual(calls, [])
         battle.round = 5
         battle._maze_final_round_end()

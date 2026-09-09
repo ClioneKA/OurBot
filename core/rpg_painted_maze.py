@@ -6,6 +6,7 @@ import time
 import uuid
 
 from core.rpg_character import CharacterError
+from core.rpg_maze_traits import descriptions as trait_descriptions
 
 
 MODE_NAME = '繪境迷廊'
@@ -56,17 +57,17 @@ COLOR_CONTRACTS = {
     },
     'gold': {
         'name': '金黃契約',
-        'party': '全隊速度 +8；兩層時主動技能基礎冷卻 -1',
+        'party': '全隊速度 +8；持有疾筆且金黃契約合計兩層時，主動技能基礎冷卻 -1',
         'backlash': '最終敵人速度提高；兩層以上時蓄力提前完成',
     },
     'verdant': {
         'name': '翠綠契約',
         'party': '全隊治療量 +10%，過關恢復 +3% 最大 HP',
-        'backlash': '最終敵人每三回合恢復最大 HP，疊層越高恢復越多',
+        'backlash': '最終敵人每三回合恢復 0.5% 最大 HP／層',
     },
     'violet': {
         'name': '紫蝕契約',
-        'party': '對帶有可淨化負面狀態的敵人傷害 +8%',
+        'party': '對有負面狀態的敵人傷害 +8%；施加的中毒、毒箭與虛弱延長 1 回合／層，不延長暈眩或破甲',
         'backlash': '最終敵人命中時附加腐敗',
     },
     'black': {
@@ -81,25 +82,29 @@ CONTRACT_COLORS = tuple(COLOR_CONTRACTS)
 for _color, _contract in COLOR_CONTRACTS.items():
     _contract['color'] = _color
 CONTRACT_VARIANTS = {
-    'crimson': [('edge', '銳筆', '全隊攻擊 +12%', {'攻擊': 12}),
-                ('precision', '點睛', '全隊命中率 +15、暴擊率 +8 百分點', {'命中率+': 15, '暴擊率+': 8})],
-    'azure': [('armor', '厚塗', '全隊防禦 +18%', {'防禦': 18}),
-              ('vitality', '留白', '全隊最大 HP +15%，增加的 HP 同時補滿', {'HP': 15})],
-    'gold': [('aim', '聚光', '全隊命中率 +20 百分點、攻擊 +6%', {'命中率+': 20, '攻擊': 6}),
-             ('evasion', '掠影', '全隊閃避率 +12 百分點、速度 +4', {'閃避率+': 12, '速度+': 4})],
-    'verdant': [('renewal', '回春', '過關恢復額外 10% 最大 HP', {}),
-                ('shelter', '蔭庇', '全隊最大 HP +8%、治療量 +15%', {'HP': 8, '治療量': 15})],
-    'violet': [('focus', '蝕刻', '對有負面狀態的敵人傷害 +16%', {}),
-               ('insight', '洞察', '全隊攻擊 +8%、命中率 +10 百分點', {'攻擊': 8, '命中率+': 10})],
-    'black': [('ruin', '毀形', '全隊傷害 +20%，受到傷害 +8%', {}),
-              ('gamble', '孤注', '全隊暴擊率 +18 百分點，受到傷害 +5%', {'暴擊率+': 18})],
+    'crimson': [('edge', '銳筆'), ('precision', '點睛')],
+    'azure': [('armor', '厚塗'), ('vitality', '留白')],
+    'gold': [('aim', '聚光'), ('evasion', '掠影')],
+    'verdant': [('renewal', '回春'), ('shelter', '庇蔭')],
+    'violet': [('focus', '蝕刻'), ('insight', '洞察')],
+    'black': [('ruin', '毀形'), ('gamble', '孤注')],
 }
+_trait_descriptions = trait_descriptions()
 for _color, _variants in CONTRACT_VARIANTS.items():
-    for _suffix, _name, _party, _stats in _variants:
-        COLOR_CONTRACTS[f'{_color}:{_suffix}'] = {
+    for _suffix, _name in _variants:
+        _key = f'{_color}:{_suffix}'
+        COLOR_CONTRACTS[_key] = {
             'color': _color, 'name': f'{COLOR_CONTRACTS[_color]["name"]}・{_name}',
-            'party': _party, 'backlash': COLOR_CONTRACTS[_color]['backlash'], 'stats': _stats,
+            'party': _trait_descriptions[_key], 'backlash': COLOR_CONTRACTS[_color]['backlash'],
         }
+
+
+# Give the original choices the same naming style without changing saved IDs.
+for _color, _name in {
+    'crimson': '濃彩', 'azure': '薄幕', 'gold': '疾筆',
+    'verdant': '滋養', 'violet': '侵染', 'black': '狂墨',
+}.items():
+    COLOR_CONTRACTS[_color]['name'] += f'・{_name}'
 
 
 def draw_painting_route(seed):

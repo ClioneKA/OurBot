@@ -9,12 +9,12 @@ from core.rpg_painted_maze import COLOR_CONTRACTS, PaintedMazeError
 PAINTING_MAX_ROUNDS = 40
 FINAL_MAX_ROUNDS = 40
 STAGE_PROFILE = {
-    55: dict(tier=5, level_bonus=5, hp=12.0, attack=3.85, defense=1.50,
+    55: dict(tier=5, level_bonus=5, hp=12.0, attack=3.875, defense=1.50,
              speed=54, hit=105, dodge=58, crit=10),
     60: dict(tier=6, level_bonus=0, hp=13.5, attack=3.75, defense=1.60,
              speed=56, hit=108, dodge=63, crit=12),
     # Raw attack budgets differ because each act uses different enemy scripts.
-    65: dict(tier=6, level_bonus=5, hp=13.5, attack=3.30, defense=1.70,
+    65: dict(tier=6, level_bonus=5, hp=13.5, attack=3.02, defense=1.70,
              speed=60, hit=112, dodge=68, crit=12),
 }
 # Only previously saved nine-painting routes can still contain T50 entries.
@@ -88,6 +88,7 @@ def apply_party_contracts(battle, contracts):
     for contract_id in counts:
         if contract_id not in COLOR_CONTRACTS:
             raise PaintedMazeError('房間保存了無效的色彩契約。')
+    colors = Counter(COLOR_CONTRACTS[key]['color'] for key in contracts)
     for fighter in (fighter for fighter in battle.fighters if fighter.team == 0):
         if counts['crimson']:
             fighter.status_stacks['maze_direct_damage_percent'] = counts['crimson'] * 8
@@ -95,8 +96,11 @@ def apply_party_contracts(battle, contracts):
         fighter.speed += counts['gold'] * 8
         if '速度' in fighter.stats:
             fighter.stats['速度'] = fighter.speed
-        if counts['gold'] >= 2:
+        if counts['gold'] and colors['gold'] >= 2:
             fighter.cooldown_reduction = max(fighter.cooldown_reduction, 1)
+        if counts['violet']:
+            fighter.status_stacks['maze_debuff_duration_bonus'] = counts['violet']
+        fighter.status_stacks['maze_traits'] = {key: value for key, value in counts.items() if ':' in key}
         if counts['verdant']:
             fighter.stats['治療量'] = fighter.stats['治療量'] * (100 + counts['verdant'] * 10) // 100
         if counts['violet']:
@@ -118,9 +122,7 @@ def apply_party_contracts(battle, contracts):
                     if stat == 'HP':
                         fighter.hp += fighter.stats[stat] - old
         fighter.status_stacks['maze_violet_percent'] = (
-            counts['violet'] * 8 + counts['violet:focus'] * 16)
-        fighter.damage_dealt_percent += counts['black:ruin'] * 20
-        fighter.damage_taken_percent += counts['black:ruin'] * 8 + counts['black:gamble'] * 5
+            counts['violet'] * 8)
         fighter.stats['暴擊率'] = min(100, fighter.stats['暴擊率'])
     battle.mechanics['painted_maze_contracts'] = dict(counts)
     if contracts:
@@ -159,7 +161,7 @@ def carry_party_state(battle, completed_bosses, contracts=(), *, stage_end=True)
     """Seal post-battle HP; transient combat state is intentionally discarded."""
     victory = battle.result == '勝利'
     counts = Counter(contracts)
-    recovery_bonus = counts['verdant'] * 3 + counts['verdant:renewal'] * 10
+    recovery_bonus = counts['verdant'] * 3
     party_size = sum(fighter.team == 0 for fighter in battle.fighters)
     recovery = 30 if party_size == 1 else 22 if party_size <= 4 else 15
     curtain_recovery = 50 if party_size == 1 else 40 if party_size <= 4 else 35
@@ -215,8 +217,8 @@ def final_monster(room):
     if route not in ('noah', 'shadow'):
         raise PaintedMazeError('繪境迷廊尾王路線無效。')
     # Noah's scripted charges and phase adds spend more of the threat budget.
-    hp_base, attack_base, defense = ((14.0, 1.80, 1.80) if route == 'noah'
-                                     else (18.5, 2.30, 1.80))
+    hp_base, attack_base, defense = ((13.0, 1.80, 1.80) if route == 'noah'
+                                     else (19.0, 2.30, 1.80))
     party_hp_scale = (1 + .85 * (participant_count - 1)) / participant_count
     attack_scale = party_attack_scale(participant_count)
     name = '繪畫魔女．城崎諾亞' if route == 'noah' else '繪畫之影'
