@@ -392,6 +392,10 @@ ITEMS['paint:set'] = Item(
 ITEMS['noah:unfinished'] = Item(
     '未完成的魔女畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='城崎諾亞留下的未完成畫作；可從背包使用，開啟繪境迷廊的城崎諾亞路線。')
+ITEMS['witch:thread'] = Item(
+    '魔女繡線', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    description='魔女總力戰勝利報酬；3 個可在漢娜的裁縫所製作一個魔女刺繡。',
+    transferable=False)
 ITEMS['proof:raid'] = Item(
     '討伐之證', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='一至三階討伐的勝利證明；可在商店累積兌換《氣球》的畫作。',
@@ -407,6 +411,10 @@ PAINT_NAMES = {'red': '紅色', 'yellow': '黃色', 'blue': '藍色'}
 DYE_PRICE = 1_000
 EMBROIDERY_PRICE = 500
 EMBROIDERIES = {
+    'witch_dawn': ('輪迴的黎明', 'witch_dawn', 1),
+    'witch_exchange': ('交換的溫柔', 'witch_exchange', 1),
+    'witch_echo': ('借來的回聲', 'witch_echo', 4),
+    'witch_wings': ('撫心的白翼', 'witch_wings', 5),
     'heart': ('愛心刺繡', 'stat:0', 2),
     'flame': ('火焰刺繡', 'stat:1', 2),
     'shield': ('盾牌刺繡', 'stat:2', 2),
@@ -1185,7 +1193,11 @@ class Characters:
                         (item.first_skill_cooldown_reduction for item in resolved.values()), default=0),
                     active_set=active_set, set_bonus_text=set_bonus_text,
                     critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job],
-                    crystal_effects=crystal_effects)
+                    crystal_effects=crystal_effects,
+                    embroideries=sorted({affix[1].split(':', 1)[1]
+                        for instance_id in equipped_instances.values()
+                        for affix in self._instance(guild_id, user_id, instance_id).affixes
+                        if affix[1].startswith('embroidery:witch_')}))
 
     def inventory_counts(self, guild_id, user_id):
         self.ensure_starter(guild_id, user_id)
@@ -1475,6 +1487,11 @@ class Characters:
             current = next((affix for affix in instance.affixes if affix[0] == 0), None)
             if current and current[1] == affix_id:
                 raise CharacterError(f'這件飾品已經具有{embroidery[0]}。')
+            if embroidery_id.startswith('witch_'):
+                paid_thread = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-3
+                    WHERE guild_id=? AND user_id=? AND item_id='witch:thread' AND quantity>=3''', (guild, user))
+                if not paid_thread.rowcount:
+                    raise CharacterError('魔女刺繡需要 3 個魔女繡線。')
             paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
                 WHERE guild_id=? AND user_id=? AND gold>=?''',
                                    (EMBROIDERY_PRICE, guild, user, EMBROIDERY_PRICE))

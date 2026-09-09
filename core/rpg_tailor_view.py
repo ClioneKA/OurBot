@@ -7,6 +7,7 @@ from core.rpg_character import (CharacterError, DYE_PRICE, EMBROIDERIES,
                                 EMBROIDERY_PRICE, ITEMS, PAINT_ITEMS, PAINT_NAMES,
                                 STAT_NAMES, inventory_entry_label, item_text)
 from core.rpg_equipment_view import PanelSelect
+from core.rpg_witch_embroideries import DESCRIPTIONS
 from core.rpg_menu import add_help, navigate
 
 
@@ -80,7 +81,8 @@ class TailorView(discord.ui.View):
                 self.option = 'heart'
             self.add_item(PanelSelect('option', row=2, placeholder='選擇刺繡圖樣', options=[
                 discord.SelectOption(label=name, value=key,
-                    description=f'{STAT_NAMES[int(effect.split(":")[1])]} +{value}',
+                    description=(DESCRIPTIONS[key] if key in DESCRIPTIONS else
+                                 f'{STAT_NAMES[int(effect.split(":")[1])]} +{value}')[:100],
                     default=self.option == key)
                 for key, (name, effect, value) in EMBROIDERIES.items()]))
         self._button(f'確認{"染色" if self.mode == "dye" else "刺繡"}', 'apply', 3,
@@ -109,7 +111,7 @@ class TailorView(discord.ui.View):
                            '再次染色會取代原顏色，舊顏料與費用不返還。')
         else:
             description = (f'支付 **{EMBROIDERY_PRICE:,} 金幣**，在具有刺繡格的討伐飾品上縫製圖樣。'
-                           '再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
+                           '魔女刺繡另需 3 個魔女繡線。再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
         embed = discord.Embed(title='安安大冒險｜漢娜的裁縫所',
                               description=description, color=0xE85D75)
         entry = self.entries.get(self.selected)
@@ -126,7 +128,8 @@ class TailorView(discord.ui.View):
         counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         embed.add_field(name='加工資源', value=(
             f'金幣：{self.cog.store.gold(self.guild_id, self.owner.id):,}\n'
-            + '｜'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}' for key in PAINT_ITEMS.values())), inline=False)
+            + '｜'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}' for key in PAINT_ITEMS.values())
+            + f'\n魔女繡線 ×{counts.get("witch:thread", 0)}'), inline=False)
         if notice:
             embed.add_field(name='加工結果', value=notice, inline=False)
         embed.set_footer(text='每件裝備以編號區分；顏料結晶的鑲嵌、替換、出售與轉交也在此處辦理。')

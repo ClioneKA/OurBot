@@ -1,0 +1,191 @@
+import json
+from datetime import datetime, timezone
+from unittest.mock import patch, AsyncMock
+
+from core.rpg_character import ITEMS, add_owned_item
+from core.rpg_total_battle import ACTION_ATTACK, load_total_battle, dump_total_battle
+from core.rpg_total_raids import TotalRaidError, TotalRaidStore, TotalRaidService, witch_day, WitchDailyView
+from core.rpg_witch_catalog import WITCH_BOSS
+from core.rpg_witch_battle import WitchRaidBattle
+from tests.test_rpg_total_raids import TotalRaidRoomTests, HashableMember, FakeChannel, FakeCategory
+import discord
+from types import SimpleNamespace
+
+
+class WitchRoomTests(TotalRaidRoomTests):
+    def announcement_fixture(self, existing=False):
+        guild = SimpleNamespace(id=1, default_role=object(), me=object())
+        channel = FakeChannel(80, guild)
+        channel.name = '魔女試煉'
+        category = FakeCategory(50, channel)
+        category.guild = guild
+        category.text_channels = [channel] if existing else []
+        self.bot.channels[50] = category
+        self.service.witch_channel_ids = set()
+        return category, channel
+
+    async def test_auto_channel_uses_shared_category_and_persists_after_rename(self):
+        category, channel = self.announcement_fixture()
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.announce_witches()
+            self.assertEqual(category.create_text_channel.call_args.kwargs['name'], '魔女試煉')
+            channel.send.assert_awaited_once()
+            self.bot.channels[80] = channel
+            channel.name = '已改名的公告'
+            restarted = TotalRaidService(self.cog)
+            restarted.category_ids = {50}
+            restarted.witch_channel_ids = set()
+            await restarted.announce_witches()
+        category.create_text_channel.assert_awaited_once()
+        channel.send.assert_awaited_once()
+
+    async def test_reuses_existing_named_channel_and_respects_explicit_ids(self):
+        category, channel = self.announcement_fixture(existing=True)
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            self.assertEqual(await self.service.witch_announcement_channels(), [channel])
+            self.service.witch_channel_ids = {90}
+            explicit = FakeChannel(90, channel.guild)
+            self.bot.channels[90] = explicit
+            self.assertEqual(await self.service.witch_announcement_channels(), [explicit])
+        category.create_text_channel.assert_not_awaited()
+
+    async def test_cache_miss_fetches_before_recreating_deleted_channel(self):
+        category, channel = self.announcement_fixture()
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_witch_channels VALUES (1,80)')
+        self.bot.fetch_channel = AsyncMock(return_value=channel)
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            self.assertEqual(await self.service.witch_announcement_channels(), [channel])
+            category.create_text_channel.assert_not_awaited()
+            self.bot.fetch_channel.side_effect = discord.NotFound(SimpleNamespace(status=404, reason='Missing'), 'deleted')
+            replacement = FakeChannel(81, channel.guild)
+            category.create_text_channel.return_value = replacement
+            self.assertEqual(await self.service.witch_announcement_channels(), [replacement])
+        category.create_text_channel.assert_awaited_once()
+        self.assertEqual(self.store.db.execute('SELECT channel_id FROM rpg_witch_channels WHERE guild_id=1').fetchone()[0], 81)
+
+    async def test_missing_permissions_back_off_without_spamming_creation(self):
+        category, channel = self.announcement_fixture()
+        category.create_text_channel.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'no permission')
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), patch('core.rpg_total_raids.logger.exception'):
+            self.assertEqual(await self.service.witch_announcement_channels(), [])
+            self.assertEqual(await self.service.witch_announcement_channels(), [])
+        category.create_text_channel.assert_awaited_once()
+
+    async def test_late_action_resolves_timeout_and_result_delivery_retries(self):
+        room, host, channel = await self.setup_witch_room()
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 1, 'proof:raid', 1)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            room = await self.service.begin(room['id'], host)
+            room['round_deadline'] = 0
+            self.service.repo.save(room)
+            with self.assertRaisesRegex(TotalRaidError, '已逾時'):
+                await self.service.submit_action(room['id'], 1, ACTION_ATTACK, 'e:1', None)
+            room = self.service.repo.get(room['id'])
+            self.assertEqual(load_total_battle(room['battle']).round, 1)
+            # Simulate a persisted result whose Discord delivery was interrupted.
+            room['public_pending'] = True
+            self.service.repo.save(room)
+            await self.service.cleanup_witch_rooms(room['created_at']+1)
+            self.assertFalse(self.service.repo.get(room['id'])['public_pending'])
+
+    async def test_taiwan_day_boundary_and_restart_roster(self):
+        before = datetime(2026, 9, 9, 15, 59, 59, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(witch_day(before), '2026-09-09')
+        self.assertEqual(witch_day(before+1), '2026-09-10')
+        a = self.service.repo.daily_witches(before)
+        self.assertEqual(a, TotalRaidStore(self.store).daily_witches(before))
+        self.assertEqual(len(set(a[1])), 3)
+        self.assertNotEqual(a[0], self.service.repo.daily_witches(before+1)[0])
+
+    async def setup_witch_room(self):
+        host = HashableMember(1, '房主')
+        guild = SimpleNamespace(id=1, get_member=lambda uid: host if uid == 1 else None)
+        channel = FakeChannel(70, guild)
+        channel.delete = AsyncMock()
+        self.bot.channels[70] = channel
+        self.characters.create(1, 1)
+        room = self.service.repo.create(1, 50, 70, 1, WITCH_BOSS, 1)
+        room.update(message_id=999, witch_day='2026-09-09', witch_ids=['anan', 'noah', 'meruru'])
+        self.service.repo.save(room)
+        return room, host, channel
+
+    async def test_paid_start_confirm_timeout_reward_exactly_once(self):
+        room, host, channel = await self.setup_witch_room()
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 1, 'proof:raid', 2)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            room = await self.service.begin(room['id'], host)
+            self.assertEqual(self.characters.available_quantity(1, 1, 'proof:raid'), 1)
+            b = load_total_battle(room['battle'])
+            self.assertIsInstance(b, WitchRaidBattle)
+            self.assertGreater(room['round_deadline'] - room['created_at'], 119)
+            b.living(0)[0].stats['HP'] = b.living(0)[0].hp = 100000
+            room['battle'] = dump_total_battle(b)
+            self.service.repo.save(room)
+            target = b.valid_targets(1, ACTION_ATTACK)[0]
+            await self.service.submit_action(room['id'], 1, ACTION_ATTACK, target, None, expected_round=1)
+            self.assertEqual(load_total_battle(self.service.repo.get(room['id'])['battle']).round, 0)
+            await self.service.confirm_action(room['id'], 1)
+            self.assertEqual(load_total_battle(self.service.repo.get(room['id'])['battle']).round, 1)
+            with self.assertRaisesRegex(TotalRaidError, '回合已結束'):
+                await self.service.submit_action(room['id'], 1, ACTION_ATTACK, target, None, expected_round=1)
+            with self.assertRaises(TotalRaidError):
+                await self.service.begin(room['id'], host)
+            room = self.service.repo.get(room['id'])
+            b = load_total_battle(room['battle'])
+            b.rewound = True
+            for w in b.witches():
+                w.hp = 0
+            await self.service._resolve(room, b)
+            self.service.repo.finish_witch(room, b)
+            self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 1)
+            self.assertEqual(self.characters.available_quantity(1, 1, 'proof:raid'), 1)
+            self.assertFalse(ITEMS['witch:thread'].transferable)
+            self.assertLessEqual(len(self.service.battle_embed(room, b)), 6000)
+
+    async def test_insufficient_material_keeps_lobby(self):
+        room, host, channel = await self.setup_witch_room()
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            with self.assertRaisesRegex(TotalRaidError, '討伐之證不足'):
+                await self.service.begin(room['id'], host)
+        self.assertEqual(self.service.repo.get(room['id'])['status'], 'lobby')
+
+    async def test_group_cost_failure_is_atomic(self):
+        room, host, channel = await self.setup_witch_room()
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 1, 'proof:raid', 1)
+        room.update(status='running', members=[1, 2])
+        with self.assertRaises(TotalRaidError):
+            self.service.repo.start_witch(room)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'proof:raid'), 1)
+        self.assertEqual(self.service.repo.get(room['id'])['status'], 'lobby')
+
+    async def test_daily_announcement_not_duplicated_and_cleanup(self):
+        room, host, channel = await self.setup_witch_room()
+        self.service.witch_channel_ids = {70}
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.announce_witches()
+            await self.service.announce_witches()
+            self.assertEqual(channel.send.await_count, 1)
+            await self.service.cleanup_witch_rooms(room['created_at']+1801)
+        channel.delete.assert_awaited_once()
+        self.assertTrue(self.service.repo.get(room['id'])['channel_deleted'])
+
+    async def test_embroidery_consumption_and_snapshot(self):
+        room, host, channel = await self.setup_witch_room()
+        accessory = next(k for k, item in ITEMS.items() if item.slot == '飾品' and item.embroidery_slots and not item.job)
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 1, accessory)
+            add_owned_item(self.store.db, 1, 1, 'witch:thread', 3)
+        instance = next(i for i in self.characters.equipment_instances(1, 1) if i.item_id == accessory)
+        with self.assertRaises(Exception):
+            self.characters.embroider_accessory(1, 1, instance.token, 'witch_dawn')
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 3)
+        with self.store.db:
+            self.store.db.execute('INSERT OR REPLACE INTO rpg_wallets(guild_id,user_id,gold) VALUES (1,1,1000)')
+        self.characters.embroider_accessory(1, 1, instance.token, 'witch_dawn')
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 0)
+        saved = self.characters._instance(1, 1, instance.instance_id)
+        self.assertTrue(any(a[1] == 'embroidery:witch_dawn' for a in saved.affixes))

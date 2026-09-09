@@ -777,11 +777,15 @@ class Battle:
                 if radiance:
                     self.log.append(f'{actor.name} 消耗 {radiance} 層輝光，治療提高 {radiance * 15}%。')
 
+        from core import rpg_witch_embroideries
+        rpg_witch_embroideries.begin(self, context, DAMAGE_EFFECTS, HEALING_EFFECTS)
         self._passive_action = context
         maze_traits.begin_action(self, context)
         return context
 
     def _finish_passive_action(self, context):
+        from core import rpg_witch_embroideries
+        rpg_witch_embroideries.finish(self, context, DAMAGE_EFFECTS, HEALING_EFFECTS)
         actor, skill = context['actor'], context['skill']
         effect = skill.effect if skill is not None else None
         state = actor.passive_state
@@ -923,6 +927,10 @@ class Battle:
 
     def heal(self, actor, target, requested, trigger_share=True, passive_trigger=True, maze_trigger=True):
         context = self._passive_action if self._passive_action and self._passive_action['actor'] is actor else None
+        if (context and context['skill'] and context['skill'].effect in HEALING_EFFECTS
+                and passive_trigger and actor.status_stacks.get('embroidery_witch_wings')
+                and target.hp * 2 < target.stats['HP']):
+            requested = int(requested * 1.05)
         if context is not None:
             requested = int(requested * context.get('healing_multiplier', 1))
         passive_base = requested
@@ -1071,6 +1079,8 @@ class Battle:
                 victim.effects['fortune_judgement_used'] = True
                 self.log.append(f'{victim.name} 的【審判】生效，在致死傷害中保留 1 HP。')
             actual = maze_traits.survive(self, victim, actual, direct)
+            from core import rpg_witch_embroideries
+            actual = rpg_witch_embroideries.survive(self, victim, actual, direct)
             victim.hp -= actual
             maze_traits.after_damage(self, victim)
             victim.combat_stats['damage_taken'] += actual
@@ -2501,6 +2511,8 @@ def raid_battle(participants, monster, seed):
                         passive_id=p.get('passive_id'),
                         user_id=p.get('id')) for p in participants]
     for fighter, participant in zip(fighters, participants):
+        for embroidery in participant['state'].get('embroideries', ()):
+            fighter.status_stacks['embroidery_' + embroidery] = 1
         for crystal in participant['state'].get('crystal_effects', ()):
             for effect, value in zip(crystal.get('effects', ()), crystal.get('values', ())):
                 if effect in ('HP', '攻擊', '防禦', '治療量', 'accuracy',

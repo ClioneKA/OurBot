@@ -281,7 +281,9 @@ class MonsterTests(unittest.TestCase):
                     policy = repo.get(raid['id'])['reward_policy']
                     self.assertEqual((policy['victory_xp'], policy['victory_gold'], policy['drop_chance']), (xp, gold, drop))
                     self.assertEqual(policy['defeat_xp'], 30)
-                    embed = RaidService.lobby_embed(type('Service', (), {'settings': RaidSettings()})(), raid)
+                    service = type('Service', (), {'settings': RaidSettings(),
+                        'lobby_roster': lambda self, raid: []})()
+                    embed = RaidService.lobby_embed(service, raid)
                     self.assertIn(f'{drop * 100:g}%', embed.fields[-1].value)
                 raid = repo.create(1, 10, monster(quality='傳說'), 0, asdict(RaidSettings()),
                                    dict(victory_xp=17, victory_gold=9, drop_chance=.07))

@@ -738,6 +738,9 @@ def noah_total_battle_from_participants(participants, seed=None, max_rounds=30):
 
 
 def dump_total_battle(battle):
+    from core.rpg_witch_battle import WitchRaidBattle, dump_witch_battle
+    if isinstance(battle, WitchRaidBattle):
+        return dump_witch_battle(battle)
     data = dump_battle(battle)
     data['choices'] = [asdict(choice) for choice in battle.choices.values()]
     data['paint_gifts'] = battle.paint_gifts
@@ -746,6 +749,9 @@ def dump_total_battle(battle):
 
 
 def load_total_battle(data):
+    if data.get('mode') == 'witch_raid':
+        from core.rpg_witch_battle import load_witch_battle
+        return load_witch_battle(data)
     base = load_battle(data)
     choices = {item['user_id']: ActionChoice(**item) for item in data.get('choices', [])}
     battle = TotalRaidBattle(base.fighters, max_rounds=base.max_rounds, choices=choices,
