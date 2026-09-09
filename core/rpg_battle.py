@@ -2479,10 +2479,8 @@ class Battle:
 
 
 
-def raid_battle(participants, monster, seed):
-    """Build enemies from the announcement snapshot; keep legacy raids compatible."""
-    balance_version = monster.get('balance_version', 1)
-
+def participant_fighters(participants, balance_version=3):
+    """Build fresh fighters with equipment, tactics and passive effects."""
     def participant_speed(participant):
         state = participant['state']
         if 'speed' in state:
@@ -2548,6 +2546,13 @@ def raid_battle(participants, monster, seed):
                 fighter.stats[stat] += after[stat] - before[stat]
             fighter.hp = fighter.stats['HP']
             badge_logs.append(f'{fighter.name} 的【戰團徽章】生效：{len(participants)} 人參戰，生命力／力氣／耐力／靈巧／信仰各 +{count}，整場固定。')
+    return fighters, badge_logs, passive_logs
+
+
+def raid_battle(participants, monster, seed):
+    """Build enemies from the announcement snapshot; keep legacy raids compatible."""
+    balance_version = monster.get('balance_version', 1)
+    fighters, badge_logs, passive_logs = participant_fighters(participants, balance_version)
     provision_logs = []
     stat_caps = {'閃避率': 40, '暴擊率': 100}
 
