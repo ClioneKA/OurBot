@@ -243,9 +243,11 @@ class WitchRoomTests(TotalRaidRoomTests):
             all_fields.extend(f.value for f in embed.fields)
         text = '\n'.join(all_fields)
         self.assertIn('魔女因子 3/3 層', text)
-        self.assertIn('火傷：回合結束扣除最大 HP 的 3%', text)
+        self.assertIn('**火傷**：回合結束扣除最大 HP 的 3%', text)
         self.assertIn('技能', text)
-        self.assertIn('引爆最多魔女因子', effect_status(b.witch('ema'), b)[0])
+        self.assertEqual('**魔女化（0 階）**', effect_status(b.witch('ema'), b)[0])
+        self.assertIn('引爆最多魔女因子', text)
+        self.assertIn('**魔女因子 3/3 層**', text)
 
     async def test_archive_retries_before_deleting_and_does_not_duplicate_on_delete_retry(self):
         room, _, channel = await self.setup_witch_room()

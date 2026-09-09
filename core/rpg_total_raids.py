@@ -89,16 +89,12 @@ def effect_status(fighter, battle):
     if isinstance(battle, WitchRaidBattle):
         if fighter.job in battle.ids:
             phase = battle.phase(fighter)
-            buffs.append(SPELL_DESCRIPTIONS[fighter.job][phase])
-            if fighter.job == 'hiro' and battle.rewound:
-                buffs[-1] = ('單體兩段打擊' if phase == 2 else '單體打擊') + '；本場回溯已使用'
+            buffs.append(f'魔女化（{phase} 階）')
             if fighter.job == 'hanna' and (turn % 2 or fighter.has('float', turn)):
                 buffs.append('浮游：裝甲步兵／騎士非必中攻擊減傷 30%')
             if fighter.job == 'milia' and battle.adaptation and battle.adaptation[0] == turn:
                 kind = {'basic': '普攻', 'skill': '單體技能', 'area': '全體技能'}.get(battle.adaptation[1], '無')
                 buffs.append(f'適應：{kind}傷害減半')
-            if phase:
-                buffs.append(f'傷害與治療 +{phase * 10}%')
         for key, label in (('brainwash', '洗腦（不可淨化）'), ('factor', '魔女因子'), ('burn', '火傷'),
                            ('vision', '預知：避免重複行動'), ('doubt', '懷疑'), ('watch', '監視'),
                            ('exchange', '交換標記'), ('no_look', '無法指定召喚畫')):
@@ -176,7 +172,22 @@ def effect_status(fighter, battle):
         source = battle.mechanics.get('noah_source_stacks', 0)
         if source:
             buffs.append(f'源色({source}層・攻擊+{source * 10}%)')
-    return '、'.join(buffs) or '無', '、'.join(debuffs) or '無'
+    return ('、'.join(f'**{item}**' for item in buffs) or '無',
+            '、'.join(f'**{item}**' for item in debuffs) or '無')
+
+
+def witch_transformation_notes(battle):
+    notes = []
+    for fighter in battle.fighters:
+        if fighter.team != 1 or fighter.job not in battle.ids:
+            continue
+        phase = battle.phase(fighter)
+        ability = SPELL_DESCRIPTIONS[fighter.job][phase]
+        if fighter.job == 'hiro' and battle.rewound:
+            ability = ('單體兩段打擊' if phase == 2 else '單體打擊') + '；本場回溯已使用'
+        bonus = f'傷害與治療 +{phase * 10}%' if phase else '尚無魔女化傷害／治療加成'
+        notes.append(f'**{fighter.name}｜魔女化 {phase} 階**\n{ability}；{bonus}。')
+    return notes
 
 
 def last_round_log(battle):
@@ -1315,7 +1326,12 @@ class TotalRaidService:
             name = '隊伍狀態' if index == 1 else f'隊伍狀態（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
         if isinstance(battle, WitchRaidBattle):
-            for index, chunk in enumerate(field_chunks(active_effect_notes(battle), 900), 1):
+            for index, chunk in enumerate(field_chunks(witch_transformation_notes(battle), 900), 1):
+                embed.add_field(name=f'魔女化效果（{index}）', value=chunk, inline=False)
+            effect_notes = [f'**{name}**：{description}' if separator else f'**{name}**'
+                            for name, separator, description in
+                            (note.partition('：') for note in active_effect_notes(battle))]
+            for index, chunk in enumerate(field_chunks(effect_notes, 900), 1):
                 embed.add_field(name=f'增益／減益效果說明（{index}）', value=chunk, inline=False)
             # Keep every state and explanation accessible within Discord's 6,000 character limit.
             state_pages, current, size = [], [], 0

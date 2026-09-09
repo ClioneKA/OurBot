@@ -8,7 +8,6 @@ from core.rpg_character import CharacterError
 ROUND_OPTIONS = (5, 10, 20, 30)
 COUNT_OPTIONS = (1, 3)
 DEFENSE_OPTIONS = (0, 100, 300, 1000)
-TRAINING_SEED = 1
 
 
 class TrainingBattle(Battle):
@@ -26,7 +25,7 @@ class TrainingBattle(Battle):
         return result
 
 
-def train(participant, *, rounds=10, count=1, defense=0, seed=TRAINING_SEED):
+def train(participant, *, rounds=10, count=1, defense=0):
     if (type(rounds) is not int or rounds not in ROUND_OPTIONS
             or type(count) is not int or count not in COUNT_OPTIONS
             or type(defense) is not int or defense not in DEFENSE_OPTIONS):
@@ -38,7 +37,7 @@ def train(participant, *, rounds=10, count=1, defense=0, seed=TRAINING_SEED):
             {'HP': 1_000_000, '攻擊': 0, '防禦': defense, '治療量': 0,
              '命中率': 100, '閃避率': 0, '暴擊率': 0},
             1, [], is_boss=index == 0))
-    battle = TrainingBattle(fighters, seed=seed, max_rounds=rounds)
+    battle = TrainingBattle(fighters, max_rounds=rounds)
     battle.log.extend(badge_logs + passive_logs)
     damage_by_round = []
     while battle.result is None:

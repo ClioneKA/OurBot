@@ -28,15 +28,14 @@ def participant(job='弓兵', rules=None):
 
 
 class TrainingTests(unittest.TestCase):
-    def test_full_duration_repeatability_and_input_isolation(self):
+    def test_full_duration_fresh_randomness_and_input_isolation(self):
         source = participant(rules=[Rule(1, 1, True, 'always', 'lowest', 5)])
         before = deepcopy(source)
         battle, damage = train(source, rounds=30)
-        repeated, repeated_damage = train(source, rounds=30)
+        repeated, _ = train(source, rounds=30)
         self.assertEqual(source, before)
         self.assertEqual(battle.round, 30)
-        self.assertEqual(damage, repeated_damage)
-        self.assertEqual(battle.log, repeated.log)
+        self.assertNotEqual(battle.rng.getstate(), repeated.rng.getstate())
         actor, dummy = battle.fighters
         self.assertEqual(actor.hp, actor.stats['HP'])
         self.assertEqual(actor.combat_stats['damage_taken'], 0)

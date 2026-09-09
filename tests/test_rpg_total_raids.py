@@ -201,11 +201,11 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         battle.mechanics['last_round_log'] = complete
         embed = self.service.battle_embed(room, battle)
         boss_status = next(field.value for field in embed.fields if field.name == 'Boss HP')
-        self.assertIn('Buff：防禦姿態(減傷35%・1回合)', boss_status)
-        self.assertIn('Debuff：破甲(防禦歸零・1回合)', boss_status)
+        self.assertIn('Buff：**防禦姿態(減傷35%・1回合)**', boss_status)
+        self.assertIn('Debuff：**破甲(防禦歸零・1回合)**', boss_status)
         team = next(field.value for field in embed.fields if field.name == '隊伍狀態')
-        self.assertIn('Buff：護衛', team)
-        self.assertIn('Debuff：中毒', team)
+        self.assertIn('Buff：**護衛', team)
+        self.assertIn('Debuff：**中毒', team)
         log_fields = [field for field in embed.fields if field.name.startswith('上一回合完整摘要')]
         self.assertGreater(len(log_fields), 1)
         self.assertTrue(all(len(field.value) <= 1024 for field in log_fields))

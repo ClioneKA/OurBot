@@ -55,7 +55,7 @@ class TrainingView(AdventureView):
                 value='、'.join(f'{name} ×{count}' for name, count in stats['skills_used'].items()) or '無')
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='固定亂數種子 1，方便重測比較；實戰傷害仍受敵人與隊伍影響。')
+        embed.set_footer(text='每次測試重新隨機判定；實戰傷害仍受敵人與隊伍影響。')
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -83,7 +83,7 @@ class TrainingView(AdventureView):
                     if self.battle is None:
                         raise CharacterError('請先開始測試。')
                     header = (f'訓練假人：{self.count} 隻，防禦 {self.defense}，'
-                              f'{self.rounds} 回合，亂數種子 1\n')
+                              f'{self.rounds} 回合\n')
                     data = (header + '\n'.join(self.battle.log)).encode('utf-8')
                     await interaction.response.send_message(
                         file=discord.File(BytesIO(data), filename='training-battle.txt'), ephemeral=True)
