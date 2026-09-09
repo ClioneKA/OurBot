@@ -227,6 +227,73 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
 
+    async def test_full_offers_are_deleted_and_claimed_effects_remain(self):
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',3)")
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'farming:potato',2)")
+        _, drink = await self.service.buy_round(self.interaction, 'table')
+        _, meal = await self.service.serve_meal(self.interaction,
+            ['fishing:pond:common'] * 3 + ['farming:potato'] * 2)
+        for offer, view, key, existing in (
+            (drink, self.service.offer_view(drink['id']), drink['id'], 0),
+            (meal, self.service.meal_view(meal['id']), f'meal:{meal["id"]}', 1),
+        ):
+            for index in range(offer['capacity'] - existing):
+                user_id = index + 2
+                self.store.create_player(1, user_id)
+                interaction = SimpleNamespace(
+                    guild_id=1, user=SimpleNamespace(id=user_id, bot=False),
+                    response=SimpleNamespace(edit_message=AsyncMock(), defer=AsyncMock(),
+                                             send_message=AsyncMock()),
+                    delete_original_response=AsyncMock(), edit_original_response=AsyncMock())
+                async def before_delete(seconds):
+                    self.assertEqual(seconds, 5)
+                    interaction.edit_original_response.assert_awaited_once()
+                    self.assertIsNone(interaction.edit_original_response.call_args.kwargs['view'])
+                    interaction.delete_original_response.assert_not_awaited()
+                with patch('core.rpg_tavern.asyncio.sleep', side_effect=before_delete) as delay:
+                    await view.claim_button.callback(interaction)
+                interaction.response.send_message.assert_not_awaited()
+                if index + existing + 1 == offer['capacity']:
+                    delay.assert_awaited_once_with(5)
+                    interaction.response.defer.assert_awaited_once()
+                    interaction.delete_original_response.assert_awaited_once()
+                    self.assertTrue(view.is_finished())
+                    self.assertNotIn(key, self.service.views)
+                else:
+                    delay.assert_not_awaited()
+                    interaction.response.edit_message.assert_awaited_once()
+                    interaction.delete_original_response.assert_not_awaited()
+            self.assertIsNotNone(self.service.store.active_effect(1, 2))
+        self.assertIsNotNone(self.provisions.active_effect(1, 2))
+
+    async def test_full_offer_deletion_failure_removes_buttons(self):
+        _, offer = await self.service.buy_round(self.interaction, 'table')
+        for user_id in range(2, offer['capacity'] + 1):
+            self.service.store.claim(offer['id'], 1, user_id)
+        self.store.create_player(1, 99)
+        for error in (discord.NotFound, discord.Forbidden):
+            with self.subTest(error=error):
+                view = self.service.offer_view(offer['id'])
+                interaction = SimpleNamespace(
+                    guild_id=1, user=SimpleNamespace(id=99, bot=False),
+                    response=SimpleNamespace(defer=AsyncMock()),
+                    delete_original_response=AsyncMock(side_effect=error(
+                        SimpleNamespace(status=404 if error is discord.NotFound else 403,
+                                        reason='test'), 'test')),
+                    edit_original_response=AsyncMock())
+                with patch.object(self.service.store, 'claim_count', return_value=offer['capacity']), \
+                        patch.object(self.service.store, 'claim', return_value=offer), \
+                        patch('core.rpg_tavern.asyncio.sleep', new_callable=AsyncMock):
+                    await view.claim_button.callback(interaction)
+                self.assertTrue(view.is_finished())
+                if error is discord.Forbidden:
+                    self.assertIsNone(interaction.edit_original_response.call_args.kwargs['view'])
+                else:
+                    interaction.edit_original_response.assert_awaited_once()
+
     async def test_tavern_panel_shows_active_drink_and_meal(self):
         with self.store.db:
             self.store.db.execute(

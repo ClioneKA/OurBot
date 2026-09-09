@@ -313,8 +313,8 @@ class MonsterTests(unittest.TestCase):
             store = RPGStore(Path(directory) / 'rpg.db')
             try:
                 repo = RaidStore(store)
-                expected = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750,
-                            5: 900, 6: 1050}
+                expected = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 1000,
+                            5: 2500, 6: 4500}
                 self.assertEqual(TIER_VICTORY_XP, expected)
                 kinds = {0: '史萊姆群', 1: '巨獸', 2: '鐵殼魔像',
                          3: '深淵鐘龍', 4: '吞城鯨', 5: '熔爐鎧獸',

@@ -191,6 +191,36 @@ class TavernStore:
         return result
 
 
+async def _refresh_offer(interaction, view, exhausted, key):
+    if not exhausted:
+        try:
+            await interaction.response.edit_message(embed=view.embed(), view=view,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+        except discord.NotFound:
+            pass  # Another guest may have finished the offer and deleted it.
+        return
+    await interaction.response.defer()
+    try:
+        await interaction.edit_original_response(embed=view.embed(), view=None,
+                                                  allowed_mentions=discord.AllowedMentions.none())
+    except discord.HTTPException:
+        pass
+    await asyncio.sleep(5)
+    try:
+        await interaction.delete_original_response()
+    except discord.NotFound:
+        pass
+    except discord.HTTPException:
+        # Keep a failed deletion from leaving an unusable claim button behind.
+        try:
+            await interaction.edit_original_response(embed=view.embed(), view=None,
+                                                      allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+    view.stop()
+    view.tavern.views.pop(key, None)
+
+
 class DrinkOfferView(discord.ui.View):
     def __init__(self, tavern, offer_id):
         super().__init__(timeout=None)
@@ -220,9 +250,9 @@ class DrinkOfferView(discord.ui.View):
         try:
             if not self.tavern.cog.store.has_player(interaction.guild_id, interaction.user.id):
                 raise CharacterError('請先接受邀請函，正式成為冒險者。')
-            self.tavern.store.claim(self.offer_id, interaction.guild_id, interaction.user.id)
-            await interaction.response.edit_message(embed=self.embed(), view=self,
-                                                    allowed_mentions=discord.AllowedMentions.none())
+            offer = self.tavern.store.claim(self.offer_id, interaction.guild_id, interaction.user.id)
+            await _refresh_offer(interaction, self,
+                self.tavern.store.claim_count(self.offer_id) >= offer['capacity'], self.offer_id)
         except CharacterError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
 
@@ -267,9 +297,11 @@ class MealOfferView(discord.ui.View):
         try:
             if not self.tavern.cog.store.has_player(interaction.guild_id, interaction.user.id):
                 raise CharacterError('請先接受邀請函，正式成為冒險者。')
-            self.tavern.cog.provisions.claim(self.meal_id, interaction.guild_id, interaction.user.id)
-            await interaction.response.edit_message(embed=self.embed(), view=self,
-                                                    allowed_mentions=discord.AllowedMentions.none())
+            provisions = self.tavern.cog.provisions
+            provisions.claim(self.meal_id, interaction.guild_id, interaction.user.id)
+            await _refresh_offer(interaction, self,
+                len(provisions.claimants(self.meal_id)) >= provisions.meal(self.meal_id)['capacity'],
+                f'meal:{self.meal_id}')
         except CharacterError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
 

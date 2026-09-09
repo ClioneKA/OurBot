@@ -9,7 +9,7 @@ BALANCE_VERSION = 7
 REFERENCE_LEVELS = {1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60}
 # Base victory XP is tied to encounter tier instead of the channel that hosts
 # it. Quality and channel difficulty are applied after this value is selected.
-TIER_VICTORY_XP = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 750, 5: 900, 6: 1050}
+TIER_VICTORY_XP = {0: 1000, 1: 300, 2: 450, 3: 600, 4: 1000, 5: 2500, 6: 4500}
 # HP, attack, defense. Tiers are internal and never part of display names.
 TIERS = {0: (1, 1, 1), 1: (1, 1, 1), 2: (1.5, 1.2, 1.3), 3: (1.8, 1.15, 1.15),
          4: (2.2, 1.25, 1.2), 5: (1, 1, 1), 6: (1, 1, 1)}
