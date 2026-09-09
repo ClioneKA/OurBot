@@ -26,6 +26,9 @@ class RestTactics:
         with self.db:
             self.db.execute('DELETE FROM rpg_tactics')
             self.db.execute('DELETE FROM rpg_passives')
+            self.db.execute('DELETE FROM rpg_basic_targets')
+            self.db.execute('INSERT INTO rpg_basic_targets VALUES (?,?,?,?)',
+                            (self.guild_id, self.user_id, self.job, player.get('basic_target', 'lowest')))
             for rule in player['rules']:
                 self.db.execute('INSERT INTO rpg_tactics VALUES (?,?,?,?,?,?,?,?,?,?)', (
                     self.guild_id, self.user_id, self.job, rule['slot'], rule['priority'], int(rule['enabled']),
@@ -42,7 +45,8 @@ class RestTactics:
         passive = self.tactics.passive(self.guild_id, self.user_id, self.job)
         self.repo.save_rest_tactics(self.room_id, self.user_id,
             [asdict(rule) for rule in self.tactics.rules(self.guild_id, self.user_id, self.job)],
-            passive.id if passive else None, expected_index=self.index)
+            passive.id if passive else None, expected_index=self.index,
+            basic_target=self.tactics.basic_target(self.guild_id, self.user_id, self.job))
         return result
 
     def equip(self, *args):
@@ -53,6 +57,9 @@ class RestTactics:
 
     def configure(self, *args):
         return self._change('configure', *args)
+
+    def configure_basic_target(self, *args):
+        return self._change('configure_basic_target', *args)
 
 
 class MazeSkillView(SkillView):

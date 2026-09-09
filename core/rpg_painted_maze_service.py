@@ -263,6 +263,7 @@ class PaintedMazeService:
                     'rules': [asdict(rule) for rule in self.cog.tactics.rules(
                         room['guild_id'], user_id, state['job'])],
                     'passive_id': passive.id if passive else None,
+                    'basic_target': self.cog.tactics.basic_target(room['guild_id'], user_id, state['job']),
                 })
             user_ids = [item['id'] for item in participants]
             fortunes = self.cog.divinations.prepare_for_raid(room_id, room['guild_id'], user_ids)

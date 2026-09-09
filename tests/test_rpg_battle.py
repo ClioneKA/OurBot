@@ -13,6 +13,29 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_basic_target_applies_with_taunt_fallback_and_snapshot(self):
+        actor = fighter(rules=[])
+        boss = fighter('boss', 1, rules=[])
+        boss.is_boss = True
+        add = fighter('add', 1, rules=[])
+        add.hp = 30
+        actor.basic_target = 'boss'
+        battle = Battle([actor, boss, add], seed=1)
+        with patch.object(battle, 'basic_attack') as attack:
+            battle.act(actor)
+            self.assertIs(attack.call_args.args[1], boss)
+            add.effects['taunt'] = 99
+            battle.act(actor)
+            self.assertIs(attack.call_args.args[1], add)
+            add.effects.clear()
+            boss.hp = 0
+            battle.act(actor)
+            self.assertIs(attack.call_args.args[1], add)
+        data = json.loads(json.dumps(dump_battle(battle)))
+        self.assertEqual(load_battle(data).fighters[0].basic_target, 'boss')
+        del data['fighters'][0]['basic_target']
+        self.assertEqual(load_battle(data).fighters[0].basic_target, 'lowest')
+
     def test_twin_turn_schedule_revival_delay_and_restart(self):
         knight = fighter('騎士', job='騎士', hp=10000, dex=100, attack=100, rules=[])
         ally = fighter('隊友', hp=10000, dex=50, attack=100, rules=[])

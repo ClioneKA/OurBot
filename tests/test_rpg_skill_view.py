@@ -14,6 +14,22 @@ from core.settings import RPGSettings
 
 
 class SkillViewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_basic_target_saved_separately_and_validated(self):
+        rules = self.tactics.rules(1, 1, '民兵')
+        await self.view.handle(self.interaction, 'slot', 'basic')
+        self.assertEqual({o.value for o in self.view.children[1].options},
+                         {'lowest', 'highest_hp', 'strongest', 'boss', 'add', 'mechanic'})
+        await self.view.handle(self.interaction, 'basic_target', 'boss')
+        self.assertEqual(Tactics(self.store).basic_target(1, 1, '民兵'), 'boss')
+        self.assertEqual(self.tactics.basic_target(1, 2, '民兵'), 'lowest')
+        self.assertEqual(self.tactics.basic_target(1, 1, '騎士'), 'lowest')
+        await self.view.handle(self.interaction, 'basic_target', 'self')
+        self.assertEqual(self.tactics.basic_target(1, 1, '民兵'), 'boss')
+        self.assertEqual(self.tactics.rules(1, 1, '民兵'), rules)
+        await self.view.handle(self.interaction, 'slot', '1')
+        self.assertFalse(self.view.setting_basic)
+        self.assertEqual(len(self.view.to_components()), 5)
+
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -109,7 +125,7 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'equip', '4')
         self.assertEqual(rule_skill('僧侶', self.view.current()).name, '群體治療')
         self.assertFalse(self.view.choosing_skill)
-        self.assertEqual(len(self.view.children[0].options), 3)
+        self.assertEqual(len(self.view.children[0].options), 4)
         self.assertEqual(len(self.view.children[1].options), 3)
         self.assertTrue(self.view.children[3].disabled)
         self.assertIn('全隊', self.view.children[3].options[0].label)

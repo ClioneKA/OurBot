@@ -467,6 +467,7 @@ class RaidService:
                     passive = self.cog.tactics.passive(raid['guild_id'], uid, state['job'])
                     participants.append(dict(id=uid, name=safe_text(member.display_name, 16), state=state,
                                              rules=[asdict(r) for r in self.cog.tactics.rules(raid['guild_id'], uid, state['job'])],
+                                             basic_target=self.cog.tactics.basic_target(raid['guild_id'], uid, state['job']),
                                              passive_id=passive.id if passive else None))
                 divinations = getattr(self.cog, 'divinations', None)
                 fortunes = (divinations.prepare_for_raid(

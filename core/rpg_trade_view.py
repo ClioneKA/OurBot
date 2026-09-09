@@ -2,9 +2,13 @@
 import asyncio
 import discord
 
-from core.rpg_character import CharacterError, item_sell_price, item_sellable, item_text
-from core.rpg_menu import add_back, navigate
+from core.rpg_character import CharacterError, ITEMS, item_sell_price, item_sellable, item_text
+from core.rpg_menu import BACKPACK_CATEGORIES, add_back, navigate
 from core.rpg_equipment_view import PanelSelect
+
+
+TRADE_CATEGORIES = tuple(dict.fromkeys((*BACKPACK_CATEGORIES,
+                                      *(item.category for item in ITEMS.values()))))
 
 
 class QuantityModal(discord.ui.Modal):
@@ -31,7 +35,7 @@ class QuantityModal(discord.ui.Modal):
 
 class RecipientSelect(discord.ui.UserSelect):
     def __init__(self):
-        super().__init__(placeholder='選擇同伺服器的收件人', min_values=1, max_values=1, row=1)
+        super().__init__(placeholder='選擇同伺服器的收件人', min_values=1, max_values=1, row=2)
 
     async def callback(self, interaction):
         await self.view.handle(interaction, 'recipient', self.values[0].id)
@@ -43,6 +47,7 @@ class TradeView(discord.ui.View):
         self.cog, self.origin, self.mode = cog, interaction, mode
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.selected, self.recipient, self.page = None, None, 0
+        self.category = '全部'
         self.closed, self.revision = False, 0
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -52,14 +57,18 @@ class TradeView(discord.ui.View):
         self.entries = {entry.reference: entry for entry in chars.inventory_entries(self.guild_id, self.owner.id)}
         self.catalog = [reference for reference, entry in self.entries.items()
                         if (item_sellable(entry.item) if self.mode == 'sell' else entry.item.transferable)
+                        and (self.category == '全部' or entry.item.category == self.category)
                         and chars.available_quantity(self.guild_id, self.owner.id, reference) > 0]
         self.pages = max(1, (len(self.catalog) + 9) // 10)
         self.page = min(self.page, self.pages - 1)
         if self.selected not in self.catalog:
             self.selected = None
         self.clear_items()
+        self.add_item(PanelSelect('category', row=0, placeholder='選擇物品分類', options=[
+            discord.SelectOption(label=category, value=category, default=category == self.category)
+            for category in TRADE_CATEGORIES]))
         keys = self.catalog[self.page * 10:(self.page + 1) * 10]
-        self.add_item(PanelSelect('item', row=0, placeholder=f'選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
+        self.add_item(PanelSelect('item', row=1, placeholder=f'{self.category}｜選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
             options=[discord.SelectOption(
                 label=(f'{self.entries[key].item.name} #{self.entries[key].instance_id}'
                        if self.entries[key].instance_id else self.entries[key].item.name),
@@ -68,20 +77,20 @@ class TradeView(discord.ui.View):
                               f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件')
                              + (f'｜收購 {item_sell_price(self.entries[key].item)} 金幣／件'
                                 if self.mode == 'sell' else '')))
-                for key in keys] or [discord.SelectOption(label='沒有可用物品', value='empty')]))
+                for key in keys] or [discord.SelectOption(label='此分類沒有可用物品', value='empty')]))
         if self.mode == 'give':
             self.add_item(RecipientSelect())
         for label, action, disabled in (
             ('上一頁', 'previous', self.page == 0), ('下一頁', 'next', self.page == self.pages-1),
             ('填寫數量並確認', 'confirm', not self.selected or self.mode == 'give' and not self.recipient),
             ('重新整理', 'refresh', False), ('關閉', 'close', False)):
-            button = discord.ui.Button(label=label, row=2, disabled=disabled)
+            button = discord.ui.Button(label=label, row=3, disabled=disabled)
             async def callback(interaction, action=action):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
-        add_back(self, 3)
-        button = discord.ui.Button(label='返回背包' if self.mode == 'give' else '返回商店', row=3)
+        add_back(self, 4)
+        button = discord.ui.Button(label='返回背包' if self.mode == 'give' else '返回商店', row=4)
         async def back(interaction):
             await self.handle(interaction, 'back')
         button.callback = back
@@ -89,8 +98,9 @@ class TradeView(discord.ui.View):
 
     def embed(self, notice=None):
         embed = discord.Embed(title='安安大冒險｜' + ('給予物品' if self.mode == 'give' else '商店收購'),
-            description='選擇物品後填寫數量，送出即確認。僅能操作未穿戴的份數。\n'
+            description='先選擇分類與物品，再填寫數量，送出即確認。僅能操作未穿戴的份數。\n'
                         '木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。', color=0xD8AF40)
+        embed.add_field(name='物品分類', value=f'{self.category}｜{len(self.catalog)} 筆｜第 {self.page + 1}/{self.pages} 頁', inline=False)
         if self.selected:
             item = self.entries[self.selected].item
             value = item_text(item)
@@ -132,7 +142,9 @@ class TradeView(discord.ui.View):
                 await interaction.response.send_modal(QuantityModal(self))
                 return
             self.revision += 1
-            if action == 'item' and value in self.catalog:
+            if action == 'category' and value in TRADE_CATEGORIES:
+                self.category, self.page, self.selected = value, 0, None
+            elif action == 'item' and value in self.catalog:
                 self.selected = value
             elif action == 'item':
                 # Compatibility for component payloads created before instance ids.

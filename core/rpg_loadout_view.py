@@ -87,6 +87,7 @@ class LoadoutView(discord.ui.View):
             passive_line = f'{passive.name}：{passive_description(passive)}' if passive else '未裝備'
             description = (f'職業：**{data["job"]}**\n\n**裝備**\n' + ('\n'.join(equipment) or '未裝備') +
                            '\n\n**技能策略**\n' + ('\n'.join(rules) or '資料不完整') +
+                           f'\n普通攻擊目標：{TARGETS.get(data.get("basic_target", "lowest"), "無效目標")}' +
                            f'\n\n**職業被動**\n{passive_line}')
         embed = discord.Embed(title=f'出戰配置｜{profile["name"]}', description=description, color=0x8B5CF6)
         if notice:

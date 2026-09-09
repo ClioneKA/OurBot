@@ -642,6 +642,8 @@ class RPG(commands.Cog):
                             value=f'{skill_description(skill)}\n冷卻 {skill.cooldown} 回合｜{condition_text(rule.condition, rule.condition_value)}'
                                   f'｜目標：{FIXED_TARGETS.get(skill.effect, TARGETS[rule.target])}', inline=False)
         passive = self.tactics.passive(guild, user, state['job'])
+        embed.add_field(name='普通攻擊',
+                        value=f'目標：{TARGETS[self.tactics.basic_target(guild, user, state["job"])]}', inline=False)
         if passive:
             embed.add_field(name=f'職業被動｜{passive.name}', value=passive.description, inline=False)
         elif self.tactics.available_passives(guild, user, state['job']):

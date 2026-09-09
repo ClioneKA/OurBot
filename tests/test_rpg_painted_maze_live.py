@@ -89,7 +89,8 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         self.cog.spaces = SimpleNamespace(store=SimpleNamespace(
             get=lambda gid: SimpleNamespace(maze_channel_id=100)))
         self.cog.characters = SimpleNamespace(snapshot=lambda gid, uid: participant(uid)['state'])
-        self.cog.tactics = SimpleNamespace(passive=lambda *args: None, rules=lambda *args: [])
+        self.cog.tactics = SimpleNamespace(passive=lambda *args: None, rules=lambda *args: [],
+                                          basic_target=lambda *args: 'boss')
         effects = SimpleNamespace(prepare_for_raid=lambda *args, **kwargs: {})
         self.cog.divinations = self.cog.provisions = effects
         self.cog.tavern = SimpleNamespace(store=effects)
@@ -253,6 +254,10 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         adapter.equip(1, 1, before['job'], 1, 4)
         adapter.configure(1, 1, before['job'], 1, 2, True, 'always', 'lowest')
         adapter.equip_passive(1, 1, before['job'], 2)
+        adapter.configure_basic_target(1, 1, before['job'], 'mechanic')
+        adapter.synchronize()
+        self.assertEqual(adapter.basic_target(1, 1, before['job']), 'mechanic')
+        self.assertEqual(global_tactics.basic_target(1, 1, before['job']), 'lowest')
         room = self.repo.get(self.room['id'])
         player = room['participants'][0]
         self.assertEqual(player['state'], before)
@@ -266,6 +271,7 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         started = await self.service.advance(room['id'], SimpleNamespace(id=1))
         fighter = next(f for f in load_battle(started['battle']).fighters if f.user_id == 1)
         self.assertEqual(next(r for r in fighter.rules if r.slot == 1).skill_id, 4)
+        self.assertEqual(fighter.basic_target, 'mechanic')
         with self.assertRaisesRegex(PaintedMazeError, '休息點'):
             adapter.configure(1, 1, before['job'], 1, 1, True, 'always', 'lowest')
 

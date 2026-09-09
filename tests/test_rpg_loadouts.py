@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -10,6 +11,25 @@ from core.settings import RPGSettings
 
 
 class LoadoutStorageTests(unittest.TestCase):
+    def test_legacy_basic_target_default_and_invalid_target_are_atomic(self):
+        self.characters.change_job(1, 1, '騎士')
+        profile = self.loadouts.save(1, 1, 1)
+        data = profile['data']
+        data.pop('basic_target')
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_loadouts SET data=?', (json.dumps(data),))
+        self.tactics.configure_basic_target(1, 1, '騎士', 'boss')
+        self.loadouts.apply(1, 1, 1)
+        self.assertEqual(self.tactics.basic_target(1, 1, '騎士'), 'lowest')
+        data['basic_target'] = 'self'
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_loadouts SET data=?', (json.dumps(data),))
+        self.characters.change_job(1, 1, '弓兵')
+        with self.assertRaises(CharacterError):
+            self.loadouts.apply(1, 1, 1)
+        self.assertEqual(self.characters.job(1, 1), '弓兵')
+        self.assertEqual(self.tactics.basic_target(1, 1, '騎士'), 'lowest')
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -31,12 +51,16 @@ class LoadoutStorageTests(unittest.TestCase):
         self.tactics.configure(1, 1, '裝甲步兵', 1, 3, False,
                                'enemy_hp_lte', 'mechanic', 45)
         self.tactics.equip_passive(1, 1, '裝甲步兵', 2)
+        self.tactics.configure_basic_target(1, 1, '裝甲步兵', 'mechanic')
         saved = self.loadouts.save(1, 1, 1)
+        self.assertEqual(saved['data']['basic_target'], 'mechanic')
+        self.tactics.configure_basic_target(1, 1, '裝甲步兵', 'lowest')
         self.loadouts.rename(1, 1, 1, '鐘龍破甲')
 
         self.characters.change_job(1, 1, '騎士')
         self.tactics.equip_passive(1, 1, '騎士', 1)
         result = self.loadouts.apply(1, 1, 1)
+        self.assertEqual(self.tactics.basic_target(1, 1, '裝甲步兵'), 'mechanic')
 
         self.assertEqual(result['job'], '裝甲步兵')
         self.assertEqual(result['equipped_instances']['武器'], weapon_id)

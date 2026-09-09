@@ -13,6 +13,31 @@ from core.settings import RPGSettings
 
 
 class TradeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_categories_filter_reset_page_and_keep_recipient(self):
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 2)
+        self.characters.grant_item(1, 1, 'raid:0', 12)
+        for mode in ('give', 'sell'):
+            with self.subTest(mode=mode):
+                view = TradeView(self.cog, self.interaction, mode)
+                self.addCleanup(view.stop)
+                await view.handle(self.interaction, 'recipient', 2)
+                await view.handle(self.interaction, 'next')
+                self.assertEqual(view.page, 1)
+                await view.handle(self.interaction, 'item', view.catalog[10])
+                modal = QuantityModal(view)
+                self.addCleanup(modal.stop)
+                await view.handle(self.interaction, 'category', '料理素材')
+                self.assertEqual(view.catalog, ['fishing:pond:common'])
+                self.assertEqual((view.page, view.pages, view.selected, view.recipient), (0, 1, None, 2))
+                await view.execute(self.interaction, modal.key, modal.recipient, 1, modal.revision)
+                self.assertIn('設定已變更', self.interaction.response.send_message.call_args.args[0])
+                await view.handle(self.interaction, 'category', '製作材料')
+                self.assertEqual(view.catalog, [])
+                self.assertTrue(view.children[1].disabled)
+                self.assertLessEqual(len(view.to_components()), 5)
+                await view.handle(self.interaction, 'category', '全部')
+                self.assertGreater(len(view.catalog), 10)
+
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

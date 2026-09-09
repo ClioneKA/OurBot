@@ -571,6 +571,7 @@ class TotalRaidService:
                     rules=[asdict(rule) for rule in self.cog.tactics.rules(
                         room['guild_id'], user_id, state['job'])],
                     passive_id=passive.id if passive else None,
+                    basic_target=self.cog.tactics.basic_target(room['guild_id'], user_id, state['job']),
                 ))
             if not participants:
                 raise TotalRaidError('隊伍中沒有可參戰的玩家。')

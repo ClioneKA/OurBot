@@ -3,7 +3,7 @@ from dataclasses import asdict
 import json
 
 from core.rpg import level_for
-from core.rpg_battle import (ALLY_EFFECTS, CONDITIONS, OFFENSIVE_TARGETS, PASSIVES, SKILLS,
+from core.rpg_battle import (ALLY_EFFECTS, BASIC_TARGETS, CONDITIONS, OFFENSIVE_TARGETS, PASSIVES, SKILLS,
                              TARGETS, condition_value, unlocked_skills)
 from core.rpg_character import CharacterError, JOBS, item_level, stage_for
 
@@ -63,6 +63,7 @@ class Loadouts:
             passive = self.tactics.passive(guild, user, state['job'])
             data = dict(job=state['job'], equipment=state['equipped_instances'],
                         rules=[asdict(rule) for rule in rules],
+                        basic_target=self.tactics.basic_target(guild, user, state['job']),
                         passive_id=passive.id if passive else None)
             existing = self.db.execute('''SELECT name FROM rpg_loadouts
                 WHERE guild_id=? AND user_id=? AND slot=?''', (guild, user, slot)).fetchone()
@@ -162,13 +163,16 @@ class Loadouts:
             valid_passives = {passive.id for passive in PASSIVES.get(job, ())} if level >= 50 else set()
             if type(passive_id) is not int or passive_id not in valid_passives:
                 raise CharacterError('配置中的職業被動尚未解鎖或無效。')
-        return job, validated_equipment, rules, passive_id
+        basic_target = data.get('basic_target', 'lowest')
+        if basic_target not in BASIC_TARGETS:
+            raise CharacterError('配置中的普通攻擊目標無效。')
+        return job, validated_equipment, rules, passive_id, basic_target
 
     def apply(self, guild, user, slot):
         profile = self.get(guild, user, self._slot(slot))
         if profile['data'] is None:
             raise CharacterError('這個配置格尚未保存內容。')
-        job, equipment, rules, passive_id = self._validated(guild, user, profile['data'])
+        job, equipment, rules, passive_id, basic_target = self._validated(guild, user, profile['data'])
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self.db.execute('''INSERT INTO rpg_characters(guild_id,user_id,job) VALUES (?,?,?)
@@ -187,6 +191,8 @@ class Loadouts:
                  for rule_slot, priority, enabled, condition, target, skill_id, threshold in rules])
             self.db.execute('DELETE FROM rpg_passives WHERE guild_id=? AND user_id=? AND job=?',
                             (guild, user, job))
+            self.db.execute('INSERT OR REPLACE INTO rpg_basic_targets VALUES (?,?,?,?)',
+                            (guild, user, job, basic_target))
             if passive_id is not None:
                 self.db.execute('INSERT INTO rpg_passives VALUES (?,?,?,?)',
                                 (guild, user, job, passive_id))

@@ -6,7 +6,7 @@ from core.rpg_menu import add_back, navigate
 import discord
 
 from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
-                             OFFENSIVE_TARGETS, condition_text, passive_description, rule_skill,
+                             BASIC_TARGETS, OFFENSIVE_TARGETS, condition_text, passive_description, rule_skill,
                              skill_description)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
@@ -42,6 +42,7 @@ class SkillView(discord.ui.View):
         self.slot = 1
         self.choosing_skill = False
         self.setting_passive = False
+        self.setting_basic = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -54,8 +55,10 @@ class SkillView(discord.ui.View):
         rules = self.cog.tactics.rules(self.guild_id, self.owner.id, self.job)
         navigation = [
             discord.SelectOption(label=f'槽 {i}：{s.name}', value=str(i),
-                                 default=not self.setting_passive and i == self.slot)
+                                 default=not self.setting_passive and not self.setting_basic and i == self.slot)
             for i, s in sorted((r.slot, rule_skill(self.job, r)) for r in rules)]
+        navigation.append(discord.SelectOption(label='普通攻擊：目標設定', value='basic',
+                                               default=self.setting_basic))
         passives = self.cog.tactics.available_passives(self.guild_id, self.owner.id, self.job)
         if passives:
             selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
@@ -63,6 +66,15 @@ class SkillView(discord.ui.View):
                 label=f'被動：{selected.name if selected else "尚未選擇"}', value='passive',
                 default=self.setting_passive))
         self.add_item(PanelSelect('slot', row=0, placeholder='選擇要設定的技能', options=navigation))
+        if self.setting_basic:
+            target = self.cog.tactics.basic_target(self.guild_id, self.owner.id, self.job)
+            self.add_item(PanelSelect('basic_target', row=1, placeholder='選擇普通攻擊目標', options=[
+                discord.SelectOption(label=label, value=key, default=key == target)
+                for key, label in BASIC_TARGETS.items()]))
+            for button in (self.refresh, self.close_panel):
+                self.add_item(button)
+            add_back(self, 4)
+            return
         if self.setting_passive:
             selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
             self.add_item(PanelSelect('passive', row=1, placeholder='選擇 Lv.50 職業被動', options=[
@@ -113,6 +125,14 @@ class SkillView(discord.ui.View):
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
+        if self.setting_basic:
+            target = self.cog.tactics.basic_target(self.guild_id, self.owner.id, self.job)
+            embed.add_field(name='正在設定普通攻擊', value=f'目標：{BASIC_TARGETS[target]}\n'
+                '沒有可施放的技能時使用普攻；優先目標不存在時，改選其他合法敵人，仍受挑釁影響。', inline=False)
+            if notice:
+                embed.add_field(name='操作結果', value=notice, inline=False)
+            embed.set_footer(text='選擇後立即保存；開戰時套用。閒置 3 分鐘後關閉。')
+            return embed
         if self.setting_passive:
             selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
             embed.add_field(name='正在設定被動技能',
@@ -162,6 +182,7 @@ class SkillView(discord.ui.View):
                 self.job, self.slot = job, 1
                 self.choosing_skill = False
                 self.setting_passive = False
+                self.setting_basic = False
                 notice = '職業已變更，已重新載入技能；請再次選擇設定。'
             else:
                 try:
@@ -174,15 +195,24 @@ class SkillView(discord.ui.View):
                         self.choosing_skill = False
                         notice = '已更換技能，開戰時套用。'
                     elif action == 'slot':
-                        if value == 'passive' and self.cog.tactics.available_passives(
+                        if value == 'basic':
+                            self.setting_basic = True
+                            self.setting_passive = False
+                            self.choosing_skill = False
+                        elif value == 'passive' and self.cog.tactics.available_passives(
                                 self.guild_id, self.owner.id, self.job):
                             self.setting_passive = True
+                            self.setting_basic = False
                             self.choosing_skill = False
                         elif value not in ('1', '2', '3'):
                             raise CharacterError('無效的技能槽。')
                         else:
                             self.slot = int(value)
                             self.setting_passive = False
+                            self.setting_basic = False
+                    elif action == 'basic_target':
+                        self.cog.tactics.configure_basic_target(self.guild_id, self.owner.id, self.job, value)
+                        notice = '已保存普通攻擊目標，開戰時套用。'
                     elif action == 'passive':
                         if value not in ('1', '2', '3'):
                             raise CharacterError('無效的被動技能。')

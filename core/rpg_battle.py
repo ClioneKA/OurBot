@@ -37,6 +37,7 @@ TARGETS = {'lowest': '血量比例最低', 'strongest': '攻擊最高', 'self': 
            'highest_hp': '血量比例最高', 'boss': '首領本體優先',
            'add': '非首領敵人優先', 'mechanic': '機制目標優先'}
 OFFENSIVE_TARGETS = {'boss', 'add', 'mechanic'}
+BASIC_TARGETS = {key: label for key, label in TARGETS.items() if key not in ('self', 'debuffed')}
 
 
 def empty_combat_stats():
@@ -223,6 +224,22 @@ class Tactics:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_passives (
                 guild_id INTEGER, user_id INTEGER, job TEXT, passive_id INTEGER,
                 PRIMARY KEY (guild_id, user_id, job))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_basic_targets (
+                guild_id INTEGER, user_id INTEGER, job TEXT, target TEXT,
+                PRIMARY KEY (guild_id, user_id, job))''')
+
+    def basic_target(self, guild, user, job):
+        row = self.db.execute(
+            'SELECT target FROM rpg_basic_targets WHERE guild_id=? AND user_id=? AND job=?',
+            (guild, user, job)).fetchone()
+        return row[0] if row and row[0] in BASIC_TARGETS else 'lowest'
+
+    def configure_basic_target(self, guild, user, job, target):
+        if job not in SKILLS or target not in BASIC_TARGETS:
+            raise CharacterError('無效的普通攻擊目標。')
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO rpg_basic_targets VALUES (?,?,?,?)',
+                            (guild, user, job, target))
 
     def available(self, guild, user, job):
         return unlocked_skills(job, level_for(self.store.xp(guild, user)))
@@ -367,6 +384,7 @@ class Fighter:
     passive_state: dict = field(default_factory=dict)
     is_boss: bool = False
     mechanic_priority: int = 0
+    basic_target: str = 'lowest'
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -2170,7 +2188,8 @@ class Battle:
             return
         selected = self.select(actor)
         if not selected:
-            target = self.target(actor, self.living(1 - actor.team), Rule(0, 0, True, 'always', 'lowest'), True)
+            target = self.target(actor, self.living(1 - actor.team),
+                                 Rule(0, 0, True, 'always', actor.basic_target), True)
             self.record_skill(actor, '普通攻擊')
             self.log.append(f'{actor.name} 使用普通攻擊')
             hit = self.basic_attack(actor, target)
@@ -2465,6 +2484,7 @@ def raid_battle(participants, monster, seed):
     fighters = [Fighter(p['name'], 0, p['state']['job'], dict(p['state']['combat']),
                         participant_speed(p),
                         [Rule(**r) for r in p['rules']],
+                        basic_target=p.get('basic_target', 'lowest'),
                         stability=tuple(p['state'].get('stability', (100, 100))),
                         lifesteal=p['state'].get('lifesteal', 0),
                         healing_received_percent=p['state'].get('healing_received_percent', 0),
@@ -2803,6 +2823,7 @@ def load_battle(data):
                     data_f.get('speed', data_f.get('dexterity', 10)),
                     [Rule(**r) for r in data_f['rules']])
         f.hp = data_f['hp']
+        f.basic_target = data_f.get('basic_target', 'lowest')
         f.ready = {int(k): v for k, v in data_f['ready'].items()}
         f.effects = data_f['effects']
         f.effect_sources = data_f.get('effect_sources', {})

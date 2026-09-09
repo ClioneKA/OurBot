@@ -547,12 +547,17 @@ class PaintedMazeStore:
             raise PaintedMazeError('只有隊員可以使用休息點。')
         return room, participant
 
-    def save_rest_tactics(self, room_id, user_id, rules, passive_id, *, expected_index):
+    def save_rest_tactics(self, room_id, user_id, rules, passive_id, *, expected_index, basic_target=None):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             room, participant = self.rest_participant(room_id, user_id, expected_index=expected_index)
             participant['rules'] = rules
             participant['passive_id'] = passive_id
+            if basic_target is not None:
+                from core.rpg_battle import BASIC_TARGETS
+                if basic_target not in BASIC_TARGETS:
+                    raise PaintedMazeError('無效的普通攻擊目標。')
+                participant['basic_target'] = basic_target
             room['rest_ready'] = [uid for uid in room.get('rest_ready', []) if uid != user_id]
             self._save(room)
             return room
