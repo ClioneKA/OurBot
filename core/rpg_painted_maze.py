@@ -250,6 +250,14 @@ class PaintedMazeStore:
             self._save(room)
             return room
 
+    def mark_report_sent(self, room_id, message_id):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            room['report_message_id'] = message_id
+            self._save(room)
+            return room
+
     def change_member(self, room_id, user_id, level, *, leave=False, now=None):
         now = time.time() if now is None else now
         with self.db:
@@ -351,6 +359,8 @@ class PaintedMazeStore:
                 'completed_at': now,
             }
             room['battle_history'].append(summary)
+            room.setdefault('battle_reports', []).append({
+                'title': room['paintings'][painting_index]['name'], 'battle': battle})
             room['last_battle'] = battle
             room.pop('battle', None)
             room.pop('battle_deadline', None)
@@ -403,6 +413,7 @@ class PaintedMazeStore:
                 'rounds': battle.get('round', 0), 'completed_at': now,
             }
             room['final_entered'] = True
+            room.setdefault('battle_reports', []).append({'title': '最終畫室', 'battle': battle})
             room['last_battle'] = battle
             room.pop('battle', None)
             room.pop('battle_deadline', None)

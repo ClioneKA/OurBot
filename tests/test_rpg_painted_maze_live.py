@@ -108,7 +108,10 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_does_not_simulate_and_restart_advances_one_round(self):
         self.ready_all()
+        started_at = time.time()
         room = await self.service.advance(self.room['id'], SimpleNamespace(id=1))
+        self.assertGreaterEqual(room['battle_deadline'], started_at + 2)
+        self.assertLess(room['battle_deadline'], started_at + 3)
         self.assertEqual(room['battle']['round'], 0)
         self.assertEqual(room['battle_history'], [])
         with self.assertRaises(PaintedMazeError):
@@ -213,6 +216,25 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         embed = self.service.room_embed(room)
         self.assertLessEqual(len(embed), 6000)
         self.assertTrue(all(len(field.value) <= 1024 for field in embed.fields))
+
+    async def test_reports_are_deferred_until_exit_and_sent_once(self):
+        room = self.repo.get(self.room['id'])
+        thread = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=102)))
+        self.service._thread = AsyncMock(return_value=thread)
+        await PaintedMazeService._post_battle_report(self.service, room)
+        thread.send.assert_not_awaited()
+        room = self.repo.settle_painting(room['id'], 1, 0, '勝利',
+            dict(log=['第一幕記錄'], round=5, result='勝利'), {})
+        await PaintedMazeService._post_battle_report(self.service, room)
+        thread.send.assert_not_awaited()
+        room = self.repo.close(room['id'], 1, administrator=True)
+        await PaintedMazeService._post_battle_report(self.service, room)
+        await PaintedMazeService._post_battle_report(self.service, self.repo.get(room['id']))
+        thread.send.assert_awaited_once()
+        report = thread.send.call_args.kwargs['file']
+        self.addCleanup(report.close)
+        self.assertIn('第一幕記錄', report.fp.read().decode('utf-8'))
+        self.assertEqual(self.repo.get(room['id'])['report_message_id'], 102)
 
     async def test_final_rest_displays_third_contract_backlash(self):
         final_room = self.reach_final_vote()

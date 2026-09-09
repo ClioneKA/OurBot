@@ -134,6 +134,32 @@ def offered_contract(seed, checkpoint, chosen):
     return min(candidates, key=lambda key: (colors[COLOR_CONTRACTS[key]['color']], BALANCED_PRIORITY.index(key)))
 
 
+def independent_benchmark(seeds=200, *, counts=(8,), level=60, accessories=True, seed_start=0):
+    """Every encounter starts at full HP, regardless of earlier victories."""
+    rows = []
+    for count in counts:
+        participants = build_participants(level, count, accessories=accessories)
+        results = {key: Counter() for key in ('stage1', 'stage2', 'stage3', 'shadow', 'noah')}
+        for seed in range(seed_start, seed_start + seeds):
+            paintings, contracts = draw_painting_route(seed), []
+            for index, painting in enumerate(paintings):
+                result = simulate_painting(deepcopy(participants), painting,
+                    seed + 7919 * (index + 1), index + 1, contracts)
+                results[f'stage{index + 1}'][result['result']] += 1
+                contracts.append(offered_contract(seed, index + 1, contracts))
+            for route in ('shadow', 'noah'):
+                result = simulate_final_battle(dict(status='running', boss_index=3, seed=seed,
+                    paintings=paintings, participants=deepcopy(participants), route=route,
+                    contracts=contracts))
+                results[route][result['result']] += 1
+        rows.append(dict(level=level, players=count, seeds=seeds, seed_start=seed_start,
+            accessories=accessories, gear='raid', contract_policy='new_color_then_balanced',
+            rate_denominator='independent_full_hp_encounters',
+            win_rates={key: value['勝利'] / seeds for key, value in results.items()},
+            results={key: dict(value) for key, value in results.items()}))
+    return rows
+
+
 def benchmark(seeds=200, *, counts=(4, 8), level=60, accessories=True, seed_start=0):
     """Actual offered contracts, persistent HP and unconditional complete-run rates."""
     rows = []
@@ -225,14 +251,16 @@ def main():
     parser.add_argument('--gear', choices=('raid', 'maze'), default='raid',
                         help='Use current T60 raid gear (default) or cleared Painted Maze gear.')
     parser.add_argument('--benchmark', action='store_true', help='Benchmark Lv.60, 4/8 players with actual contract offers.')
+    parser.add_argument('--independent', action='store_true', help='Benchmark eight players at full HP for each encounter.')
     parser.add_argument('--accessories', action='store_true', help='Fill four Lv.60 accessory slots with legal embroidery (benchmark).')
     parser.add_argument('--seed-start', type=int, default=0, help='First deterministic benchmark seed.')
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error('--seeds must be positive')
-    if args.benchmark:
+    if args.benchmark or args.independent:
         import json
-        for row in benchmark(args.seeds, accessories=args.accessories, seed_start=args.seed_start):
+        run = independent_benchmark if args.independent else benchmark
+        for row in run(args.seeds, accessories=args.accessories, seed_start=args.seed_start):
             print(json.dumps(row, ensure_ascii=False), flush=True)
         return
     kwargs = {}

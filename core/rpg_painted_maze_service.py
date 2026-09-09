@@ -1,5 +1,6 @@
 """Discord-facing private-thread service for the Painted Maze roguelite."""
 import asyncio
+import io
 from dataclasses import asdict
 import logging
 import time
@@ -305,7 +306,7 @@ class PaintedMazeService:
                 index = room['boss_index']
                 battle = build_painting_battle(room['participants'], room['paintings'][index],
                     painting_battle_seed(room['seed'], index), room.get('contracts', ()), room.get('party_state'))
-                data, delay = dump_battle(battle), 5
+                data, delay = dump_battle(battle), 2
             room = self.repo.start_battle(room_id, member.id, data, deadline=time.time() + delay)
             await self._refresh(room)
             return room
@@ -325,7 +326,7 @@ class PaintedMazeService:
             battle.step()
         snapshot = dump_battle(battle)
         room = self.repo.save_battle(room['id'], snapshot, expected_round=old_round,
-                                    deadline=time.time() + 5)
+                                    deadline=time.time() + 2)
         if battle.result:
             party = carry_party_state(battle, room['boss_index'] + 1, room.get('contracts', ()),
                 stage_end=not final and (room['boss_index'] + 1) % paintings_per_stage(room) == 0)
@@ -335,7 +336,6 @@ class PaintedMazeService:
                 room = self.repo.settle_painting(room['id'], room['host_id'], room['boss_index'],
                                                 battle.result, snapshot, party)
             room = self.recover_rewards(room['id'])
-            await self._post_battle_report(room)
         await self._refresh(room)
         if room['status'] in ('completed', 'failed'):
             self.cog.divinations.clear_raid(room['id'])
@@ -354,73 +354,33 @@ class PaintedMazeService:
         return MazeProgressView(self, room['id'], final=room['boss_index'] == len(room['paintings']))
 
     async def _post_battle_report(self, room):
-        thread = await self._thread(room)
-        battle = room.get('last_battle') or {}
-        if not thread or not battle:
+        if room['status'] in ('lobby', 'running', 'contract') or room.get('report_message_id'):
             return
-        if room.get('final_battle') and room['final_battle'].get('completed_at'):
-            title = '最終畫室戰報'
-        else:
-            history = room.get('battle_history', ())
-            title = f'第 {len(history)} 幅畫作戰報'
-        fighters = battle.get('fighters', ())
-        roster = []
-        for fighter in (item for item in fighters if item.get('team') == 0):
-            maximum = fighter.get('stats', {}).get('HP', 0)
-            status = '💀 倒下' if fighter.get('hp', 0) <= 0 else '存活'
-            mention = f'<@{fighter.get("user_id")}>' if fighter.get('user_id') else fighter.get('name')
-            roster.append(f'{mention}：{fighter.get("hp", 0):,}/{maximum:,} HP｜{status}')
-        logs = list(battle.get('log', ())) or ['無戰鬥記錄']
-        checkpoint = None
-        if room.get('final_battle') and room['final_battle'].get('result') == '勝利':
-            checkpoint = 4
-        elif (room.get('battle_history') and room['battle_history'][-1].get('result') == '勝利'
-              and (room['battle_history'][-1]['painting_index'] + 1) % paintings_per_stage(room) == 0):
-            checkpoint = (room['battle_history'][-1]['painting_index'] + 1) // paintings_per_stage(room)
-        reward_lines = []
-        if checkpoint:
-            currency = self.rewards.currency_rewards(room['id'], checkpoint)
-            reward_lines.extend(
-                f'<@{reward["user_id"]}>：{reward["xp"]:,} XP、{reward["gold"]:,} 金幣'
-                for reward in currency)
-            marker = next((item for item in reversed(room.get('sealed_rewards', ()))
-                           if (checkpoint <= 3 and item.get('kind') == 'crystals'
-                               and item.get('stage') == checkpoint)
-                           or (checkpoint == 4 and item.get('kind') == 'shadow_bonus')), None)
-            if marker:
-                crystals = [self.crystals.get(instance_id)
-                            for instance_id in marker.get('instance_ids', ())]
-                crystal_counts = {}
-                for crystal in filter(None, crystals):
-                    crystal_counts[crystal.user_id] = crystal_counts.get(crystal.user_id, 0) + 1
-                reward_lines.extend(f'<@{user_id}>：顏料結晶 ×{count}'
-                                    for user_id, count in crystal_counts.items())
-            if checkpoint == 4 and room.get('route') == 'noah':
-                for reward in self.rewards.rewards(room['id']):
-                    text = (f'獲得【{ITEMS[reward["item_id"]].name}】，可從背包使用'
-                            if reward['status'] == 'box_granted'
-                            else f'獲得【{ITEMS[reward["item_id"]].name}】')
-                    reward_lines.append(f'<@{reward["user_id"]}>：{text}')
-        chunks, current = [], ''
-        for line in logs:
-            line = str(line)
-            if len(current) + len(line) + 1 > 3600:
-                chunks.append(current)
-                current = line
-            else:
-                current = f'{current}\n{line}'.strip()
-        if current:
-            chunks.append(current)
-        for index, chunk in enumerate(chunks, 1):
-            embed = discord.Embed(
-                title=title if index == 1 else f'{title}（{index}）',
-                description=chunk, color=0xDC2626)
-            if index == 1:
-                embed.add_field(name='隊伍結果', value='\n'.join(roster)[:1024] or '無', inline=False)
-                if reward_lines:
-                    embed.add_field(name='本次獎勵', value='\n'.join(reward_lines)[:1024], inline=False)
-                embed.set_footer(text=f'{battle.get("result", "已結算")}｜{battle.get("round", 0)} 回合')
-            await thread.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        thread = await self._thread(room)
+        if not thread:
+            return
+        reports = list(room.get('battle_reports', ()))
+        if not reports and room.get('last_battle'):
+            reports.append({'title': '既有房間最後一戰', 'battle': room['last_battle']})
+        if room.get('battle'):
+            reports.append({'title': '結束時尚未完成的戰鬥', 'battle': room['battle']})
+        if not reports:
+            return
+        lines, summaries = [], []
+        for report in reports:
+            battle = report['battle']
+            summary = f'{report["title"]}｜{battle.get("result") or "中止"}｜{battle.get("round", 0)} 回合'
+            summaries.append(summary)
+            lines.extend([summary, *[str(line) for line in battle.get('log', ())], ''])
+        embed = discord.Embed(title=f'{MODE_NAME} #{room["number"]}｜整趟戰報',
+            description='\n'.join(summaries)[:4000], color=0x7C3AED)
+        embed.set_footer(text='完整逐回合記錄收錄於附件；探索途中不發送戰報。')
+        message = await thread.send(embed=embed,
+            file=discord.File(io.BytesIO('\n'.join(lines).encode('utf-8')),
+                              filename=f'maze-{room["number"]}-complete.txt'),
+            allowed_mentions=discord.AllowedMentions.none())
+        self.repo.mark_report_sent(room['id'], message.id)
+        room['report_message_id'] = message.id
 
     def recover_rewards(self, room_id):
         """Drain the room's transactional outbox; every individual seal is idempotent."""
@@ -470,6 +430,7 @@ class PaintedMazeService:
             allowed_mentions=discord.AllowedMentions.none())
 
     async def _archive(self, room):
+        await self._post_battle_report(room)
         thread = await self._thread(room)
         if thread and not thread.archived:
             await thread.edit(archived=True, locked=True, reason='繪境迷廊已結束')
@@ -499,7 +460,7 @@ class PaintedMazeService:
                 embed.add_field(name=name, value='\n'.join(
                     f'{f.name}：{f.hp:,}/{f.stats["HP"]:,} HP' for f in battle.fighters if f.team == team)[:1024],
                     inline=False)
-            embed.set_footer(text='每 5 秒推進一回合；戰鬥中無法調整技能。')
+            embed.set_footer(text='約每 2 秒推進一回合；戰鬥中無法調整技能。')
             return embed
         embed = discord.Embed(title=f'{MODE_NAME} #{room["number"]}', color=0x7C3AED)
         if room['status'] == 'lobby':
@@ -603,7 +564,7 @@ class PaintedMazeService:
         embed.set_footer(text='房間最長保留 24 小時；結束後討論串會封存但隊員仍可查看。')
         return embed
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds=1)
     async def tick(self):
         if not self.bot.is_ready():
             return
@@ -645,7 +606,7 @@ class PaintedMazeService:
                             and not room.get('battle') and not room.get('final_battle')):
                         battle = build_final_battle(room)
                         room = self.repo.start_battle(room['id'], room['host_id'], dump_battle(battle),
-                                                     deadline=time.time() + 5)
+                                                     deadline=time.time() + 2)
                         await self._refresh(room)
                     elif room.get('battle') and (room['battle'].get('result') or now >= room['battle_deadline']):
                         await self._step_battle(room)

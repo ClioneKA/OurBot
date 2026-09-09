@@ -21,7 +21,7 @@ from core.rpg_fishing import BIG_FISH, Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_provisions import Provisions
 from core.rpg_divination import Divinations
-from core.rpg_tavern import TavernService
+from core.rpg_tavern import TavernService, TavernView
 from core.rpg_notification_view import FarmingNotificationView, FishingNotificationView
 from core.rpg_invites import AdventurerInvitations, AdventurerInvitationView
 from core.rpg_spaces import AdventureSpaceService
@@ -200,6 +200,18 @@ class RPG(commands.Cog):
                 '你還沒有正式加入安安大冒險。請先接受一封邀請函！', ephemeral=True)
             return
         view = AdventureView(self, interaction)
+        self.menu_views.add(view)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name='酒館', description='開啟冒險者酒館：準備料理、請大家喝一杯與張貼懸賞')
+    @app_commands.guild_only()
+    async def open_tavern(self, interaction: discord.Interaction):
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message(
+                '你還沒有正式加入安安大冒險。請先接受一封邀請函！', ephemeral=True)
+            return
+        view = TavernView(self, interaction)
         self.menu_views.add(view)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())

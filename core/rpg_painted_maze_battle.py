@@ -9,13 +9,12 @@ from core.rpg_painted_maze import COLOR_CONTRACTS, PaintedMazeError
 PAINTING_MAX_ROUNDS = 40
 FINAL_MAX_ROUNDS = 40
 STAGE_PROFILE = {
-    55: dict(tier=5, level_bonus=5, hp=12.0, attack=2.00, defense=1.50,
+    55: dict(tier=5, level_bonus=5, hp=12.0, attack=3.85, defense=1.50,
              speed=54, hit=105, dodge=58, crit=10),
-    60: dict(tier=6, level_bonus=0, hp=13.5, attack=2.15, defense=1.60,
+    60: dict(tier=6, level_bonus=0, hp=13.5, attack=3.75, defense=1.60,
              speed=56, hit=108, dodge=63, crit=12),
-    # T65 has higher base level/defence and longer scripts; budget its raw
-    # damage separately so a full Lv.60 raid party can usually reach the final.
-    65: dict(tier=6, level_bonus=5, hp=13.5, attack=2.00, defense=1.70,
+    # Raw attack budgets differ because each act uses different enemy scripts.
+    65: dict(tier=6, level_bonus=5, hp=13.5, attack=3.30, defense=1.70,
              speed=60, hit=112, dodge=68, crit=12),
 }
 # Only previously saved nine-painting routes can still contain T50 entries.
@@ -216,8 +215,8 @@ def final_monster(room):
     if route not in ('noah', 'shadow'):
         raise PaintedMazeError('繪境迷廊尾王路線無效。')
     # Noah's scripted charges and phase adds spend more of the threat budget.
-    hp_base, attack_base, defense = ((14.5, 1.80, 1.80) if route == 'noah'
-                                     else (16.5, 2.30, 1.80))
+    hp_base, attack_base, defense = ((14.0, 1.80, 1.80) if route == 'noah'
+                                     else (18.5, 2.30, 1.80))
     party_hp_scale = (1 + .85 * (participant_count - 1)) / participant_count
     attack_scale = party_attack_scale(participant_count)
     name = '繪畫魔女．城崎諾亞' if route == 'noah' else '繪畫之影'

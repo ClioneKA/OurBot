@@ -41,6 +41,22 @@ def participant(user_id=1):
 
 
 class PaintedMazeBattleTests(unittest.TestCase):
+    def test_independent_benchmark_runs_every_encounter_even_after_a_loss(self):
+        from unittest.mock import patch
+        from scripts.simulate_painted_maze import independent_benchmark
+        with patch('scripts.simulate_painted_maze.build_participants', return_value=[participant()]), \
+             patch('scripts.simulate_painted_maze.simulate_painting', return_value={'result': '戰敗'}) as painting, \
+             patch('scripts.simulate_painted_maze.simulate_final_battle', return_value={'result': '勝利'}) as final:
+            row = independent_benchmark(2)[0]
+        self.assertEqual(painting.call_count, 6)
+        self.assertEqual(final.call_count, 4)
+        self.assertEqual(row['win_rates'], dict(stage1=0, stage2=0, stage3=0, shadow=1, noah=1))
+        for call in painting.call_args_list:
+            self.assertEqual(len(call.args), 5)  # No carried HP argument.
+        for call in final.call_args_list:
+            self.assertNotIn('party_state', call.args[0])
+            self.assertEqual(len(call.args[0]['contracts']), 3)
+
     def test_painting_profile_uses_requested_content_level_and_party_scaling(self):
         painting = draw_painting_route(3)[0]
         solo = painting_monster(painting, 1)

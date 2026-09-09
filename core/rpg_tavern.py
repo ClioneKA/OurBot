@@ -419,7 +419,7 @@ class TavernView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請從自己的冒險面板進入酒館。', ephemeral=True)
+            await interaction.response.send_message('請使用 /酒館 開啟自己的酒館面板。', ephemeral=True)
             return False
         return True
 
@@ -428,7 +428,7 @@ class TavernView(discord.ui.View):
             return
         async with self.lock:
             if self.closed or self.is_finished():
-                await interaction.response.send_message('酒館面板已關閉，請從 /冒險 重新進入。', ephemeral=True)
+                await interaction.response.send_message('酒館面板已關閉，請使用 /酒館 重新進入。', ephemeral=True)
                 return
             if action == 'home':
                 from core.rpg_menu import navigate
@@ -473,6 +473,6 @@ class TavernView(discord.ui.View):
             self.closed = True
             self.stop()
             try:
-                await self.origin.edit_original_response(content='酒館面板已逾時，請從 /冒險 重新進入。', view=None)
+                await self.origin.edit_original_response(content='酒館面板已逾時，請使用 /酒館 重新進入。', view=None)
             except discord.HTTPException:
                 pass
