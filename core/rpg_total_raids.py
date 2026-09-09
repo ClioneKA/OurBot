@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import asdict
 import json
+import io
 import logging
 import os
 import random
@@ -16,7 +17,7 @@ from core.rpg_battle import PASSIVES, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_character import add_owned_item
 from core.rpg_witch_catalog import WITCH_BOSS, IDS, PROFILE
-from core.rpg_witch_battle import WitchRaidBattle, witch_battle_from_participants, ACTION_DEFEND
+from core.rpg_witch_battle import WitchRaidBattle, witch_battle_from_participants, ACTION_DEFEND, SPELL_DESCRIPTIONS, WITCH_TRAITS
 from core.rpg_expeditions import is_expedition_active, require_not_expedition
 from core.rpg_raids import channel_ids
 from core.rpg_total_battle import (
@@ -87,12 +88,24 @@ def effect_status(fighter, battle):
     buffs, debuffs = [], []
     if isinstance(battle, WitchRaidBattle):
         if fighter.job in battle.ids:
-            buffs.append(f'魔女化 {battle.phase(fighter)} 階')
-        for key, label in (('brainwash', '洗腦（不可淨化）'), ('factor', '因子'), ('burn', '火傷'),
+            phase = battle.phase(fighter)
+            buffs.append(SPELL_DESCRIPTIONS[fighter.job][phase])
+            if fighter.job == 'hiro' and battle.rewound:
+                buffs[-1] = ('單體兩段打擊' if phase == 2 else '單體打擊') + '；本場回溯已使用'
+            if fighter.job == 'hanna' and (turn % 2 or fighter.has('float', turn)):
+                buffs.append('浮游：裝甲步兵／騎士非必中攻擊減傷 30%')
+            if fighter.job == 'milia' and battle.adaptation and battle.adaptation[0] == turn:
+                kind = {'basic': '普攻', 'skill': '單體技能', 'area': '全體技能'}.get(battle.adaptation[1], '無')
+                buffs.append(f'適應：{kind}傷害減半')
+            if phase:
+                buffs.append(f'傷害與治療 +{phase * 10}%')
+        for key, label in (('brainwash', '洗腦（不可淨化）'), ('factor', '魔女因子'), ('burn', '火傷'),
                            ('vision', '預知：避免重複行動'), ('doubt', '懷疑'), ('watch', '監視'),
                            ('exchange', '交換標記'), ('no_look', '無法指定召喚畫')):
             if fighter.has(key, turn):
                 debuffs.append(label)
+                if key == 'factor':
+                    debuffs[-1] += f' {fighter.status_stacks.get(key, 0)}/3 層'
         if fighter.team == 0 and battle.forced(fighter, turn):
             debuffs.append('強制普攻隊友')
         for key, label in (('spotlight', '聚光：承接單體攻擊'), ('snake_guard', '白蛇守護'),
@@ -180,6 +193,57 @@ def last_round_log(battle):
     return battle.log[start:] or ['該回合沒有產生紀錄。']
 
 
+def active_effect_notes(battle):
+    """Explain only effects actually displayed, once each for the whole party."""
+    turn = battle.planning_round if not battle.result else battle.round
+    descriptions = {
+        'factor': '魔女因子：最多 3 層；艾瑪引爆時每層提高傷害，引爆後清空。可淨化；預告後不因層數變動改換目標。',
+        'burn': '火傷：回合結束扣除最大 HP 的 3%；可淨化，會影響亞里沙的擴散與引爆。',
+        'brainwash': '洗腦：一般階段傷害轉向隊友、治療轉向魔女；一次／二次魔女化改為強制普攻隊友。不可淨化，打斷安安或使她倒下可解除。',
+        'vision': '預知：重複上一回合普攻或同名技能時，本次攻擊力降低 40%；奈葉香魔女化後另追加攻擊。',
+        'doubt': '懷疑：傷害與治療降低 30%，行動後解除；防禦可避免魔法施加。',
+        'watch': '監視：可可二次魔女化的打擊對被監視者追加傷害，打擊後消耗標記。',
+        'exchange': '交換標記：兩名預告對象交換 HP 比例；一次魔女化也交換火傷、破甲、虛弱、祝福。淨化任一標記可阻止交換。',
+        'no_look': '無法指定召喚畫：不能直接指定動物召喚畫為目標，全體攻擊仍可波及。',
+        'spotlight': '聚光：承接玩家原本指定其他魔女的單體攻擊；魔女化後減傷 25%，結束後遭破甲。',
+        'snake_guard': '白蛇守護：白蛇存活期間，受保護魔女受到的傷害降低 25%。',
+        'float': '浮游：漢娜承受裝甲步兵與騎士的非必中攻擊時減傷 30%。',
+        'defend': '防禦：本回合承受傷害減半。',
+        'guard': '護衛：提高防禦；負面免疫依護衛剩餘效果生效，無法阻擋洗腦。',
+        'bless': '祝福：攻擊力提高 25%。',
+        'stance': '防禦姿態：依職業降低承受傷害，比例見角色增益列。',
+        'taunt': '挑釁反擊：吸引尚未鎖定目標的攻擊並反擊；已預告的魔女指定技能不再轉向。',
+        'moon_shadow': '月影：閃避提高 15 個百分點。',
+        'break': '破甲：在魔女試煉中，受攻擊時防禦降低 25%。',
+        'poison': '中毒：行動前扣血，玩家為最大 HP 的 5%，敵方為 2%；可淨化。',
+        'stun': '暈眩：無法行動；對魔女施加時也會打斷正在準備的魔法與連動。',
+        'weak': '虛弱：攻擊力降低 20%。',
+        'vulnerable': '易傷：受到傷害提高 10%。',
+    }
+    notes = {}
+    for fighter in battle.fighters:
+        if fighter.hp <= 0:
+            continue
+        for key, description in descriptions.items():
+            if fighter.has(key, turn):
+                notes[key] = description
+        for passive in PASSIVES.get(fighter.job, ()):
+            if passive.id == fighter.passive_id:
+                notes[f'passive:{fighter.job}:{passive.id}'] = f'{passive.name}：{passive.description}'
+        if fighter.status_stacks.get('poison_arrows'):
+            notes['poison_arrows'] = '毒箭侵蝕：每支毒箭獨立計算持續傷害與期限，可淨化。'
+        if fighter.status_stacks.get('passive_toxicity'):
+            notes['toxicity'] = '毒性：每位施毒者各最多 3 層；猛毒調律直接命中滿層目標時可引爆。'
+        if fighter.status_stacks.get('corruption'):
+            notes['corruption'] = '腐敗：滿 3 層時於行動前爆裂，自身扣除最大 HP 的 12%，其他隊友扣除最大 HP 的 3%，然後清空。'
+        if fighter.food_regen_left and turn >= fighter.food_regen_start:
+            notes[f'food:{fighter.food_name}'] = f'{fighter.food_name}緩補：每回合恢復最大 HP 的 {fighter.food_regen_permille / 10:g}%。'
+        shield, until = battle.prayer_shields.get(battle.key(fighter), (0, -1))
+        if shield and until >= turn:
+            notes['prayer'] = '祈禱護盾：梅露露的溢出治療轉為護盾，先吸收傷害；數值見魔女增益列。'
+    return list(notes.values())
+
+
 class TotalRaidStore:
     def __init__(self, store):
         self.db = store.db
@@ -208,24 +272,14 @@ class TotalRaidStore:
             self.db.execute('INSERT INTO rpg_witch_days VALUES (?,?)', (day, json.dumps(ids)))
         return day, ids
 
-    def validate_witch_cost(self, room, users):
-        for uid in users:
-            row = self.db.execute('''SELECT quantity FROM rpg_inventory
-                WHERE guild_id=? AND user_id=? AND item_id='proof:raid' ''', (room['guild_id'], uid)).fetchone()
-            if not row or row[0] < 1:
-                raise TotalRaidError(f'<@{uid}> 的討伐之證不足，開戰每人需要 1 個（幫打也消耗）。')
-
     def start_witch(self, room):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             saved = self.get(room['id'])
             if not saved or saved['status'] != 'lobby':
                 raise TotalRaidError('這個房間已經開始或關閉。')
-            self.validate_witch_cost(room, room['members'])
             for uid in room['members']:
                 require_not_expedition(self.db, uid)
-                self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-1
-                    WHERE guild_id=? AND user_id=? AND item_id='proof:raid' ''', (room['guild_id'], uid))
             self.db.execute('UPDATE rpg_total_raids SET status=?,data=? WHERE id=?',
                 (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
 
@@ -236,7 +290,7 @@ class TotalRaidStore:
             if claimed.rowcount and battle.result == '勝利':
                 for uid in room['members']:
                     add_owned_item(self.db, room['guild_id'], uid, 'witch:thread', 1)
-            room['reward_text'] = '每位參戰者獲得 1 個魔女繡線。' if battle.result == '勝利' else '本次未勝，沒有繡線報酬；入場材料已消耗。'
+            room['reward_text'] = '每位參戰者獲得 1 個魔女繡線。' if battle.result == '勝利' else '本次未勝，沒有繡線報酬。'
             room['public_pending'] = True
             self.db.execute('UPDATE rpg_total_raids SET status=?,data=? WHERE id=?',
                 (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
@@ -363,6 +417,16 @@ class TotalRaidLobbyView(discord.ui.View):
     @discord.ui.button(label='關閉房間', style=discord.ButtonStyle.secondary,
                        custom_id='total_raid:lobby:cancel')
     async def cancel(self, interaction, _button):
+        room = self.service.repo.get(self.room_id)
+        if room and room['boss'] == WITCH_BOSS:
+            await interaction.response.defer(ephemeral=True)
+            try:
+                await self.service.cancel_lobby(self.room_id, interaction.user)
+                await self.service.cleanup_witch_rooms(time.time())
+                await interaction.followup.send('房間已關閉；紀錄送達魔女試煉頻道後會刪除房間。', ephemeral=True)
+            except (CharacterError, TotalRaidError) as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+            return
         try:
             await self.service.cancel_lobby(self.room_id, interaction.user)
         except (CharacterError, TotalRaidError) as exc:
@@ -416,6 +480,71 @@ class TotalRaidRunningView(discord.ui.View):
             self.service.player_action_text(battle, interaction.user.id),
             view=view, ephemeral=True,
         )
+
+
+class WitchPublicSelect(discord.ui.Select):
+    def __init__(self, parent, battle, target=False):
+        self.parent_view, self.target = parent, target
+        self.round = battle.planning_round
+        if target:
+            options = [discord.SelectOption(label=f.name[:100], value=battle.key(f),
+                       description=f'{"隊友" if f.team == 0 else "敵方"} HP {f.hp:,}')
+                       for f in battle.fighters if f.hp > 0][:25]
+        else:
+            options = [discord.SelectOption(label=label, value=value) for label, value in
+                       [('普通攻擊', ACTION_ATTACK), ('防禦', ACTION_DEFEND),
+                        ('技能槽 1', 'skill:1'), ('技能槽 2', 'skill:2'), ('技能槽 3', 'skill:3')]]
+        super().__init__(placeholder='② 選擇自己的行動目標' if target else '① 選擇自己的行動（技能名稱見隊伍狀態）',
+                         options=options, row=2 if target else 1,
+                         custom_id=f'witch_raid:public:{"target" if target else "action"}:{self.round}')
+
+    async def callback(self, interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            message = await self.parent_view.service.public_choice(
+                self.parent_view.room_id, interaction.user.id, self.round, self.values[0], self.target)
+            await interaction.followup.send(message, ephemeral=True)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+
+class WitchBattleView(TotalRaidRunningView):
+    def __init__(self, service, room_id):
+        super().__init__(service, room_id)
+        self.remove_item(self.choose)
+        battle = load_total_battle(service.repo.get(room_id)['battle'])
+        self.add_item(WitchPublicSelect(self, battle))
+        self.add_item(WitchPublicSelect(self, battle, target=True))
+
+    async def page(self, interaction, delta, status=False):
+        await interaction.response.defer()
+        async with self.service.lock(self.room_id):
+            room = self.service.repo.get(self.room_id)
+            if room['status'] != 'running':
+                return
+            battle = load_total_battle(room['battle'])
+            self.service.battle_embed(room, battle)
+            count = room.get('status_page_count', 1) if status else len(field_chunks(last_round_log(battle), 900)) or 1
+            key = 'status_page' if status else 'log_page'
+            room[key] = (room.get(key, 0) + delta) % count
+            self.service.repo.save(room)
+            await self.service._edit_public(room, battle)
+
+    @discord.ui.button(label='摘要上一頁', custom_id='witch_raid:log:previous', row=3)
+    async def previous(self, interaction, _button):
+        await self.page(interaction, -1)
+
+    @discord.ui.button(label='摘要下一頁', custom_id='witch_raid:log:next', row=3)
+    async def next_page(self, interaction, _button):
+        await self.page(interaction, 1)
+
+    @discord.ui.button(label='狀態／說明上一頁', custom_id='witch_raid:status:previous', row=3)
+    async def previous_status(self, interaction, _button):
+        await self.page(interaction, -1, status=True)
+
+    @discord.ui.button(label='狀態／說明下一頁', custom_id='witch_raid:status:next', row=3)
+    async def next_status(self, interaction, _button):
+        await self.page(interaction, 1, status=True)
 
 
 class TotalRaidActionSelect(discord.ui.Select):
@@ -574,6 +703,7 @@ class TotalRaidService:
         self.views = {}
         self.private_cleanup_tasks = set()
         self.witch_channel_retry_at = {}
+        self.refreshed_announcements = set()
 
     def start(self):
         self.bot.add_view(WitchDailyView(self))
@@ -602,6 +732,11 @@ class TotalRaidService:
 
     def view(self, room):
         key = (room['id'], room['status'])
+        if room['boss'] == WITCH_BOSS and room['status'] == 'running':
+            old = self.views.pop(key, None)
+            if old:
+                old.stop()
+            self.views[key] = WitchBattleView(self, room['id'])
         if key not in self.views:
             cls = TotalRaidLobbyView if room['status'] == 'lobby' else TotalRaidRunningView
             self.views[key] = cls(self, room['id'])
@@ -738,8 +873,6 @@ class TotalRaidService:
                 ))
             if not participants:
                 raise TotalRaidError('隊伍中沒有可參戰的玩家。')
-            if room['boss'] == WITCH_BOSS:
-                self.repo.validate_witch_cost(room, [p['id'] for p in participants])
             provisions = getattr(self.cog, 'provisions', None)
             if provisions is not None:
                 prepared = provisions.prepare_for_raid(
@@ -835,6 +968,8 @@ class TotalRaidService:
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
             await self.check_witch_deadline(room, battle)
+            if str(user_id) in room.get('action_drafts', {}):
+                raise TotalRaidError('請先選擇目標，完成本回合行動。')
             battle.confirm(user_id)
             room['battle'] = dump_total_battle(battle)
             self.repo.save(room)
@@ -879,8 +1014,49 @@ class TotalRaidService:
             self.repo.save(room)
             await self._edit_public(room, battle)
 
+    async def public_choice(self, room_id, user_id, expected_round, value, is_target=False):
+        async with self.lock(room_id):
+            room, battle = self.running_battle(room_id, user_id)
+            await self.check_witch_deadline(room, battle)
+            if battle.planning_round != expected_round:
+                raise TotalRaidError('回合已更新，請使用最新戰鬥面板。')
+            drafts = room.setdefault('action_drafts', {})
+            if is_target:
+                draft = drafts.get(str(user_id))
+                if not draft or draft['round'] != expected_round:
+                    raise TotalRaidError('請先在第一個選單選擇行動，再選擇目標。')
+                battle.submit(user_id, draft['action'], value, draft['slot'])
+                drafts.pop(str(user_id))
+                message = '行動已登記，請按「確認本回合」。'
+            else:
+                action, _, detail = value.partition(':')
+                slot = int(detail) if detail else None
+                available = next((a for a in battle.available_actions(user_id)
+                                  if a['action'] == action and a.get('skill_slot') == slot), None)
+                if not available or available.get('cooldown_remaining', 0):
+                    raise TotalRaidError('此技能未裝備、冷卻中或目前不能使用。')
+                targets = battle.valid_targets(user_id, action, slot)
+                if targets:
+                    drafts[str(user_id)] = dict(action=action, slot=slot, round=expected_round)
+                    battle.confirmed.discard(user_id)
+                    battle.choices.pop(user_id, None)
+                    battle.auto_players.discard(user_id)
+                    message = '已選擇行動，請在第二個選單選擇目標：' + '、'.join(
+                        battle.fighter_for_key(k).name for k in targets)
+                else:
+                    battle.submit(user_id, action, None, slot)
+                    drafts.pop(str(user_id), None)
+                    message = '行動已登記，不需指定目標；請按「確認本回合」。'
+            room['battle'] = dump_total_battle(battle)
+            self.repo.save(room)
+            await self._edit_public(room, battle)
+            return message
+
     async def _resolve(self, room, battle, timeout=False):
         battle.resolve(use_defaults=timeout)
+        room['log_page'] = 0
+        room['status_page'] = 0
+        room['action_drafts'] = {}
         room['battle'] = dump_total_battle(battle)
         if battle.result:
             room['status'] = 'completed'
@@ -918,21 +1094,27 @@ class TotalRaidService:
         if room['boss'] == WITCH_BOSS:
             embed.title = f'魔女試煉｜{room["witch_day"]} #{room["number"]}'
             embed.description = ('、'.join(PROFILE[k][1] for k in room['witch_ids']) +
-                '\n由房主開始；每人消耗 1 個討伐之證（幫打也消耗）。勝利每人取得 1 個魔女繡線。\n每回合 120 秒，全員確認可提早結算；連續三回合逾時轉自動普攻，可隨時接管。')
+                '\n由房主開始，所有玩家免費入場。勝利每人取得 1 個魔女繡線。\n每回合 120 秒，全員確認可提早結算；連續三回合逾時轉自動普攻，可隨時接管。')
         embed.add_field(name='房主', value=f'<@{room["host_id"]}>')
         embed.add_field(name='隊伍', value=f'{len(room["members"])}/{self.settings.max_participants}', inline=True)
         embed.add_field(name='參戰成員', value=roster or '尚無成員', inline=False)
         embed.set_footer(text='房主建立房間時會自動加入；目前最多六人。')
         if room['boss'] == WITCH_BOSS:
-            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；開戰後保留當次組合。戰鬥結束後頻道保留 10 分鐘。')
+            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；戰鬥結束後戰報送至魔女試煉頻道並刪除房間。')
         return embed
 
     def daily_embed(self):
         day, ids = self.repo.daily_witches()
-        return discord.Embed(title=f'魔女試煉｜{day}', color=0x8B5CF6,
+        embed = discord.Embed(title=f'魔女試煉｜{day}', color=0x8B5CF6,
             description='今日出現：\n' + '\n'.join(f'• {PROFILE[k][1]}' for k in ids) +
             '\n\n點擊開房，最多六人。每日台灣時間 00:00 更新；舊公告按鈕也會開啟當日組合。'
-            '\n開戰每人消耗 1 個討伐之證；勝利每人獲得 1 個不可交易的魔女繡線。')
+            '\n所有玩家免費入場；勝利每人獲得 1 個不可交易的魔女繡線。')
+        for key in ids:
+            embed.add_field(name=PROFILE[key][1], value='\n'.join(
+                f'{label}：{ability}' for label, ability in zip(('一般', '一次魔女化', '二次魔女化'), SPELL_DESCRIPTIONS[key]))
+                + '\n特性：' + WITCH_TRAITS[key], inline=False)
+        embed.set_footer(text='每位魔女同伴首次倒下使魔女化加深一階；每階傷害與治療 +10%，最多二階。')
+        return embed
 
     async def witch_announcement_channels(self):
         if self.witch_channel_ids:
@@ -987,9 +1169,20 @@ class TotalRaidService:
         day = witch_day()
         for channel in await self.witch_announcement_channels():
             cid = channel.id
-            saved = self.repo.db.execute('SELECT day FROM rpg_witch_announcements WHERE channel_id=?', (cid,)).fetchone()
+            saved = self.repo.db.execute('SELECT day,message_id FROM rpg_witch_announcements WHERE channel_id=?', (cid,)).fetchone()
             if saved and saved[0] == day:
-                continue
+                if (cid, day) in self.refreshed_announcements:
+                    continue
+                try:
+                    await channel.get_partial_message(saved[1]).edit(embed=self.daily_embed(), view=WitchDailyView(self),
+                                                                    allowed_mentions=discord.AllowedMentions.none())
+                    self.refreshed_announcements.add((cid, day))
+                    continue
+                except discord.NotFound:
+                    pass
+                except discord.HTTPException:
+                    logger.exception('Witch daily announcement refresh failed: %s', cid)
+                    continue
             try:
                 message = await channel.send(embed=self.daily_embed(), view=WitchDailyView(self),
                                              allowed_mentions=discord.AllowedMentions.none())
@@ -997,6 +1190,7 @@ class TotalRaidService:
                     self.repo.db.execute('''INSERT INTO rpg_witch_announcements VALUES (?,?,?)
                         ON CONFLICT(channel_id) DO UPDATE SET day=excluded.day,message_id=excluded.message_id''',
                         (cid, day, message.id))
+                self.refreshed_announcements.add((cid, day))
             except discord.HTTPException:
                 logger.exception('Witch daily announcement failed: %s', cid)
 
@@ -1011,14 +1205,50 @@ class TotalRaidService:
                     await self._edit_public(room, load_total_battle(room['battle']))
                 except discord.HTTPException:
                     logger.exception('Witch result delivery retry failed: %s', room['id'])
-            expiry = room.get('finished_at', room['created_at']) + (1800 if room['status'] == 'lobby' else 600)
+            expiry = room['created_at'] + 1800 if room['status'] == 'lobby' else 0
             if now < expiry:
                 continue
             async with self.lock(room['id']):
                 room = self.repo.get(room['id'])
                 if room['status'] == 'running':
                     continue
+                room['status'] = 'cancelled' if room['status'] == 'lobby' else room['status']
+                self.repo.save(room)
+                if not room.get('archive_message_id'):
+                    destinations = await self.witch_announcement_channels()
+                    destination = next((c for c in destinations if c.guild.id == room['guild_id']
+                                        and c.id != room['channel_id']), None)
+                    if destination is None:
+                        continue
+                    battle = load_total_battle(room['battle']) if room.get('battle') else None
+                    result = battle.result if battle else '待機房已關閉，未開戰'
+                    names = '、'.join(PROFILE[k][1] for k in room.get('witch_ids', []))
+                    header = f'魔女試煉 #{room["number"]}｜{result}\n{names}\n' + room.get('reward_text', '')
+                    records = []
+                    if battle:
+                        records = (battle.mechanics.get('witch_initial_log', []) +
+                                   [line for turn in battle.mechanics.get('witch_round_logs', []) for line in turn]) or battle.log
+                        header += '\n參戰：' + '、'.join(f'{p.name}（{p.user_id}）' for p in battle.fighters if p.team == 0)
+                    payload = (header + '\n\n' + '\n'.join(records)).encode('utf-8-sig')
+                    try:
+                        message = await destination.send(
+                            embed=discord.Embed(title=f'魔女試煉 #{room["number"]}｜戰鬥紀錄', description=header, color=0x8B5CF6),
+                            file=discord.File(io.BytesIO(payload), filename=f'witch-trial-{room["number"]}.txt'),
+                            allowed_mentions=discord.AllowedMentions.none())
+                    except discord.HTTPException:
+                        logger.exception('Witch archive delivery failed: %s', room['id'])
+                        continue
+                    room['archive_message_id'] = message.id
+                    room['archive_channel_id'] = destination.id
+                    self.repo.save(room)
                 channel = self.bot.get_channel(room['channel_id'])
+                if channel is None:
+                    try:
+                        channel = await self.bot.fetch_channel(room['channel_id'])
+                    except discord.NotFound:
+                        pass
+                    except discord.HTTPException:
+                        continue
                 if isinstance(channel, discord.TextChannel):
                     try:
                         await channel.delete(reason='魔女試煉暫時房間到期')
@@ -1056,7 +1286,8 @@ class TotalRaidService:
             action = f'**{intent.name}**\n{intent.description}'
         else:
             action = '戰鬥已結束。'
-        embed.add_field(name='Boss 行動', value=action, inline=False)
+        for index, chunk in enumerate(field_chunks(action.splitlines()), 1):
+            embed.add_field(name='Boss 行動' if index == 1 else f'Boss 行動（{index}）', value=chunk, inline=False)
         waiting = battle.waiting_player_ids() if not battle.result else set()
         roster = []
         for fighter in (item for item in battle.fighters if item.team == 0):
@@ -1066,17 +1297,54 @@ class TotalRaidService:
             buffs, debuffs = effect_status(fighter, battle)
             roster.append(f'{marker} <@{fighter.user_id}>：{fighter.hp:,}/{fighter.stats["HP"]:,}\n'
                           f'　Buff：{buffs}\n　Debuff：{debuffs}')
+            if isinstance(battle, WitchRaidBattle) and fighter.hp > 0:
+                skills = [f'{a["skill_slot"]}：{a["name"]}（CD {a.get("cooldown_remaining", 0)}）'
+                          for a in battle.available_actions(fighter.user_id) if a['action'] == ACTION_SKILL]
+                choice = battle.choices.get(fighter.user_id)
+                selected = '尚未選擇'
+                if choice:
+                    selected = (f'技能 {choice.skill_slot}' if choice.action == ACTION_SKILL else
+                                '防禦' if choice.action == ACTION_DEFEND else '普攻')
+                    target = battle.fighter_for_key(choice.target)
+                    if target:
+                        selected += f' → {target.name}'
+                if str(fighter.user_id) in room.get('action_drafts', {}):
+                    selected = '已選行動，等待指定目標'
+                roster[-1] += '\n　' + '／'.join(skills) + f'\n　行動：{selected}'
         for index, chunk in enumerate(field_chunks(roster), 1):
             name = '隊伍狀態' if index == 1 else f'隊伍狀態（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
+        if isinstance(battle, WitchRaidBattle):
+            for index, chunk in enumerate(field_chunks(active_effect_notes(battle), 900), 1):
+                embed.add_field(name=f'增益／減益效果說明（{index}）', value=chunk, inline=False)
+            # Keep every state and explanation accessible within Discord's 6,000 character limit.
+            state_pages, current, size = [], [], 0
+            for field in embed.fields:
+                length = len(field.name) + len(field.value)
+                if current and size + length > 4000:
+                    state_pages.append(current)
+                    current, size = [], 0
+                current.append(field)
+                size += length
+            if current:
+                state_pages.append(current)
+            room['status_page_count'] = len(state_pages)
+            state_page = room.get('status_page', 0) % len(state_pages)
+            embed.clear_fields()
+            for field in state_pages[state_page]:
+                embed.add_field(name=field.name, value=field.value, inline=False)
+            if len(state_pages) > 1:
+                embed.description = f'狀態與效果說明 {state_page + 1}/{len(state_pages)} 頁；使用下方「狀態／說明」按鈕翻頁。'
         # Bound the public embed; full battle state remains persisted.
         log_lines = last_round_log(battle)
         if isinstance(battle, WitchRaidBattle):
-            log_lines = log_lines[-12:]
-            budget = max(0, min(1400, 5600 - len(embed)))
-            log_lines = ['\n'.join(log_lines)[-budget:]] if budget else []
+            pages = field_chunks(log_lines, 900)
+            page = room.get('log_page', 0) % max(1, len(pages))
+            log_lines = [pages[page]] if pages else []
         for index, chunk in enumerate(field_chunks(log_lines), 1):
             label = '上一回合摘要' if isinstance(battle, WitchRaidBattle) else '上一回合完整摘要'
+            if isinstance(battle, WitchRaidBattle):
+                label += f'（{page + 1}/{len(pages)} 頁）'
             name = label if index == 1 else f'{label}（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
         if not battle.result:

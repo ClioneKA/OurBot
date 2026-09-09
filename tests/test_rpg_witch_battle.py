@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import Mock
 from itertools import combinations
 
 from core.rpg_battle import Rule
@@ -76,6 +77,83 @@ class WitchBattleTests(unittest.TestCase):
         self.assertNotIn(paint, b.valid_targets(p.user_id, ACTION_ATTACK))
         with self.assertRaises(TotalRaidError):
             b.submit(p.user_id, ACTION_ATTACK, paint)
+
+    def test_ema_locks_factor_target_before_stacks_change_and_restart(self):
+        b = self.make(ids=('ema', 'hiro', 'margo'))
+        first, second = b.living(0)[:2]
+        first.status_stacks['factor'] = 3
+        b.prepare(b.witch('ema'))
+        self.assertEqual(b.pending['ema']['targets'], [b.key(first)])
+        first.status_stacks['factor'] = 0
+        second.status_stacks['factor'] = 3
+        b = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        b.hit = Mock(return_value=True)
+        b.round = 1
+        b.spell(b.witch('ema'), b.pending['ema'])
+        self.assertEqual(b.hit.call_args.args[1].user_id, first.user_id)
+        self.assertIn('魔女因子', '\n'.join(b.log))
+
+    def test_announced_single_targets_do_not_follow_new_taunts_or_dead_targets(self):
+        for key in ('hiro', 'sherry', 'coco', 'noah'):
+            b = self.make(ids=(key, 'anan', 'meruru'))
+            b.prepare(b.witch(key))
+            data = b.pending[key]
+            target = b.fighter_for_key(data['targets'][0])
+            other = next(p for p in b.living(0) if p is not target)
+            other.effects['taunt'] = 2
+            b.hit = Mock(return_value=True)
+            b.round = 1
+            b.spell(b.witch(key), data)
+            self.assertTrue(b.hit.called, key)
+            self.assertTrue(all(c.args[1] is target for c in b.hit.call_args_list), key)
+            b.hit.reset_mock()
+            target.hp = 0
+            b.spell(b.witch(key), data)
+            b.hit.assert_not_called()
+
+    def test_support_followup_and_bird_use_announced_target(self):
+        b = self.make(ids=('milia', 'margo', 'noah'))
+        for key in ('milia', 'margo'):
+            b.prepare(b.witch(key))
+            data = b.pending[key]
+            target = b.fighter_for_key(data['followup_target'])
+            self.assertIn(f'追加普攻 {target.name}', b.intent().description)
+            b.hit = Mock(return_value=True)
+            b.spell(b.witch(key), data)
+            self.assertIs(b.hit.call_args.args[1], target)
+        bird = b.fighter_for_key(b.add_object(b.witch('noah'), 'bird', .1))
+        b.round = 1
+        b.animal_act(bird)
+        target = b.fighter_for_key(b.objects[b.key(bird)]['target'])
+        other = next(p for p in b.living(0) if p is not target)
+        other.effects['taunt'] = 3
+        b.round = 2
+        b.hit.reset_mock()
+        b.animal_act(bird)
+        self.assertIs(b.hit.call_args.args[1], target)
+
+    def test_combo_followup_target_survives_restart(self):
+        b = self.make(ids=('sherry', 'hanna', 'anan'))
+        b.round = 3
+        b.prepare_link()
+        target_key = b.active_link['target']
+        b = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        target = b.fighter_for_key(target_key)
+        self.assertIn(f'追擊 {target.name}', b.intent().description)
+        b.round = 4
+        b.hit = Mock(return_value=True)
+        b.cast_link(b.witch('sherry'))
+        self.assertIs(b.hit.call_args.args[1], target)
+
+    def test_archive_keeps_early_rounds_after_rolling_log_is_trimmed(self):
+        b = self.make()
+        b.log = [f'initial {i}' for i in range(350)]
+        b.resolve(use_defaults=True)
+        first = list(b.mechanics['last_round_log'])
+        b.resolve(use_defaults=True)
+        restored = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        self.assertEqual(restored.mechanics['witch_round_logs'][0], first)
+        self.assertEqual(len(restored.mechanics['witch_round_logs']), 2)
 
     def test_all_286_trios_restart_mid_battle(self):
         for ids in combinations(IDS, 3):

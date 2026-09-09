@@ -188,6 +188,8 @@ class WitchBattle(TotalRaidBattle):
         if self.apply_debuff(target, key, self.round + duration):
             if stacks:
                 target.status_stacks[key] = min(3, target.status_stacks.get(key, 0) + 1)
+            if key == 'factor':
+                self.log.append(f'{target.name} 的魔女因子增加至 {target.status_stacks.get(key, 0)}/3 層。')
 
     def add_object(self, owner, kind, hp_fraction, power=0, group=False):
         hp = max(1, round(owner.stats['HP'] * hp_fraction))
@@ -263,6 +265,8 @@ class WitchBattle(TotalRaidBattle):
         data = dict(pair=self.link, due=self.round + 1, prepared=self.round, objects=[])
         if self.link == ('sherry', 'hanna'):
             data['objects'] = [self.add_object(leader, 'boulder', .08)]
+            target = self.victim(leader)
+            data['target'] = self.key(target) if target else None
         elif self.link == ('noah', 'anan'):
             if not self.animal_bag:
                 self.animal_bag = list(ANIMALS)
@@ -287,8 +291,8 @@ class WitchBattle(TotalRaidBattle):
             self.link_protected = self.round
         elif data['pair'] == ('sherry', 'hanna'):
             self.blast(actor, 1.2)
-            target = self.victim(actor)
-            if target:
+            target = self.fighter_for_key(data.get('target'))
+            if target and target.hp > 0:
                 self.hit(actor, target, .8)
         else:
             animal = data['animal']
@@ -304,24 +308,23 @@ class WitchBattle(TotalRaidBattle):
         phase, kind = data['phase'], data['kind']
         targets = [self.fighter_for_key(k) for k in data['targets']]
         targets = [p for p in targets if p and p.hp > 0]
-        target = targets[0] if targets else self.victim(actor)
-        taunters = [p for p in self.living(0) if p.has('taunt', self.round)]
-        if taunters and actor.job in ('sherry', 'hiro', 'coco'):
-            target = taunters[0]
-            if len(targets) == 1:
-                targets = [target]
-        if not target:
+        target = targets[0] if targets else None
+        independent = (actor.job in ('hanna', 'reia', 'noah') or actor.job == 'milia' and phase == 2
+                       or actor.job in ('arisa', 'coco', 'sherry') and phase == 2)
+        if not target and not independent:
+            self.log.append(f'{actor.name} 的預告目標已倒下，本次指定魔法不轉移目標。')
             return
         self.events['special_casts'] += 1
         if kind in ('hiro_reaction', 'ema_followup'):
             self.hit(actor, target, 1.8 if kind == 'hiro_reaction' else 1.6)
         elif actor.job == 'ema':
-            victims = self.living(0) if phase == 2 else [max(self.living(0), key=lambda p: p.status_stacks.get('factor', 0))]
+            victims = targets
             for p in list(victims):
                 stacks = p.status_stacks.get('factor', 0)
                 self.hit(actor, p, (.8 + .25 * stacks) if phase == 2 else (1.3 + .3 * stacks), attack_scope='group' if phase == 2 else 'single')
                 p.status_stacks.pop('factor', None)
                 p.effects.pop('factor', None)
+                self.log.append(f'{p.name} 的魔女因子已引爆並清空。')
         elif actor.job == 'hiro':
             for _ in range(2 if phase == 2 else 1):
                 if target.hp > 0:
@@ -366,7 +369,7 @@ class WitchBattle(TotalRaidBattle):
         elif actor.job == 'sherry':
             if phase == 2:
                 self.blast(actor, 1)
-                if target.hp > 0:
+                if target and target.hp > 0:
                     self.hit(actor, target, 1)
             elif phase or kind == 'sherry_reaction':
                 first, second = (1, 1) if kind == 'sherry_reaction' else (.7, 1.3)
@@ -416,7 +419,7 @@ class WitchBattle(TotalRaidBattle):
                 power = spec['power'] * (1.25 if kind == 'black_paint' else 1)
                 if spec['group']:
                     self.blast(actor, power)
-                else:
+                elif target:
                     self.hit(actor, target, power)
                     if phase == 1 and target.hp > 0:
                         self.hit(actor, target, .6)
@@ -443,9 +446,7 @@ class WitchBattle(TotalRaidBattle):
                         self.mark(p, 'burn', 1)
             else:
                 p = self.fighter_for_key(spec['target'])
-                p = p if p and p.hp > 0 else self.victim(actor)
-                p = next((f for f in self.living(0) if f.has('taunt', self.round)), p)
-                if p and self.hit(actor, p, 1.3):
+                if p and p.hp > 0 and self.hit(actor, p, 1.3):
                     self.apply_debuff(p, 'break', self.round + 1)
             spec['charging'] = False
             spec['next'] = self.round + 2
@@ -638,8 +639,8 @@ class WitchBattleV3(WitchBattle):
         finally:
             self.special_power = previous
         if self.tuning and actor.job in ('anan', 'milia', 'margo'):
-            target = self.victim(actor)
-            if target:
+            target = self.fighter_for_key(data.get('followup_target'))
+            if target and target.hp > 0:
                 self.hit(actor, target, .75)
                 self.events['support_followups'] += 1
 

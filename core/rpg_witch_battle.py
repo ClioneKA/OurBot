@@ -16,7 +16,7 @@ brainwash_aware forced_brainwash confirmed auto_players timeout_streak'''.split(
 OBJECT_NAMES = {'painting': '攻擊畫作', 'animal_painting': '動物召喚畫', 'rock': '落石',
                 'boulder': '連動巨石', 'rabbit': '噴火的兔子', 'snake': '莊嚴的白蛇', 'bird': '利爪的飛鳥'}
 SPELL_DESCRIPTIONS = {
-    'ema': ('引爆最多因子的目標；可淨化因子', '引爆最多因子的目標', '全體因子引爆'),
+    'ema': ('引爆最多魔女因子的目標；可淨化魔女因子', '引爆最多魔女因子的目標', '全體魔女因子引爆'),
     'hiro': ('單體打擊；保留一次回溯', '單體打擊；強化回溯', '單體兩段打擊'),
     'anan': ('洗腦 1 人：攻擊／治療反轉', '洗腦 2 人：強制普攻隊友', '洗腦 4 人：強制普攻隊友'),
     'noah': ('畫作單體打擊', '畫作單體打擊及追擊', '單體與全體畫作'),
@@ -29,6 +29,21 @@ SPELL_DESCRIPTIONS = {
     'hanna': ('落石全體攻擊', '落石全體攻擊', '三塊落石分別攻擊全體'),
     'coco': ('單體監視打擊', '兩人監視打擊', '全體打擊；被監視者承受更多傷害'),
     'meruru': ('預告救援 18% HP，溢補轉盾', '預告救援 20% HP、淨化與護盾', '預告救援 22% HP、淨化與護盾'),
+}
+WITCH_TRAITS = {
+    'ema': '普攻命中累積魔女因子（最多 3 層）；可淨化。',
+    'hiro': '每場僅一次倒下回溯；二次魔女化時無法發動。',
+    'anan': '洗腦不可淨化；打斷或擊倒安安可解除，至少保留一位存活玩家不受洗腦。',
+    'noah': '拆除畫作可阻止相應攻擊。',
+    'reia': '聚光結束後遭破甲。',
+    'milia': '交換／適應魔法後，追加一次預告的普通攻擊。',
+    'margo': '懷疑使傷害與治療降低 30%；魔法後追加一次預告的普通攻擊。',
+    'nanoka': '預知下重複普攻或同名技能，本次攻擊力降低 40%。',
+    'arisa': '火傷於回合結束扣除最大 HP 的 3%。',
+    'sherry': '二次魔女化的重擊後遭破甲，下一回合進入恢復。',
+    'hanna': '奇數回合或浮游期間，承受裝甲步兵／騎士的非必中攻擊減傷 30%；落石可拆除。',
+    'coco': '普攻命中施加監視標記。',
+    'meruru': '溢出治療轉為護盾，上限為救援對象最大 HP 的 12%。',
 }
 
 
@@ -140,11 +155,14 @@ class WitchRaidBattle(WitchBattleV9):
                 if self.timeout_streak[uid] >= 3:
                     self.auto_players.add(uid)
         self.fill_defaults()
+        if 'witch_round_logs' not in self.mechanics:
+            self.mechanics['witch_initial_log'] = list(self.log)
         start = len(self.log)
         self.log.append(f'── 第 {self.planning_round} 回合 ──')
         result = super().resolve(use_defaults=False)
         self.confirmed.clear()
         self.mechanics['last_round_log'] = self.log[start:]
+        self.mechanics.setdefault('witch_round_logs', []).append(self.log[start:])
         # Keep durable snapshots bounded even during long raids.
         self.log = self.log[-300:]
         return result
@@ -165,6 +183,18 @@ class WitchRaidBattle(WitchBattleV9):
         super().prepare(actor, kind)
         if actor.job == 'margo' and self.pending[actor.job]['phase'] == 1:
             self.pending[actor.job]['targets'] = self.pending[actor.job]['targets'][:1]
+        data = self.pending[actor.job]
+        if actor.job == 'coco' and data['phase'] == 0:
+            taunter = next((p for p in self.living(0) if p.has('taunt', self.round)), None)
+            if taunter:
+                data['targets'] = [self.key(taunter)]
+        if actor.job == 'ema' and kind != 'ema_followup':
+            players = self.living(0)
+            data['targets'] = [self.key(p) for p in (players if data['phase'] == 2 else
+                [max(players, key=lambda p: p.status_stacks.get('factor', 0))] if players else [])]
+        if actor.job in ('milia', 'margo'):
+            target = self.victim(actor)
+            data['followup_target'] = self.key(target) if target else None
         if kind == 'hiro_reaction':
             self.log.append(f'{actor.name}：「啊啊啊啊啊啊啊啊啊啊」')
         self.log.append(f'【{actor.name}】準備特殊魔法，下回合生效。')
@@ -177,23 +207,37 @@ class WitchRaidBattle(WitchBattleV9):
             line = f'{witch.name}（魔女化 {phase}）'
             if data:
                 targets = [self.fighter_for_key(k) for k in data.get('targets', [])]
-                target_names = '、'.join(p.name for p in targets if p and p.hp > 0)
+                target_names = '、'.join(p.name + ('（已倒下）' if p.hp <= 0 else '') for p in targets if p)
+                if witch.job == 'hanna' or witch.job in ('arisa', 'coco') and data['phase'] == 2:
+                    target_names = '全體玩家'
+                if witch.job == 'meruru' or witch.job == 'reia' and data['phase'] < 2 or witch.job == 'milia' and data['phase'] == 2:
+                    target_names = ''
                 line += f'：第 {data["due"]} 回合／{SPELL_DESCRIPTIONS[witch.job][data["phase"]]}'
+                if data['kind'] in ('hiro_reaction', 'ema_followup'):
+                    line = f'{witch.name}：第 {data["due"]} 回合／' + ('啊啊啊啊啊啊啊啊啊啊・單體反擊' if data['kind'] == 'hiro_reaction' else '回溯救援後的單體追擊')
                 if witch.job == 'anan':
                     line += '／強制普攻隊友' if any(self.forced(p, data['due']) for p in targets if p) else '／攻擊與治療反轉'
                 if target_names:
                     line += f'；目標 {target_names}'
+                followup = self.fighter_for_key(data.get('followup_target'))
+                if followup:
+                    line += f'；追加普攻 {followup.name}'
                 if data.get('objects'):
                     line += '；可拆除物件阻止'
                 if data.get('rescue_target'):
                     line += f'；救援 {self.fighter_for_key(data["rescue_target"]).name}'
+                if witch.job == 'arisa' and data['phase'] == 1:
+                    line += '；來源火傷未淨化時，隨機向一名未燃燒玩家擴散'
             else:
-                line += '：普攻／準備魔法'
+                line += '：普攻（依挑釁／隨機選擇）或準備魔法'
             lines.append(line)
         if self.active_link:
             name = {('hiro', 'ema'): '希羅與艾瑪・回溯救援', ('sherry', 'hanna'): '我們有飛得這麼高過嗎？',
                     ('noah', 'anan'): '動物召喚'}[tuple(self.active_link['pair'])]
             lines.append(f'連動【{name}】：第 {self.active_link["due"]} 回合；可打斷。')
+            target = self.fighter_for_key(self.active_link.get('target'))
+            if target:
+                lines.append(f'全體攻擊後追擊 {target.name}。')
         for obj in self.living(1):
             if obj.job not in ('rabbit', 'snake', 'bird'):
                 continue
