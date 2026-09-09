@@ -211,6 +211,34 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
 
+    async def test_only_host_can_discard_public_meal_and_remove_announcement(self):
+        with self.store.db:
+            self.store.db.execute("INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',5)")
+        _, meal = await self.service.serve_meal(self.interaction, ['fishing:pond:common'] * 5)
+        view = self.service.meal_view(meal['id'])
+        self.assertTrue(view.is_persistent())
+        self.assertEqual(view.discard_button.label, '倒掉')
+        interaction = SimpleNamespace(
+            guild_id=1, user=SimpleNamespace(id=2, bot=False),
+            response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
+            edit_original_response=AsyncMock(), delete_original_response=AsyncMock())
+        await view.discard_button.callback(interaction)
+        self.assertIn('只有發布人', interaction.response.send_message.call_args.args[0])
+        self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
+        self.assertEqual(self.provisions.meal(meal['id'])['status'], 'open')
+        interaction.delete_original_response.assert_not_awaited()
+        interaction.user.id = 1
+        with patch('core.rpg_tavern.asyncio.sleep', new_callable=AsyncMock):
+            await view.discard_button.callback(interaction)
+        self.assertEqual(self.provisions.meal(meal['id'])['status'], 'cancelled')
+        updated = interaction.edit_original_response.call_args.kwargs
+        self.assertIn('已倒掉', updated['embed'].fields[0].value)
+        self.assertIsNone(updated['view'])
+        interaction.delete_original_response.assert_awaited_once()
+        self.assertTrue(view.is_finished())
+        self.assertNotIn(f'meal:{meal["id"]}', self.service.views)
+        self.assertIsNotNone(self.provisions.active_effect(1, 1))
+
     async def test_aftertaste_no_longer_reduces_seats_and_meal_is_posted(self):
         with self.store.db:
             self.store.db.execute(

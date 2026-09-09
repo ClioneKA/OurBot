@@ -52,6 +52,24 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.view.current()['data'])
         self.assertLessEqual(len(self.view.to_components()), 5)
 
+    async def test_apply_missing_equipment_reports_skipped_slots(self):
+        await self.view.handle(self.interaction, 'save')
+        saved = self.view.current()
+        weapon_id = saved['data']['equipment']['武器']
+        self.cog.characters.change_job(1, 1, '弓兵')
+        with self.store.db:
+            self.store.db.execute('DELETE FROM rpg_equipment_instances WHERE instance_id=?', (weapon_id,))
+        await self.view.handle(self.interaction, 'apply')
+        embed = self.interaction.response.edit_message.call_args.kwargs['embed']
+        self.assertIn('已套用', embed.fields[-1].value)
+        self.assertIn('已略過遺失的裝備：武器', embed.fields[-1].value)
+        self.assertIn('物品已遺失', embed.description)
+        state = self.cog.characters.snapshot(1, 1)
+        self.assertEqual(state['job'], '僧侶')
+        self.assertNotIn('武器', state['equipped_instances'])
+        self.assertEqual(state['equipped_instances'], {
+            slot: value for slot, value in saved['data']['equipment'].items() if slot != '武器'})
+
     async def test_main_menu_navigates_to_loadouts(self):
         menu = AdventureView(self.cog, self.interaction)
         self.addCleanup(menu.stop)

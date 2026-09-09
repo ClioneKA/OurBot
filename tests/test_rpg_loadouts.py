@@ -72,21 +72,39 @@ class LoadoutStorageTests(unittest.TestCase):
         self.assertEqual(self.tactics.passive(1, 1, '裝甲步兵').id, 2)
         self.assertEqual((saved['slot'], self.loadouts.get(1, 1, 1)['name']), (1, '鐘龍破甲'))
 
-    def test_missing_instance_rejects_without_partial_changes(self):
+    def test_missing_instance_is_skipped_and_remaining_loadout_is_applied(self):
         self.characters.change_job(1, 1, '弓兵')
+        charm_id = self.characters.grant_item(1, 1, 'puppet:twin_charm')[0]
+        self.characters.equip(1, 1, charm_id, 2)
         weapon_id = self.characters.snapshot(1, 1)['equipped_instances']['武器']
-        self.loadouts.save(1, 1, 1)
+        self.tactics.configure_basic_target(1, 1, '弓兵', 'boss')
+        self.tactics.equip_passive(1, 1, '弓兵', 1)
+        saved = self.loadouts.save(1, 1, 1)
+        self.tactics.configure_basic_target(1, 1, '弓兵', 'lowest')
         self.characters.change_job(1, 1, '騎士')
-        before = self.characters.snapshot(1, 1)
         with self.store.db:
             self.store.db.execute('DELETE FROM rpg_equipment_instances WHERE instance_id=?', (weapon_id,))
 
-        with self.assertRaisesRegex(CharacterError, '已出售或送出'):
-            self.loadouts.apply(1, 1, 1)
+        after = self.loadouts.apply(1, 1, 1)
+        expected = {slot: instance_id for slot, instance_id in saved['data']['equipment'].items()
+                    if instance_id != weapon_id}
+        self.assertEqual(after['job'], '弓兵')
+        self.assertEqual(after['equipped_instances'], expected)
+        self.assertEqual(after['equipped_instances']['飾品2'], charm_id)
+        self.assertEqual(self.tactics.basic_target(1, 1, '弓兵'), 'boss')
+        self.assertEqual(self.tactics.passive(1, 1, '弓兵').id, 1)
+        self.assertEqual(self.loadouts.get(1, 1, 1), saved)
 
-        after = self.characters.snapshot(1, 1)
-        self.assertEqual(after['job'], before['job'])
-        self.assertEqual(after['equipped_instances'], before['equipped_instances'])
+    def test_all_missing_instances_still_apply(self):
+        self.characters.change_job(1, 1, '弓兵')
+        saved = self.loadouts.save(1, 1, 1)
+        self.characters.change_job(1, 1, '騎士')
+        with self.store.db:
+            self.store.db.executemany('DELETE FROM rpg_equipment_instances WHERE instance_id=?',
+                                     [(value,) for value in saved['data']['equipment'].values()])
+        after = self.loadouts.apply(1, 1, 1)
+        self.assertEqual(after['job'], '弓兵')
+        self.assertEqual(after['equipped_instances'], {})
 
     def test_three_free_slots_rename_clear_and_no_provisions(self):
         self.characters.change_job(1, 1, '僧侶')

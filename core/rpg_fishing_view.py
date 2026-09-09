@@ -47,7 +47,7 @@ class FishingView(discord.ui.View):
         if self.showing_records:
             records = self.cog.fishing.records(self.guild_id, self.owner.id)
             if records:
-                self.add_item(PanelSelect('display_fish', row=0, placeholder='選擇角色展示漁獲', options=[
+                self.add_item(PanelSelect('display_fish', row=0, placeholder='選擇名片展示漁獲', options=[
                     discord.SelectOption(label=BIG_FISH[row['fish_id']].name,
                         value=row['fish_id'], description=f'{row["best_weight_g"] / 1000:.1f} kg',
                         default=row['fish_id'] == state['display_fish_id']) for row in records]))
@@ -218,7 +218,7 @@ class FishingView(discord.ui.View):
                     notice = '釣魚完成時會私訊通知。' if enabled else '已關閉釣魚完成私訊。'
                 elif action == 'display_fish':
                     self.cog.fishing.set_display_fish(self.guild_id, self.owner.id, value)
-                    notice = f'角色資料將展示 {BIG_FISH[value].name}。'
+                    notice = f'冒險者名片將展示 {BIG_FISH[value].name}。'
                 elif action == 'clear_display':
                     self.cog.fishing.set_display_fish(self.guild_id, self.owner.id, None)
                     notice = '已取消展示漁獲。'

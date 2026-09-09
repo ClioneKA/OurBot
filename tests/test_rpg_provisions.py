@@ -123,6 +123,40 @@ class ProvisionTests(unittest.TestCase):
                          (data['name'], data['duration'], 86500))
         self.assertIsNone(self.provisions.active_effect(1, 1, now=86500))
 
+    def test_discard_preserves_claims_and_rewards_and_allows_new_table(self):
+        self.grant('fishing:pond:common', 10)
+        recipe = ['fishing:pond:common'] * 5
+        meal = self.provisions.cook(1, 1, 9, recipe, now=100)
+        self.provisions.publish(meal['id'], 99)
+        self.provisions.claim(meal['id'], 1, 2, now=101)
+        xp = self.provisions.state(1, 1)['xp']
+        inventory = self.characters.inventory_counts(1, 1)
+        effects = [self.provisions.active_effect(1, user, now=102) for user in (1, 2)]
+        self.provisions.discard(meal['id'], 1, 1, now=102)
+        self.assertEqual(self.provisions.meal(meal['id'])['status'], 'cancelled')
+        self.assertEqual(self.provisions.state(1, 1)['xp'], xp)
+        self.assertEqual(self.characters.inventory_counts(1, 1), inventory)
+        self.assertEqual([self.provisions.active_effect(1, user, now=102) for user in (1, 2)], effects)
+        with self.assertRaisesRegex(CharacterError, '已經結束'):
+            self.provisions.claim(meal['id'], 1, 3, now=103)
+        with self.assertRaisesRegex(CharacterError, '已經結束'):
+            self.provisions.discard(meal['id'], 1, 1, now=103)
+        self.assertNotEqual(self.provisions.cook(1, 1, 9, recipe, now=103)['id'], meal['id'])
+
+    def test_discard_requires_host_same_guild_and_open_unexpired_meal(self):
+        self.grant('fishing:pond:common', 5)
+        meal = self.provisions.cook(1, 1, 9, ['fishing:pond:common'] * 5, now=100)
+        with self.assertRaisesRegex(CharacterError, '已經結束'):
+            self.provisions.discard(meal['id'], 1, 1, now=101)
+        self.provisions.publish(meal['id'], 99)
+        for guild, user, now, error in ((1, 2, 101, '只有發布人'),
+                                        (2, 1, 101, '找不到'),
+                                        (1, 1, meal['expires_at'], '已經結束')):
+            with self.subTest(guild=guild, user=user, now=now):
+                with self.assertRaisesRegex(CharacterError, error):
+                    self.provisions.discard(meal['id'], guild, user, now=now)
+                self.assertEqual(self.provisions.meal(meal['id'])['status'], 'open')
+
     def test_public_meals_split_remaining_xp_across_needed_guests(self):
         two_seat = ['fishing:pond:rare', 'fishing:lake:rare',
                     'fishing:pond:common', 'fishing:waterway:common', 'farming:potato']

@@ -262,6 +262,7 @@ class MealOfferView(discord.ui.View):
         super().__init__(timeout=None)
         self.tavern, self.meal_id = tavern, meal_id
         self.claim_button.custom_id = f'tavern:meal:{meal_id}'
+        self.discard_button.custom_id = f'tavern:meal:discard:{meal_id}'
 
     def embed(self):
         meal = self.tavern.cog.provisions.meal(self.meal_id)
@@ -285,9 +286,24 @@ class MealOfferView(discord.ui.View):
                          f'前 {reward_guests} 位不同客人享用後，會共同替料理者解鎖剩餘 75% 料理 XP。'))
         guest_list = '\n'.join(f'{index}. <@{user_id}>'
                                for index, user_id in enumerate(claimants, 1)) or '尚無人享用'
+        deadline = ('發布人已倒掉料理，停止領取。' if meal['status'] == 'cancelled'
+                    else f'<t:{int(meal["expires_at"])}:R> 截止')
         embed.add_field(name=f'享用紀錄 {len(claimants)}/{meal["capacity"]} 人',
-                        value=f'{guest_list}\n<t:{int(meal["expires_at"])}:R> 截止', inline=False)
+                        value=f'{guest_list}\n{deadline}', inline=False)
+        embed.set_footer(text='發布人可按「倒掉」提早結束；食材不退還，已領取的效果與已取得的料理 XP 保留。')
         return embed
+
+    @discord.ui.button(label='倒掉', style=discord.ButtonStyle.danger, custom_id='tavern:meal:discard')
+    async def discard_button(self, interaction, button):
+        if interaction.guild_id is None or interaction.user.bot:
+            await interaction.response.send_message('只有發布人可以倒掉這桌料理。', ephemeral=True)
+            return
+        try:
+            self.tavern.cog.provisions.discard(
+                self.meal_id, interaction.guild_id, interaction.user.id)
+            await _refresh_offer(interaction, self, True, f'meal:{self.meal_id}')
+        except CharacterError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
 
     @discord.ui.button(label='一起享用', style=discord.ButtonStyle.success, custom_id='tavern:meal')
     async def claim_button(self, interaction, button):

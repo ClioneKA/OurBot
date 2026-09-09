@@ -465,7 +465,7 @@ class Provisions:
             state = self.state(guild, user)
             data = evaluate_ingredients(ingredient_ids, state['level'])
             if self._host_has_open_table(guild, user, now):
-                raise CharacterError('你已有一桌尚未客滿的公開料理，請等待客滿或開桌時間結束。')
+                raise CharacterError('你已有一桌尚未客滿的公開料理，請等待客滿、開桌時間結束，或按「倒掉」提早結束。')
             required = Counter(ingredient_ids)
             counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
                 WHERE guild_id=? AND user_id=?''', (guild, user)))
@@ -532,6 +532,20 @@ class Provisions:
                 raise CharacterError('這桌料理已經失效。')
             meal = self.meal(meal_id)
             self._remember_recipe(meal['guild_id'], meal['host_id'], meal['data']['ingredients'])
+        return self.meal(meal_id)
+
+    def discard(self, meal_id, guild, user, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            meal = self.meal(meal_id)
+            if not meal or meal['guild_id'] != guild:
+                raise CharacterError('找不到這桌料理。')
+            if meal['host_id'] != user:
+                raise CharacterError('只有發布人可以倒掉這桌料理。')
+            if meal['status'] != 'open' or now >= meal['expires_at']:
+                raise CharacterError('這桌料理已經結束了。')
+            self.db.execute("UPDATE rpg_meals SET status='cancelled' WHERE id=?", (meal_id,))
         return self.meal(meal_id)
 
     def cancel(self, meal_id, refund=False):

@@ -93,7 +93,7 @@ class LoadoutView(discord.ui.View):
         embed = discord.Embed(title=f'出戰配置｜{profile["name"]}', description=description, color=0x8B5CF6)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='配置不包含料理與藥水；套用失敗時不會改動目前的職業、裝備或技能。')
+        embed.set_footer(text='配置不包含料理與藥水；遺失的裝備會略過並留空，其他套用錯誤不會改動目前配置。')
         return embed
 
     async def interaction_check(self, interaction):
@@ -131,8 +131,12 @@ class LoadoutView(discord.ui.View):
                     notice = f'已將目前的職業、裝備與技能保存至「{profile["name"]}」。'
                 elif action == 'apply':
                     profile = self.current()
-                    self.cog.loadouts.apply(self.guild_id, self.owner.id, self.slot)
+                    state = self.cog.loadouts.apply(self.guild_id, self.owner.id, self.slot)
                     notice = f'已套用「{profile["name"]}」。'
+                    missing_slots = [slot for slot in profile['data']['equipment']
+                                     if slot not in state['equipped_instances']]
+                    if missing_slots:
+                        notice += f'已略過遺失的裝備：{"、".join(missing_slots)}，對應欄位留空。'
                 elif action == 'rename_value':
                     profile = self.cog.loadouts.rename(self.guild_id, self.owner.id, self.slot, value)
                     notice = f'配置已重新命名為「{profile["name"]}」。'

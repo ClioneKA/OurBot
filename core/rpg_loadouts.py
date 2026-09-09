@@ -108,9 +108,10 @@ class Loadouts:
         for slot, raw_id in equipment.items():
             if type(raw_id) is not int or raw_id in instance_ids:
                 raise CharacterError('配置中的裝備資料無效。')
+            instance_ids.add(raw_id)
             instance = self.characters.get_instance(guild, user, raw_id)
             if not instance:
-                raise CharacterError(f'配置缺少{slot}的原裝備，可能已出售或送出。')
+                continue
             item = self.characters.resolved_item(instance)
             expected = '飾品' if slot.startswith('飾品') else slot
             if item.slot != expected or item.job and item.job != job:
@@ -121,7 +122,6 @@ class Loadouts:
                 if instance.item_id in accessory_ids:
                     raise CharacterError(f'配置不能重複穿戴同名飾品「{item.name}」。')
                 accessory_ids.add(instance.item_id)
-            instance_ids.add(raw_id)
             validated_equipment[slot] = raw_id
 
         raw_rules = data.get('rules')

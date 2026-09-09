@@ -276,15 +276,9 @@ class RPG(commands.Cog):
             embed.add_field(name='距離下一級', value=f'{required - progress:,} XP')
         embed.add_field(name='累積經驗', value=f'{xp:,} XP')
         embed.add_field(name='金幣', value=f'{self.store.gold(guild_id, member.id):,} 金幣')
-        fishing_record = self.fishing.display_record(guild_id, member.id)
         fishing_records = self.fishing.records(guild_id, member.id)
         if len(fishing_records) == len(BIG_FISH):
             embed.add_field(name='生活稱號', value='魔女島釣師', inline=False)
-        if fishing_record:
-            fish_id = fishing_record['fish_id']
-            embed.add_field(name='展示漁獲', value=(
-                f'{BIG_FISH[fish_id].name}・{fishing_record["best_weight_g"] / 1000:.1f} kg\n'
-                f'{SPOTS[fish_id].name}｜{ITEMS[fishing_record["best_rod_id"]].name}'), inline=False)
         now = time.time()
         embed.add_field(name='今日聊天經驗（台灣時間）', value=
                         f'文字：{self.store.daily_xp(guild_id, member.id, "text", now):,} / {scaled_chat_xp(self.settings.text_daily_xp_limit, xp):,} XP\n'
@@ -394,6 +388,12 @@ class RPG(commands.Cog):
             embed.add_field(name='展示品', value=f'**{item.name}**\n{detail}'[:1024], inline=False)
         else:
             embed.add_field(name='展示品', value='尚未設定', inline=False)
+        fishing_record = self.fishing.display_record(guild_id, member.id)
+        if fishing_record:
+            fish_id = fishing_record['fish_id']
+            embed.add_field(name='展示漁獲', value=(
+                f'{BIG_FISH[fish_id].name}・{fishing_record["best_weight_g"] / 1000:.1f} kg\n'
+                f'{SPOTS[fish_id].name}｜{ITEMS[fishing_record["best_rod_id"]].name}'), inline=False)
         embed.set_footer(text='不公開金幣、背包內容、每日活動量與自動戰鬥規則。')
         return embed
 
