@@ -107,35 +107,35 @@ def skill_description(skill):
 
 
 SKILLS = {
-    '民兵': (Skill('奮力一擊', 'strike', 2, '造成 160% 傷害'),
-             Skill('包紮', 'heal', 3, '以治療量的 50% 恢復一名隊友生命', 'ally50'),
-             Skill('防禦', 'stance', 3, '自身減傷 20%，持續至下一回合結束', 'self40',
+    '民兵': (Skill('奮力一擊', 'strike', 3, '造成 160% 傷害'),
+             Skill('包紮', 'heal', 4, '以治療量的 50% 恢復一名隊友生命', 'ally50'),
+             Skill('防禦', 'stance', 4, '自身減傷 20%，持續至下一回合結束', 'self40',
                    timing=PREPARATION_TIMING)),
-    '裝甲步兵': (Skill('重擊', 'strike', 2, '造成 160% 傷害'),
-                 Skill('破甲', 'break', 3, '造成 100% 傷害並使目標防禦歸零，持續至下一回合結束',
+    '裝甲步兵': (Skill('重擊', 'strike', 3, '造成 160% 傷害'),
+                 Skill('破甲', 'break', 4, '造成 100% 傷害並使目標防禦歸零，持續至下一回合結束',
                        timing=PREPARATION_TIMING),
-                 Skill('攻守架勢', 'stance', 3, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40',
+                 Skill('攻守架勢', 'stance', 4, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40',
                        timing=PREPARATION_TIMING),
-                 Skill('橫掃斬', 'cleave', 4, '對全體敵人造成 120% 傷害'),
-                 Skill('重裝猛擊', 'crush', 4, '對單一敵人造成 220% 傷害')),
-    '騎士': (Skill('挑釁反擊', 'taunt', 3, '吸引敵方單體攻擊；受到直接攻擊後對攻擊者造成 100% 傷害，持續至下一回合結束',
+                 Skill('橫掃斬', 'cleave', 5, '對全體敵人造成 120% 傷害'),
+                 Skill('重裝猛擊', 'crush', 5, '對單一敵人造成 220% 傷害')),
+    '騎士': (Skill('挑釁反擊', 'taunt', 4, '吸引敵方單體攻擊；受到直接攻擊後對攻擊者造成 100% 傷害，持續至下一回合結束',
                    timing=PREPARATION_TIMING),
-             Skill('護衛', 'guard', 3, '全隊防禦增加施放者自身防禦的 100%，並免疫可淨化負面狀態，持續至下一回合結束', 'ally50',
+             Skill('護衛', 'guard', 4, '全隊防禦增加施放者自身防禦的 100%，並免疫可淨化負面狀態，持續至下一回合結束', 'ally50',
                    timing=PREPARATION_TIMING),
-             Skill('騎士衝鋒', 'knight_charge', 3, '以自身最大 HP 造成 50% 單體傷害'),
-             Skill('盾擊', 'shield_bash', 4, '造成 120% 傷害，命中後打斷蓄力並暈眩至下一回合結束（跳過一次行動）'),
-             Skill('重整旗鼓', 'rally', 4, '恢復自身最大 HP 的 50%', 'self40')),
-    '弓兵': (Skill('連射', 'double', 2, '兩次 90% 傷害，各自判定命中'),
-             Skill('妨害射擊', 'hindering_shot', 3, '造成 120% 傷害，命中後使敵方攻擊降低 20%，持續至下一回合結束'),
-             Skill('箭雨', 'area', 4, '對所有敵人各造成三次 40% 傷害', 'enemies3'),
-             Skill('三連矢', 'triple', 4, '對單一敵人連射三次，每次 85% 傷害，分別判定命中'),
-             Skill('毒箭', 'poison_arrow', 3, '造成 110% 傷害；命中後於後續兩回合各造成 70% 攻擊的無視防禦傷害，每支毒箭分開計算')),
-    '僧侶': (Skill('治療', 'heal', 2, '恢復一名隊友生命', 'ally50'),
-             Skill('祝福', 'bless', 3, '提升一名隊友攻擊 25%，持續至下一回合結束',
+             Skill('騎士衝鋒', 'knight_charge', 4, '以自身最大 HP 造成 50% 單體傷害'),
+             Skill('盾擊', 'shield_bash', 5, '造成 120% 傷害，命中後打斷蓄力並暈眩至下一回合結束（跳過一次行動）'),
+             Skill('重整旗鼓', 'rally', 5, '恢復自身最大 HP 的 50%', 'self40')),
+    '弓兵': (Skill('連射', 'double', 3, '兩次 90% 傷害，各自判定命中'),
+             Skill('妨害射擊', 'hindering_shot', 4, '造成 120% 傷害，命中後使敵方攻擊降低 20%，持續至下一回合結束'),
+             Skill('箭雨', 'area', 5, '對所有敵人各造成三次 40% 傷害', 'enemies3'),
+             Skill('三連矢', 'triple', 5, '對單一敵人連射三次，每次 85% 傷害，分別判定命中'),
+             Skill('毒箭', 'poison_arrow', 4, '造成 110% 傷害；命中後於後續兩回合各造成 70% 攻擊的無視防禦傷害，每支毒箭分開計算')),
+    '僧侶': (Skill('治療', 'heal', 3, '恢復一名隊友生命', 'ally50'),
+             Skill('祝福', 'bless', 4, '提升一名隊友攻擊 25%，持續至下一回合結束',
                    timing=PREPARATION_TIMING),
-             Skill('淨化', 'cleanse', 2, '移除一名隊友的中毒、毒箭侵蝕、破甲、暈眩、虛弱與腐敗', 'ally_debuff'),
-             Skill('群體治療', 'group_heal', 4, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
-             Skill('聖光', 'holy_light', 4, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50')),
+             Skill('淨化', 'cleanse', 3, '移除一名隊友的中毒、毒箭侵蝕、破甲、暈眩、虛弱與腐敗', 'ally_debuff'),
+             Skill('群體治療', 'group_heal', 5, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
+             Skill('聖光', 'holy_light', 5, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50')),
 }
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
@@ -2234,14 +2234,15 @@ class Battle:
         modes can call this method after validating a player's explicit choice.
         """
         self.record_skill(actor, skill.name)
-        cooldown = max(1, skill.cooldown - actor.cooldown_reduction)
+        cooldown = max(2, skill.cooldown - actor.cooldown_reduction)
         if (actor.first_skill_cooldown_reduction and not actor.first_skill_cooldown_used
-                and skill.cooldown >= 2):
-            cooldown = max(1, cooldown - actor.first_skill_cooldown_reduction)
+                and skill.cooldown >= 3):
+            cooldown = max(2, cooldown - actor.first_skill_cooldown_reduction)
             actor.first_skill_cooldown_used = True
             self.log.append(f'{actor.name} 的【循環徽記】使【{skill.name}】冷卻減少 '
                             f'{actor.first_skill_cooldown_reduction} 回合。')
-        actor.ready[rule.slot] = self.round + cooldown + 1
+        # The casting round counts toward cooldown; CD 1 is ready next round.
+        actor.ready[rule.slot] = self.round + cooldown
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
         if effect in ('group_heal', 'rally'):

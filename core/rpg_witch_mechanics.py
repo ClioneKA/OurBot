@@ -883,11 +883,11 @@ class WitchBattleV8(WitchBattleV4):
             self.events['brainwash_no_target'] += 1
             return
         self.record_skill(actor, skill.name)
-        cooldown = max(1, skill.cooldown - actor.cooldown_reduction)
-        if actor.first_skill_cooldown_reduction and not actor.first_skill_cooldown_used and skill.cooldown >= 2:
-            cooldown = max(1, cooldown - actor.first_skill_cooldown_reduction)
+        cooldown = max(2, skill.cooldown - actor.cooldown_reduction)
+        if actor.first_skill_cooldown_reduction and not actor.first_skill_cooldown_used and skill.cooldown >= 3:
+            cooldown = max(2, cooldown - actor.first_skill_cooldown_reduction)
             actor.first_skill_cooldown_used = True
-        actor.ready[rule.slot] = self.round + cooldown + 1
+        actor.ready[rule.slot] = self.round + cooldown
         if skill.effect in ('group_heal', 'rally'):
             if skill.effect == 'rally':
                 targets = [self.rng.choice(targets)]

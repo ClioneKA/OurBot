@@ -226,6 +226,15 @@ class TotalRaidBattleTests(unittest.TestCase):
             battle.submit(1, ACTION_SKILL, target, 1)
         available = battle.available_actions(1)
         self.assertEqual(available[1]['cooldown_remaining'], 2)
+        battle.submit(1, ACTION_ATTACK, target)
+        battle.resolve()
+        self.assertEqual(battle.available_actions(1)[1]['cooldown_remaining'], 1)
+        battle.submit(1, ACTION_ATTACK, target)
+        battle.resolve()
+        self.assertEqual(battle.available_actions(1)[1]['cooldown_remaining'], 0)
+        battle.submit(1, ACTION_SKILL, target, 1)
+        battle.resolve()
+        self.assertEqual(fighter.ready[1], 7)
 
     def test_target_validation_and_dead_target_falls_back(self):
         first, second = player(1, attack=1000, dex=100), player(2, attack=50, dex=50)

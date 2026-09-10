@@ -745,8 +745,8 @@ def item_text(item):
         set_name, set_effect = SET_BONUSES[item.set_id]
         parts.append(f'{set_name}套裝（2 件）：{set_effect}')
     if item.first_skill_cooldown_reduction:
-        parts.append('每場第一次成功施放基礎冷卻至少 2 回合的主動技能時，'
-                     f'該次冷卻 -{item.first_skill_cooldown_reduction}（最低 1 回合）')
+        parts.append('每場第一次成功施放基礎冷卻至少 3 回合的主動技能時，'
+                     f'該次冷卻 -{item.first_skill_cooldown_reduction}（最低 2 回合）')
     if item.description:
         parts.append(item.description)
     return '、'.join(parts) or '無加成'

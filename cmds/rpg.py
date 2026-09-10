@@ -650,7 +650,7 @@ class RPG(commands.Cog):
             embed.add_field(name=f'職業被動｜{passive.name}', value=passive.description, inline=False)
         elif self.tactics.available_passives(guild, user, state['job']):
             embed.add_field(name='職業被動｜尚未選擇', value='Lv.50 已解鎖三個職業被動，請從技能面板選擇一個。', inline=False)
-        embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻 2 表示完整等待兩回合。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。「優先」目標不存在時會改選其他合法目標。')
+        embed.set_footer(text='在 /冒險 → 技能 面板調整。冷卻包含施放當回合；CD 2 在第 1 回合施放，第 3 回合可再用。自身技能作用於自己；護衛作用全隊；範圍攻擊作用全體敵人，皆忽略目標選項。「優先」目標不存在時會改選其他合法目標。')
         return embed
 
 

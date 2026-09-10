@@ -13,6 +13,31 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_shifted_cooldowns_preserve_original_intervals_with_reductions(self):
+        original = {
+            '民兵': (2, 3, 3), '裝甲步兵': (2, 3, 3, 4, 4),
+            '騎士': (3, 3, 3, 4, 4), '弓兵': (2, 3, 4, 4, 3),
+            '僧侶': (2, 3, 2, 4, 4),
+        }
+        for job, cooldowns in original.items():
+            for skill_id, (skill, old_cd) in enumerate(zip(SKILLS[job], cooldowns), 1):
+                self.assertEqual(skill.cooldown, old_cd + 1)
+                for reduction in (0, 1):
+                    for emblem in (0, 1):
+                        with self.subTest(job=job, skill=skill_id, reduction=reduction, emblem=emblem):
+                            actor = fighter(job=job, rules=[])
+                            enemy = fighter('enemy', 1, hp=10000, rules=[])
+                            actor.cooldown_reduction = reduction
+                            actor.first_skill_cooldown_reduction = emblem
+                            battle = Battle([actor, enemy], seed=1)
+                            battle.round = 1
+                            target = actor if skill.effect in (
+                                'heal', 'group_heal', 'holy_light', 'cleanse', 'bless',
+                                'guard', 'stance', 'taunt', 'rally') else enemy
+                            battle.use_skill(actor, Rule(1, 1, True, 'always', 'lowest', skill_id), skill, target)
+                            old_effective = max(1, max(1, old_cd - reduction) - emblem)
+                            self.assertEqual(actor.ready[1], 1 + old_effective + 1)
+
     def test_holy_light_enemy_condition_ignores_taunt_and_keeps_healing_target(self):
         actor = fighter(job='僧侶', rules=[
             Rule(1, 1, True, 'enemy_hp_lte', 'lowest', 5, 50)])
@@ -991,7 +1016,7 @@ class BattleTests(unittest.TestCase):
         battle.act(cleric)
         self.assertEqual(cleric.hp, 110)
         cleric.hp = 50
-        for turn in (2, 3):
+        for turn in (1, 2, 3):
             battle.round = turn
             self.assertNotEqual(battle.select(cleric)[1].name, '治療')
         battle.round = 4
@@ -1104,6 +1129,11 @@ class BattleTests(unittest.TestCase):
         self.assertTrue(any('循環徽記' in line and '奮力一擊' in line for line in battle.log))
         reloaded = load_battle(json.loads(json.dumps(dump_battle(battle))))
         self.assertTrue(reloaded.fighters[0].first_skill_cooldown_used)
+        reloaded.round = 3
+        actor = reloaded.fighters[0]
+        self.assertIsNotNone(reloaded.select(actor))
+        reloaded.act(actor)
+        self.assertEqual(actor.ready[1], 6)
 
     def test_new_raid_monster_shapes_and_persisted_tags(self):
         from core.rpg_monsters import prepare_monster

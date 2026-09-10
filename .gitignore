@@ -9,3 +9,8 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 local_designs/
+
+# Local cooldown simulation reports and data
+docs/balance/cooldown-comparison.json
+docs/balance/cooldown-comparison.md
+docs/balance/cooldown-summary.md

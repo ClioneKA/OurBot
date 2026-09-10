@@ -15,7 +15,7 @@ DESCRIPTIONS = {
     'witch_star': '自己具有挑釁效果時，受到的直接傷害 -4%。',
     'witch_afterimage': '同一敵人連續兩回合直接傷害自己時，第二回合該敵人的直接傷害 -4%。',
     'witch_embers': '對具有火傷或中毒的敵人，直接傷害 +4%；兩者並存不重複加成。',
-    'witch_fist': '基礎冷卻至少三回合的單體傷害技能，傷害 +4%。',
+    'witch_fist': '基礎冷卻至少四回合的單體傷害技能，傷害 +4%。',
     'witch_feather': '受到的全體攻擊傷害 -4%；不減少單體或持續傷害。',
     'witch_camera': '連續行動攻擊同一目標，第二次起命中率 +3 個百分點；換目標或非攻擊行動重置。',
     'witch_dawn': '每場一次，HP 高於 50% 時受到致命攻擊，以 1 HP 存活。',
@@ -126,7 +126,7 @@ def direct_modifiers(battle, actor, target, context, scope):
         multiplier *= 1.04
     skill = context['skill'] if context else None
     if (actor.status_stacks.get('embroidery_witch_fist') and skill and context['damaging']
-            and scope == 'single' and skill.effect not in ('area', 'cleave', 'holy_light') and skill.cooldown >= 3):
+            and scope == 'single' and skill.effect not in ('area', 'cleave', 'holy_light') and skill.cooldown >= 4):
         multiplier *= 1.04
     if target.status_stacks.get('embroidery_witch_star') and target.has('taunt', battle.round):
         multiplier *= .96

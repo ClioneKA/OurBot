@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock
 from itertools import combinations
 
-from core.rpg_battle import Rule
+from core.rpg_battle import Rule, Skill
 from core.rpg_total_battle import ACTION_ATTACK, ACTION_SKILL, TotalRaidError, dump_total_battle, load_total_battle
 from core.rpg_witch_battle import witch_battle_from_participants, ACTION_DEFEND, STATE_FIELDS, WITCH_RHYTHMS
 from core.rpg_witch_catalog import IDS
@@ -68,6 +68,19 @@ class WitchBattleTests(unittest.TestCase):
         b.commands[b.key(p)] = ('brainwash', 1)
         slot = next(r.slot for r in p.rules if b._skill(p, r.slot)[1].effect == 'heal')
         self.assertEqual(b.valid_targets(p.user_id, ACTION_SKILL, slot), [b.key(w) for w in b.witches()])
+
+    def test_brainwashed_group_skill_counts_casting_round_in_cooldown(self):
+        for reduction, expected_ready in ((0, 4), (1, 3), (5, 3)):
+            with self.subTest(reduction=reduction):
+                b = self.make()
+                p = b.living(0)[0]
+                b.round = 1
+                b.washed_actor = p
+                p.cooldown_reduction = reduction
+                b.hit = Mock(return_value=True)
+                b._resolve_skill(p, p.rules[0], Skill('test', 'area', 3, ''), p)
+                self.assertEqual(p.ready[1], expected_ready)
+                self.assertTrue(b.hit.called)
 
     def test_no_look_target_rejected(self):
         b = self.make()

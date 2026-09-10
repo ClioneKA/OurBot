@@ -49,8 +49,8 @@ class WitchEmbroideryTests(unittest.TestCase):
         target.effects.update(burn=1, poison=1)
         self.assertEqual(self.damage(b, a, target), 104)
         b, a, target = self.duel('witch_fist')
-        for effect, cooldown, scope, expected in [('strike', 3, 'single', 104),
-                                                  ('strike', 2, 'single', 100), ('area', 3, 'group', 100)]:
+        for effect, cooldown, scope, expected in [('strike', 4, 'single', 104),
+                                                  ('strike', 3, 'single', 100), ('area', 4, 'group', 100)]:
             context = b._begin_passive_action(a, Skill('測試', effect, cooldown, ''), target)
             self.assertEqual(self.damage(b, a, target, attack_scope=scope), expected)
             b._finish_passive_action(context)
