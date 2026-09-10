@@ -16,21 +16,36 @@ class QuantityModal(discord.ui.Modal):
         super().__init__(title='確認給予數量' if panel.mode == 'give' else '確認賣出數量')
         self.panel, self.key, self.recipient = panel, panel.selected, panel.recipient
         self.revision = panel.revision
-        item = panel.entries[self.key].item
-        label = f'{item.name}｜每件 {item_sell_price(item)} 金幣' if panel.mode == 'sell' else item.name
-        self.amount = discord.ui.TextInput(label=label[:45], default='1', min_length=1, max_length=9)
-        self.add_item(self.amount)
+        self.amounts = {}
+        for key in (panel.selected_keys if panel.mode == 'give' else [self.key]):
+            item = panel.entries[key].item
+            available = panel.cog.characters.available_quantity(panel.guild_id, panel.owner.id, key)
+            label = f'{item.name}｜每件 {item_sell_price(item)} 金幣' if panel.mode == 'sell' else f'{item.name}｜可用 {available}'
+            field = discord.ui.TextInput(label=label[:45], default='1', min_length=1, max_length=9)
+            self.amounts[key] = field
+            self.add_item(field)
+        self.amount = next(iter(self.amounts.values()))
 
     async def on_submit(self, interaction):
         try:
-            amount = int(self.amount.value)
+            requests = [(key, int(field.value)) for key, field in self.amounts.items()]
+            if any(amount < 1 for _, amount in requests):
+                raise ValueError
         except ValueError:
             await interaction.response.send_message('請輸入正整數數量。', ephemeral=True)
             return
-        if self.panel.entries[self.key].instance_id and amount != 1:
+        amount = requests[0][1]
+        if self.panel.mode == 'sell' and self.key.startswith('instance:') and amount != 1:
             await interaction.response.send_message('獨立裝備一次只能操作一件。', ephemeral=True)
             return
-        await self.panel.execute(interaction, self.key, self.recipient, amount, self.revision)
+        await self.panel.execute(interaction, self.key, self.recipient, amount, self.revision,
+                                 requests=requests if self.panel.mode == 'give' else None)
+
+
+class TradeItemSelect(PanelSelect):
+    async def callback(self, interaction):
+        await self.view.handle(interaction, self.action,
+                               list(self.values) if self.view.mode == 'give' else self.values[0])
 
 
 class RecipientSelect(discord.ui.UserSelect):
@@ -47,6 +62,7 @@ class TradeView(discord.ui.View):
         self.cog, self.origin, self.mode = cog, interaction, mode
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.selected, self.recipient, self.page = None, None, 0
+        self.selected_keys = []
         self.category = '全部'
         self.closed, self.revision = False, 0
         self.lock = asyncio.Lock()
@@ -65,16 +81,19 @@ class TradeView(discord.ui.View):
         self.page = min(self.page, self.pages - 1)
         if self.selected not in self.catalog:
             self.selected = None
-        self.selected_equipped = bool(self.selected and self.entries[self.selected].instance_id in self.equipped_ids)
+        self.selected_keys = [key for key in self.selected_keys if key in self.catalog]
+        self.selected_equipped = any(self.entries[key].instance_id in self.equipped_ids
+                                     for key in self.selected_keys)
         self.clear_items()
         self.add_item(PanelSelect('category', row=0, placeholder='選擇物品分類', options=[
             discord.SelectOption(label=category, value=category, default=category == self.category)
             for category in TRADE_CATEGORIES]))
         keys = self.catalog[self.page * 10:(self.page + 1) * 10]
-        self.add_item(PanelSelect('item', row=1, placeholder=f'{self.category}｜選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
+        self.add_item(TradeItemSelect('item', row=1, placeholder=f'{self.category}｜選擇物品（{self.page+1}/{self.pages}）', disabled=not keys,
+            max_values=min(5, len(keys)) if self.mode == 'give' and keys else 1,
             options=[discord.SelectOption(
                 label=inventory_entry_label(self.entries[key], self.equipped_ids),
-                value=key, default=key == self.selected,
+                value=key, default=key in self.selected_keys,
                 description=(('請先卸下，再賣出或給予' if self.entries[key].instance_id in self.equipped_ids else
                               '獨立裝備｜一次一件' if self.entries[key].instance_id else
                               f'可用 {chars.available_quantity(self.guild_id, self.owner.id, key)} 件')
@@ -104,14 +123,16 @@ class TradeView(discord.ui.View):
             description='先選擇分類與物品，再填寫數量，送出即確認。僅能操作未穿戴的份數。\n'
                         '木棒與免費補給不可給予，但可用 0 金幣出售；釣竿不可給予或出售。', color=0xD8AF40)
         embed.add_field(name='物品分類', value=f'{self.category}｜{len(self.catalog)} 筆｜第 {self.page + 1}/{self.pages} 頁', inline=False)
-        if self.selected:
-            item = self.entries[self.selected].item
+        if self.mode == 'give':
+            embed.description += '\n每批可選同頁最多 5 筆物品，各自填寫數量；超過可用量會給出最大量。'
+        for key in self.selected_keys:
+            item = self.entries[key].item
             value = item_text(item)
             if self.mode == 'sell':
                 value += f'\n收購價 {item_sell_price(item)} 金幣／件'
-            if self.selected_equipped:
+            if self.entries[key].instance_id in self.equipped_ids:
                 value += '\n這件裝備正在穿戴中，請先卸下再賣出或給予。'
-            embed.add_field(name=inventory_entry_label(self.entries[self.selected], self.equipped_ids), value=value, inline=False)
+            embed.add_field(name=inventory_entry_label(self.entries[key], self.equipped_ids), value=value, inline=False)
         if self.mode == 'give':
             embed.add_field(name='收件人', value=f'<@{self.recipient}>' if self.recipient else '尚未選擇')
         else:
@@ -149,21 +170,27 @@ class TradeView(discord.ui.View):
             self.revision += 1
             if action == 'category' and value in TRADE_CATEGORIES:
                 self.category, self.page, self.selected = value, 0, None
-            elif action == 'item' and value in self.catalog:
-                self.selected = value
+                self.selected_keys = []
             elif action == 'item':
-                # Compatibility for component payloads created before instance ids.
-                self.selected = next((reference for reference in self.catalog
-                                      if self.entries[reference].item_id == value), None)
+                values = value if isinstance(value, list) else [value]
+                selected = []
+                for candidate in values[:5 if self.mode == 'give' else 1]:
+                    key = candidate if candidate in self.catalog else next(
+                        (reference for reference in self.catalog if self.entries[reference].item_id == candidate), None)
+                    if key and key not in selected:
+                        selected.append(key)
+                self.selected_keys = selected
+                self.selected = next(iter(selected), None)
             elif action == 'recipient':
                 self.recipient = value
             elif action in ('next', 'previous'):
                 self.page = max(0, min(self.pages-1, self.page + (1 if action == 'next' else -1)))
                 self.selected = None
+                self.selected_keys = []
             self.rebuild()
             await interaction.response.edit_message(embed=self.embed(), view=self, allowed_mentions=discord.AllowedMentions.none())
 
-    async def execute(self, interaction, key, recipient, amount, revision):
+    async def execute(self, interaction, key, recipient, amount, revision, requests=None):
         if not await self.interaction_check(interaction):
             return
         async with self.lock:
@@ -184,18 +211,23 @@ class TradeView(discord.ui.View):
                         raise CharacterError('不能給予機器人。')
                     if not self.cog.store.has_player(self.guild_id, recipient):
                         raise CharacterError('對方尚未接受邀請，不能接收冒險道具。')
-                item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, key)
-                gold = self.cog.characters.dispose(self.guild_id, self.owner.id, key, amount,
-                                                  recipient if self.mode == 'give' else None)
-                notice = (f'已給予 <@{recipient}> {item.name} ×{amount}。' if self.mode == 'give'
-                          else f'已賣出 {item.name} ×{amount}，獲得 {gold} 金幣。')
+                if self.mode == 'give':
+                    results = self.cog.characters.give_batch(self.guild_id, self.owner.id,
+                                                            requests if requests is not None else [(key, amount)], recipient)
+                    notice = f'已給予 <@{recipient}>：\n' + '\n'.join(f'{item.name} ×{actual}' for item, actual in results)
+                else:
+                    item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, key)
+                    gold = self.cog.characters.dispose(self.guild_id, self.owner.id, key, amount)
+                    notice = f'已賣出 {item.name} ×{amount}，獲得 {gold} 金幣。'
                 self.selected = None
+                self.selected_keys = []
                 if self.mode == 'give':
                     sender = discord.utils.escape_markdown(getattr(self.owner, 'display_name', str(self.owner.id)))
                     guild_name = discord.utils.escape_markdown(getattr(interaction.guild, 'name', str(self.guild_id)))
                     notification = discord.Embed(title='安安大冒險｜收到道具',
                         description=f'你在 **{guild_name}** 收到 **{sender}** 贈送的道具！', color=0x8B5CF6)
-                    notification.add_field(name=item.name, value=f'數量：{amount}\n{item_text(item)}', inline=False)
+                    for item, actual in results:
+                        notification.add_field(name=item.name, value=f'數量：{actual}\n{item_text(item)}', inline=False)
                     notification.set_footer(text='道具已放入該伺服器的背包，使用 /冒險 → 背包 查看。')
                     try:
                         await asyncio.wait_for(member.send(embed=notification,

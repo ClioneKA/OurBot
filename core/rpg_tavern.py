@@ -478,8 +478,7 @@ class TavernView(discord.ui.View):
         for npc, name in (('annan', '安安'), ('hanna', '漢娜')):
             quest = board[npc]
             target = quest['target'] if npc == 'annan' else ITEMS[quest['target']].name
-            request = (f'「幫我討伐 {target} 吧！」' if npc == 'annan'
-                       else f'「廚房缺一些 {target}，可以幫我帶來嗎？」')
+            request = quest['dialogue'].format(target=target, quantity=quest['quantity'])
             status = ('好感度待補發，重新整理可重試' if quest['pending'] else
                       '✅ 已完成' if quest['claimed'] else f'{quest["progress"]}/{quest["quantity"]}')
             lines.append(f'**{name}** {request}\n'

@@ -1571,6 +1571,33 @@ class Characters:
 
     def dispose(self, guild, user, key, quantity, recipient=None):
         """Transfer or sell only unequipped copies in one transaction."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            return self._dispose(guild, user, key, quantity, recipient)
+
+    def give_batch(self, guild, user, requests, recipient):
+        """Transfer a batch atomically, returning each item's actual quantity."""
+        requests = list(requests)
+        if recipient is None or not requests:
+            raise CharacterError('請選擇收件人與物品。')
+        if len({key for key, _ in requests}) != len(requests):
+            raise CharacterError('同一件物品不能重複選擇。')
+        results = []
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            for key, quantity in requests:
+                if type(quantity) is not int or quantity < 1:
+                    raise CharacterError('數量必須是正整數。')
+                amount = min(quantity, self.available_quantity(guild, user, key))
+                if amount < 1:
+                    raise CharacterError('物品已無可用數量；穿戴中的裝備請先卸下。')
+                item = self.item_for_reference(guild, user, key)
+                self._dispose(guild, user, key, amount, recipient)
+                results.append((item, amount))
+        return results
+
+    def _dispose(self, guild, user, key, quantity, recipient=None):
+        """Apply one disposal inside the caller's transaction."""
         reference_instance = self._resolve_instance(guild, user, key)
         display_key = self.instance_item_id(reference_instance) if reference_instance else key
         item = self.resolved_item(reference_instance) if reference_instance else ITEMS.get(key)
@@ -1582,56 +1609,54 @@ class Characters:
             raise CharacterError('數量必須是正整數。')
         if recipient == user:
             raise CharacterError('不能給予自己。')
-        with self.db:
-            self.db.execute('BEGIN IMMEDIATE')
-            if quantity > self.available_quantity(guild, user, key):
+        if quantity > self.available_quantity(guild, user, key):
+            raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
+        if reference_instance:
+            equipped = {row[0] for row in self.db.execute('''SELECT instance_id FROM rpg_equipment
+                WHERE guild_id=? AND user_id=?''', (guild, user))}
+            matches = [instance for instance in self.equipment_instances(guild, user)
+                       if self.instance_item_id(instance) == display_key and instance.instance_id not in equipped]
+            if str(key).startswith('instance:'):
+                matches = [instance for instance in matches
+                           if instance.instance_id == reference_instance.instance_id]
+            if len(matches) < quantity:
                 raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
-            if reference_instance:
-                equipped = {row[0] for row in self.db.execute('''SELECT instance_id FROM rpg_equipment
-                    WHERE guild_id=? AND user_id=?''', (guild, user))}
-                matches = [instance for instance in self.equipment_instances(guild, user)
-                           if self.instance_item_id(instance) == display_key and instance.instance_id not in equipped]
-                if str(key).startswith('instance:'):
-                    matches = [instance for instance in matches
-                               if instance.instance_id == reference_instance.instance_id]
-                if len(matches) < quantity:
-                    raise CharacterError('可用數量不足；正在穿戴的那一件不能給予或賣出，請先卸下。')
-                selected = matches[:quantity]
-                if recipient is not None:
-                    self.db.executemany('''UPDATE rpg_equipment_instances SET user_id=?
-                        WHERE instance_id=? AND guild_id=? AND user_id=?''',
-                        [(recipient, instance.instance_id, guild, user) for instance in selected])
-                    if self.db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
-                        AND name='rpg_crystal_instances'""").fetchone():
-                        self.db.executemany('''UPDATE rpg_crystal_instances SET user_id=?
-                            WHERE equipment_instance_id=?''',
-                            [(recipient, instance.instance_id) for instance in selected])
-                    return 0
+            selected = matches[:quantity]
+            if recipient is not None:
+                self.db.executemany('''UPDATE rpg_equipment_instances SET user_id=?
+                    WHERE instance_id=? AND guild_id=? AND user_id=?''',
+                    [(recipient, instance.instance_id, guild, user) for instance in selected])
                 if self.db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
                     AND name='rpg_crystal_instances'""").fetchone():
-                    self.db.executemany('DELETE FROM rpg_crystal_instances WHERE equipment_instance_id=?',
-                                        [(instance.instance_id,) for instance in selected])
-                self.db.executemany('DELETE FROM rpg_instance_sockets WHERE instance_id=?',
-                                    [(instance.instance_id,) for instance in selected])
-                self.db.executemany('DELETE FROM rpg_instance_affixes WHERE instance_id=?',
-                                    [(instance.instance_id,) for instance in selected])
-                self.db.executemany('DELETE FROM rpg_equipment_instances WHERE instance_id=?',
-                                    [(instance.instance_id,) for instance in selected])
-                gold = item_sell_price(item) * quantity
-                self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
-                                'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold',
-                                (guild, user, gold))
-                return gold
-            self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? WHERE guild_id=? AND user_id=? AND item_id=?',
-                            (quantity, guild, user, key))
-            self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0',
-                            (guild, user, key))
-            if recipient is not None:
-                self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity) VALUES (?,?,?,?) '
-                                'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=quantity+excluded.quantity',
-                                (guild, recipient, key, quantity))
+                    self.db.executemany('''UPDATE rpg_crystal_instances SET user_id=?
+                        WHERE equipment_instance_id=?''',
+                        [(recipient, instance.instance_id) for instance in selected])
                 return 0
+            if self.db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                AND name='rpg_crystal_instances'""").fetchone():
+                self.db.executemany('DELETE FROM rpg_crystal_instances WHERE equipment_instance_id=?',
+                                    [(instance.instance_id,) for instance in selected])
+            self.db.executemany('DELETE FROM rpg_instance_sockets WHERE instance_id=?',
+                                [(instance.instance_id,) for instance in selected])
+            self.db.executemany('DELETE FROM rpg_instance_affixes WHERE instance_id=?',
+                                [(instance.instance_id,) for instance in selected])
+            self.db.executemany('DELETE FROM rpg_equipment_instances WHERE instance_id=?',
+                                [(instance.instance_id,) for instance in selected])
             gold = item_sell_price(item) * quantity
             self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
-                            'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold', (guild, user, gold))
+                            'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold',
+                            (guild, user, gold))
             return gold
+        self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? WHERE guild_id=? AND user_id=? AND item_id=?',
+                        (quantity, guild, user, key))
+        self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? AND item_id=? AND quantity=0',
+                        (guild, user, key))
+        if recipient is not None:
+            self.db.execute('INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity) VALUES (?,?,?,?) '
+                            'ON CONFLICT(guild_id,user_id,item_id) DO UPDATE SET quantity=quantity+excluded.quantity',
+                            (guild, recipient, key, quantity))
+            return 0
+        gold = item_sell_price(item) * quantity
+        self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
+                        'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold', (guild, user, gold))
+        return gold

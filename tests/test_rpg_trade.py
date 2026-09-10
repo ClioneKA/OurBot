@@ -13,6 +13,59 @@ from core.settings import RPGSettings
 
 
 class TradeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_batch_modal_clamps_current_stock_and_sends_one_receipt(self):
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
+        view = TradeView(self.cog, self.interaction, 'give')
+        self.addCleanup(view.stop)
+        equipment = next(key for key in view.catalog if view.entries[key].item_id == 'raid:0')
+        await view.handle(self.interaction, 'item', [equipment, 'fishing:pond:common'])
+        await view.handle(self.interaction, 'recipient', 2)
+        await view.handle(self.interaction, 'confirm')
+        modal = self.interaction.response.send_modal.call_args.args[0]
+        self.addCleanup(modal.stop)
+        self.assertEqual(len(modal.children), 2)
+        self.assertEqual(view.children[1].max_values, min(5, len(view.children[1].options)))
+        for field in modal.amounts.values():
+            field._value = '999'
+        self.characters.consume_item(1, 1, 'fishing:pond:common', 3)
+        await modal.on_submit(self.interaction)
+        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 1)
+        self.assertEqual(self.characters.inventory_counts(1, 2)['fishing:pond:common'], 4)
+        member = self.interaction.guild.fetch_member.return_value
+        member.send.assert_awaited_once()
+        fields = member.send.call_args.kwargs['embed'].fields
+        self.assertIn('數量：1', fields[0].value)
+        self.assertIn('數量：4', fields[1].value)
+        await modal.on_submit(self.interaction)
+        member.send.assert_awaited_once()
+
+    async def test_batch_rollback_when_later_item_is_equipped_or_invalid(self):
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
+        self.characters.equip(1, 1, 'raid:0')
+        worn = self.characters.snapshot(1, 1)['equipped_instances']['飾品1']
+        for key, amount in [(f'instance:{worn}', 999), ('raid:0', 0), ('raid:0', -1),
+                            ('starter:club', 1)]:
+            with self.subTest(key=key, amount=amount), self.assertRaises(CharacterError):
+                self.characters.give_batch(1, 1, [('fishing:pond:common', 5), (key, amount)], 2)
+            self.assertEqual(self.characters.inventory_counts(1, 1)['fishing:pond:common'], 7)
+            self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 2))
+
+    async def test_batch_database_failure_rolls_back_previous_items(self):
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
+        self.store.db.execute("CREATE TEMP TRIGGER reject_batch BEFORE UPDATE ON rpg_equipment_instances WHEN NEW.user_id=2 BEGIN SELECT RAISE(ABORT, 'test'); END")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.characters.give_batch(1, 1, [('fishing:pond:common', 5), ('raid:0', 1)], 2)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['fishing:pond:common'], 7)
+        self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 2))
+
+    async def test_batch_clamps_equipment_to_unequipped_copies(self):
+        self.characters.equip(1, 1, 'raid:0')
+        results = self.characters.give_batch(1, 1, [('raid:0', 999)], 2)
+        self.assertEqual(results[0][1], 2)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+        self.assertEqual(self.characters.inventory_counts(1, 2)['raid:0'], 2)
+        self.assertEqual(self.characters.snapshot(1, 1)['equipped']['飾品1'], 'raid:0')
+
     async def test_categories_filter_reset_page_and_keep_recipient(self):
         self.characters.grant_item(1, 1, 'fishing:pond:common', 2)
         self.characters.grant_item(1, 1, 'raid:0', 12)

@@ -9,6 +9,7 @@ from core.rpg_character import CharacterError
 from core.rpg_monsters import PROFILES
 from core.rpg_provisions import INGREDIENTS
 from core.rpg_affinity import initialize_affinity, hanna_affinity
+from core.rpg_commission_dialogue import daily_dialogue
 
 
 TAIPEI = timezone(timedelta(hours=8))
@@ -47,15 +48,26 @@ class DailyCommissions:
                               (guild, day)).fetchone()
         if row:
             board = json.loads(row[0])
+            missing_dialogue = any('dialogue' not in quest for quest in board.values())
             for npc, quest in board.items():
                 quest.pop('gold', None)
                 quest['affinity'] = 1 if npc == 'annan' else INGREDIENTS[quest['target']].quality
+                quest.setdefault('dialogue', daily_dialogue(guild, day, npc))
+                # Upgrade saved lines without rerolling the day's request.
+                if quest['dialogue'].startswith('（') and '）' in quest['dialogue']:
+                    quest['dialogue'] = quest['dialogue'].split('）', 1)[1]
+                    missing_dialogue = True
+            if missing_dialogue:
+                self.db.execute('UPDATE rpg_daily_commission_boards SET data=? WHERE guild_id=? AND day=?',
+                                (json.dumps(board, ensure_ascii=False), guild, day))
             return board
         rng = random.Random(f'tavern-commissions:{guild}:{day}')
         targets = tuple(kind for kind, profile in PROFILES.items() if profile[0] <= 2)
         food = rng.choice(FOOD_TARGETS)
         board = dict(annan=dict(target=rng.choice(targets), quantity=1, affinity=1),
                      hanna=dict(target=food, quantity=rng.randint(2, 4), affinity=INGREDIENTS[food].quality))
+        for npc, quest in board.items():
+            quest['dialogue'] = daily_dialogue(guild, day, npc)
         self.db.execute('INSERT INTO rpg_daily_commission_boards VALUES (?,?,?)',
                         (guild, day, json.dumps(board, ensure_ascii=False)))
         return board
