@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import (Battle, Fighter, Rule, Tactics, dump_battle, load_battle,
@@ -85,21 +86,63 @@ class InfantryPassiveTests(unittest.TestCase):
         use(battle, actor, 3)
         self.assertEqual(actor.hp - before_hp, 30)
 
-    def test_blood_rage_builds_once_per_round_and_consumes(self):
-        actor, enemy = fighter('裝甲步兵', 3), fighter('敵人', team=1, hp=5000)
-        actor.hp = 500
+    def test_blood_pays_hp_to_boost_only_current_skill_attack(self):
+        actor, enemy = fighter('裝甲步兵', 3), fighter('敵人', team=1, hp=10000)
+        enemy.stats['防禦'] = 100
         battle = Battle([actor, enemy], 1)
         battle.round = 1
-        battle.hit(enemy, actor, precise=True)
-        battle.hit(enemy, actor, precise=True)
-        self.assertEqual(actor.passive_state['blood_rage'], 2)
-        use(battle, actor, 3)
-        self.assertEqual(actor.passive_state['blood_rage'], 3)
         before = enemy.hp
         use(battle, actor, 1, enemy)
-        # Existing 攻守架勢 attack +20% also remains active.
-        self.assertEqual(before - enemy.hp, 249)
-        self.assertEqual(actor.passive_state['blood_rage'], 0)
+        self.assertEqual(actor.hp, 950)
+        self.assertEqual(before - enemy.hp, 205)  # (100 + 50) attack * 1.6 - 35 defense.
+        self.assertEqual(actor.stats['攻擊'], 100)
+        self.assertEqual(actor.combat_stats['damage_taken'], 50)
+        before = enemy.hp
+        battle.basic_attack(actor, enemy)
+        self.assertEqual(before - enemy.hp, 65)
+        self.assertEqual(actor.hp, 950)
+        use(battle, actor, 3)  # Non-damaging preparation does not cost HP.
+        self.assertEqual(actor.hp, 950)
+        self.assertNotIn('blood_rage', actor.passive_state)
+
+    def test_blood_cost_never_kills_and_requires_full_payment(self):
+        for hp in (1, 49, 50, 51):
+            with self.subTest(hp=hp):
+                actor, enemy = fighter('裝甲步兵', 3), fighter('敵人', team=1, hp=10000)
+                actor.hp = hp
+                battle = Battle([actor, enemy], 1)
+                before = enemy.hp
+                use(battle, actor, 1, enemy)
+                self.assertEqual(actor.hp, hp - 50 if hp > 50 else hp)
+                self.assertEqual(before - enemy.hp, 240 if hp > 50 else 160)
+
+    def test_blood_area_pays_once_and_missed_skill_still_pays(self):
+        actor = fighter('裝甲步兵', 3)
+        enemies = [fighter('敵人', team=1, hp=10000) for _ in range(3)]
+        battle = Battle([actor, *enemies], 1)
+        use(battle, actor, 4, enemies[0])
+        self.assertEqual(actor.hp, 950)
+        self.assertTrue(all(enemy.hp == 10000 - 180 for enemy in enemies))
+        actor.stats['命中率'] = 0
+        before = enemies[0].hp
+        with patch.object(battle.rng, 'random', return_value=.99):
+            use(battle, actor, 1, enemies[0])
+        self.assertEqual(actor.hp, 900)
+        self.assertEqual(enemies[0].hp, before)
+        self.assertIsNone(battle._passive_action)
+
+    def test_blood_bonus_equals_paid_hp_across_health_and_attack_values(self):
+        for maximum, attack, cost in ((1980, 576, 99), (1999, 200, 99),
+                                      (2000, 200, 100), (19, 100, 1)):
+            with self.subTest(maximum=maximum, attack=attack):
+                actor = fighter('裝甲步兵', 3, hp=maximum, attack=attack)
+                enemy = fighter('敵人', team=1, hp=10000)
+                battle = Battle([actor, enemy], 1)
+                before = enemy.hp
+                use(battle, actor, 2, enemy)  # Break uses 100% attack.
+                self.assertEqual(actor.hp, maximum - cost)
+                self.assertEqual(before - enemy.hp, attack + cost)
+                self.assertEqual(actor.stats['攻擊'], attack)
 
 
 class KnightPassiveTests(unittest.TestCase):
@@ -132,20 +175,43 @@ class KnightPassiveTests(unittest.TestCase):
         self.assertEqual(actor.passive_state['watch'], 0)
         self.assertTrue(all(ally.has('watch_guard', 2) for ally in (actor, first, second)))
 
-    def test_lance_shield_alternation(self):
-        actor, enemy = fighter('騎士', 3), fighter('敵人', team=1, hp=5000)
+    def test_lance_shield_alternation_stacks_and_caps(self):
+        actor, enemy = fighter('騎士', 3), fighter('敵人', team=1, hp=10000)
+        battle = Battle([actor, enemy], 1)
+        battle.round = 1
+        for skill, expected, layers in ((4, 120, 0), (3, 500, 1), (4, 132, 2),
+                                        (3, 600, 3), (4, 156, 4), (3, 700, 5),
+                                        (4, 180, 5), (3, 750, 5)):
+            before = enemy.hp
+            use(battle, actor, skill, enemy)
+            self.assertEqual(before - enemy.hp, expected)
+            self.assertEqual(actor.passive_state.get('lance_stacks', 0), layers)
+        before = enemy.hp
+        battle.basic_attack(actor, enemy)
+        self.assertEqual(before - enemy.hp, 100)
+        self.assertEqual(actor.passive_state['lance_stacks'], 5)
+
+    def test_lance_repeats_misses_and_snapshot_keep_progress(self):
+        actor, enemy = fighter('騎士', 3), fighter('敵人', team=1, hp=10000)
         battle = Battle([actor, enemy], 1)
         battle.round = 1
         use(battle, actor, 4, enemy)
-        self.assertEqual(actor.passive_state['lance_combo'], 'opening')
-        before = enemy.hp
-        use(battle, actor, 3, enemy)
-        self.assertEqual(before - enemy.hp, 625)
-        self.assertEqual(actor.passive_state['lance_combo'], 'momentum')
-        before = enemy.hp
         use(battle, actor, 4, enemy)
-        self.assertEqual(before - enemy.hp, 160)
-        self.assertEqual(actor.passive_state['lance_combo'], 'opening')
+        actor.stats['命中率'] = 0
+        with patch.object(battle.rng, 'random', return_value=.99):
+            use(battle, actor, 3, enemy)
+        self.assertEqual(actor.passive_state.get('lance_stacks', 0), 0)
+        self.assertEqual(actor.passive_state['lance_last'], 'shield_bash')
+        actor.stats['命中率'] = 200
+        battle.basic_attack(actor, enemy)
+        use(battle, actor, 3, enemy)
+        restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        actor, enemy = restored.fighters
+        self.assertEqual(actor.passive_state['lance_stacks'], 1)
+        before = enemy.hp
+        use(restored, actor, 4, enemy)
+        self.assertEqual(before - enemy.hp, 132)
+        self.assertEqual(actor.passive_state['lance_stacks'], 2)
 
 
 class ArcherPassiveTests(unittest.TestCase):
@@ -159,20 +225,76 @@ class ArcherPassiveTests(unittest.TestCase):
         self.assertEqual(before - enemy.hp, 842)
         self.assertEqual(actor.passive_state['arrow_tempo'], 0)
 
-    def test_poison_ticks_build_toxicity_and_direct_hit_detonates(self):
-        actor, enemy = fighter('弓兵', 2, user_id=7), fighter('敵人', team=1, hp=5000)
+    def test_poison_ticks_grow_without_detonating_or_resetting(self):
+        actor, enemy = fighter('弓兵', 2, user_id=7), fighter('敵人', team=1, hp=10000)
         battle = Battle([actor, enemy], 1)
         battle.round = 1
-        for slot in (1, 2, 3):
-            use(battle, actor, 5, enemy, slot)
-        battle.round = 2
-        battle.tick_poison_arrows(enemy)
-        key = '7'
-        self.assertEqual(enemy.status_stacks['passive_toxicity'][key], 3)
+        use(battle, actor, 5, enemy)
+        for turn, expected in ((2, 70), (3, 91)):
+            battle.round = turn
+            before = enemy.hp
+            battle.tick_poison_arrows(enemy)
+            self.assertEqual(before - enemy.hp, expected)
+        self.assertEqual(enemy.status_stacks['passive_toxicity']['7'], 2)
         before = enemy.hp
         battle.basic_attack(actor, enemy)
-        self.assertEqual(before - enemy.hp, 280)
-        self.assertEqual(enemy.status_stacks['passive_toxicity'][key], 0)
+        self.assertEqual(before - enemy.hp, 100)
+        self.assertEqual(enemy.status_stacks['passive_toxicity']['7'], 2)
+        # A new poison arrow continues from the retained target-specific stacks.
+        use(battle, actor, 5, enemy)
+        for turn, expected in ((4, 112), (5, 133)):
+            battle.round = turn
+            before = enemy.hp
+            battle.tick_poison_arrows(enemy)
+            self.assertEqual(before - enemy.hp, expected)
+        use(battle, actor, 5, enemy)
+        for turn, expected in ((6, 154), (7, 175)):
+            battle.round = turn
+            before = enemy.hp
+            battle.tick_poison_arrows(enemy)
+            self.assertEqual(before - enemy.hp, expected)
+        self.assertEqual(enemy.status_stacks['passive_toxicity']['7'], 5)
+        before = enemy.hp
+        battle.basic_attack(actor, enemy)
+        self.assertEqual(before - enemy.hp, 100)
+        self.assertEqual(enemy.status_stacks['passive_toxicity']['7'], 5)
+
+    def test_poison_stacks_are_source_and_target_specific_after_restore(self):
+        first, second = fighter('弓兵', 2, user_id=7), fighter('弓兵', 2, user_id=8)
+        enemy, other = fighter('敵人', team=1, hp=10000), fighter('敵人', team=1, hp=10000)
+        battle = Battle([first, second, enemy, other], 1)
+        battle.round = 1
+        enemy.status_stacks['passive_toxicity'] = {'7': 5}
+        use(battle, first, 5, enemy)
+        use(battle, second, 5, enemy)
+        use(battle, first, 5, other)
+        battle = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        first, second, enemy, other = battle.fighters
+        battle.round = 2
+        before = enemy.hp
+        battle.tick_poison_arrows(enemy)
+        self.assertEqual(before - enemy.hp, 175 + 70)
+        self.assertEqual(enemy.status_stacks['passive_toxicity'], {'7': 5, '8': 1})
+        before = other.hp
+        battle.tick_poison_arrows(other)
+        self.assertEqual(before - other.hp, 70)
+        self.assertEqual(other.status_stacks['passive_toxicity'], {'7': 1})
+
+    def test_toxicity_boosts_normal_poison_from_same_source_only(self):
+        first, second = fighter('弓兵', 2, user_id=7), fighter('弓兵', 2, user_id=8)
+        enemy, other = fighter('敵人', team=1, hp=10000), fighter('敵人', team=1, hp=10000)
+        battle = Battle([first, second, enemy, other], 1)
+        for target in (enemy, other):
+            target.status_stacks['passive_toxicity'] = {'7': 5}
+        battle.apply_debuff(enemy, 'poison', 3, first)
+        battle.apply_debuff(other, 'poison', 3, second)
+        with patch.object(battle, 'act', return_value=None):
+            battle.step()
+        self.assertEqual(enemy.hp, 9500)  # Normal 2% HP poison * 2.5.
+        self.assertEqual(other.hp, 9800)  # The other archer does not borrow stacks.
+        self.assertEqual(first.combat_stats['damage_dealt'], 500)
+        self.assertEqual(second.combat_stats['damage_dealt'], 200)
+        self.assertEqual(enemy.status_stacks['passive_toxicity']['7'], 5)
 
     def test_three_crits_empower_next_damage_action(self):
         actor, enemy = fighter('弓兵', 3), fighter('敵人', team=1, hp=5000)
@@ -214,11 +336,84 @@ class MonkPassiveTests(unittest.TestCase):
         use(battle, actor, 1, ally)
         use(battle, actor, 2, ally)
         ally.effects['weak'] = 2
-        before = ally.hp
         use(battle, actor, 3, ally)
+        self.assertNotIn('hymn_procs', actor.passive_state)
+        self.assertEqual(set(actor.passive_state['hymn_verses']), {'mercy', 'courage'})
+        before = ally.hp
+        battle.basic_attack(actor, enemy)
         self.assertEqual(actor.passive_state['hymn_procs'], 1)
         self.assertEqual(ally.hp - before, 10)
         self.assertTrue(ally.has('hymn_strike', 1))
+        before = enemy.hp
+        battle.basic_attack(actor, enemy)
+        self.assertEqual(before - enemy.hp, 110)
+        self.assertNotIn('hymn_strike', actor.effects)
+        self.assertEqual(actor.passive_state['hymn_verses'], ['offense'])
+
+    def test_threefold_hymn_missed_attacks_still_grant_offense(self):
+        for basic in (True, False):
+            with self.subTest(basic=basic):
+                actor = fighter('僧侶', 2)
+                enemy = fighter('敵人', team=1)
+                actor.stats['命中率'] = 0
+                actor.hp = 500
+                battle = Battle([actor, enemy], 1)
+                battle.round = 1
+                with patch.object(battle.rng, 'random', return_value=.99):
+                    if basic:
+                        battle.basic_attack(actor, enemy)
+                    else:
+                        use(battle, actor, 5, actor)
+                self.assertEqual(enemy.hp, 1000)
+                self.assertEqual(actor.combat_stats['misses'], 1)
+                # Holy Light's effective healing still does not grant mercy.
+                self.assertEqual(actor.passive_state['hymn_verses'], ['offense'])
+                if not basic:
+                    self.assertEqual(actor.hp, 570)
+
+    def test_threefold_hymn_attack_verse_persists_without_duplicates(self):
+        actor, enemy = fighter('僧侶', 2), fighter('敵人', team=1)
+        battle = Battle([actor, enemy], 1)
+        battle.round = 1
+        battle.basic_attack(actor, enemy)
+        battle = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        actor, enemy = battle.fighters
+        battle.basic_attack(actor, enemy)
+        use(battle, actor, 1, actor)  # Full HP is not effective healing.
+        self.assertEqual(actor.passive_state['hymn_verses'], ['offense'])
+        self.assertNotIn('hymn_procs', actor.passive_state)
+
+    def test_threefold_hymn_drops_legacy_cleanse_verse(self):
+        actor, enemy = fighter('僧侶', 2), fighter('敵人', team=1)
+        actor.passive_state['hymn_verses'] = ['mercy', 'purity']
+        snapshot = dump_battle(Battle([actor, enemy], 1))
+        battle = load_battle(json.loads(json.dumps(snapshot)))
+        actor, enemy = battle.fighters
+        battle.round = 1
+        use(battle, actor, 2, actor)
+        self.assertEqual(set(actor.passive_state['hymn_verses']), {'mercy', 'courage'})
+        self.assertNotIn('hymn_procs', actor.passive_state)
+        battle.basic_attack(actor, enemy)
+        self.assertEqual(actor.passive_state['hymn_procs'], 1)
+
+    def test_threefold_hymn_keeps_three_proc_cap_and_buff_expiry(self):
+        actor, enemy = fighter('僧侶', 2), fighter('敵人', team=1, hp=10000)
+        battle = Battle([actor, enemy], 1)
+        for turn in range(1, 5):
+            battle.round = turn * 3  # Previous hymn bonus has expired.
+            actor.hp = 500
+            use(battle, actor, 1, actor)
+            use(battle, actor, 2, actor)
+            before = enemy.hp
+            battle.basic_attack(actor, enemy)
+            self.assertEqual(before - enemy.hp, 140)  # Blessing, not the new hymn.
+            self.assertEqual(actor.passive_state['hymn_procs'], min(turn, 3))
+            if turn <= 3:
+                self.assertEqual(actor.hp, 610)
+                self.assertEqual(actor.effects['hymn_strike'], battle.round + 1)
+                self.assertFalse(actor.has('hymn_strike', battle.round + 2))
+            else:
+                self.assertEqual(actor.hp, 600)
 
     def test_light_cycle_alternates_damage_and_healing(self):
         actor, ally, enemy = fighter('僧侶', 3), fighter('盟友', team=0), fighter('敵人', team=1, hp=5000)

@@ -202,7 +202,7 @@ class TotalRaidRoomTests(unittest.IsolatedAsyncioTestCase):
         embed = self.service.battle_embed(room, battle)
         boss_status = next(field.value for field in embed.fields if field.name == 'Boss HP')
         self.assertIn('Buff：**防禦姿態(減傷35%・1回合)**', boss_status)
-        self.assertIn('Debuff：**破甲(防禦歸零・1回合)**', boss_status)
+        self.assertIn('Debuff：**破甲(防禦-80%・1回合)**', boss_status)
         team = next(field.value for field in embed.fields if field.name == '隊伍狀態')
         self.assertIn('Buff：**護衛', team)
         self.assertIn('Debuff：**中毒', team)

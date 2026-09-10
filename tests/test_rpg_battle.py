@@ -338,7 +338,7 @@ class BattleTests(unittest.TestCase):
         target = fighter('木樁', 1, hp=500, dex=100, attack=1, rules=[])
         battle = Battle([cleric, attacker, target], seed=1)
         battle.step()
-        self.assertEqual(target.combat_stats['damage_taken'], 118)
+        self.assertEqual(target.combat_stats['damage_taken'], 133)
         self.assertLess(battle.log.index('僧侶 使用【祝福】'), battle.log.index('輸出 使用普通攻擊'))
 
     def test_legacy_battle_snapshot_migrates_dexterity_to_speed(self):
@@ -360,7 +360,7 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(results, {'民兵': 165, '裝甲步兵': 160, '騎士': 155,
                                    '弓兵': 165, '僧侶': 165})
 
-    def test_break_ignores_defense_and_credits_its_source(self):
+    def test_break_reduces_defense_eighty_percent_and_credits_its_source(self):
         caster = fighter('裝甲步兵', job='裝甲步兵', rules=[])
         caster.user_id = 1
         attacker = fighter('隊友', attack=200, rules=[])
@@ -374,9 +374,9 @@ class BattleTests(unittest.TestCase):
 
         battle.hit(attacker, target, precise=True)
 
-        self.assertEqual(target.combat_stats['damage_taken'], 200)
+        self.assertEqual(target.combat_stats['damage_taken'], 193)
         self.assertEqual(attacker.combat_stats['direct_damage'], 165)
-        self.assertEqual(caster.combat_stats['support_damage'], 35)
+        self.assertEqual(caster.combat_stats['support_damage'], 28)
 
     def test_configurable_numeric_conditions_use_the_saved_threshold(self):
         enemy = fighter('敵人', 1, hp=100, rules=[])
@@ -626,7 +626,7 @@ class BattleTests(unittest.TestCase):
         legacy['fighters'][0]['combat_stats'].pop('support_taken')
         self.assertEqual(load_battle(legacy).fighters[0].combat_stats['support_taken'], 0)
 
-    def test_support_taken_ignores_expired_broken_self_and_missed_guard(self):
+    def test_support_taken_scales_broken_guard_and_ignores_expired_self_and_missed_guard(self):
         for case in ('expired', 'broken', 'self', 'miss'):
             with self.subTest(case=case):
                 protector = fighter('protector', rules=[])
@@ -643,7 +643,7 @@ class BattleTests(unittest.TestCase):
                 battle.round = 1
                 with patch.object(battle, 'hit_chance', return_value=0):
                     battle.hit(enemy, target, precise=case != 'miss')
-                self.assertEqual(protector.combat_stats['support_taken'], 0)
+                self.assertEqual(protector.combat_stats['support_taken'], 7 if case == 'broken' else 0)
                 self.assertEqual(target.combat_stats['support_taken'], 0)
 
     def test_poison_arrow_ticks_are_actual_damage_after_reload_and_hp_cap(self):
@@ -676,10 +676,52 @@ class BattleTests(unittest.TestCase):
 
         battle.hit(attacker, target, precise=True)
 
-        self.assertEqual(attacker.combat_stats['damage_dealt'], 125)
+        self.assertEqual(attacker.combat_stats['damage_dealt'], 140)
         self.assertEqual(attacker.combat_stats['direct_damage'], 100)
-        self.assertEqual(caster.combat_stats['support_damage'], 25)
-        self.assertEqual(attacker.combat_stats['direct_damage'] + caster.combat_stats['support_damage'], 125)
+        self.assertEqual(caster.combat_stats['support_damage'], 40)
+        self.assertEqual(attacker.combat_stats['direct_damage'] + caster.combat_stats['support_damage'], 140)
+
+    def test_bless_lasts_three_rounds_and_preserves_cooldown_after_reload(self):
+        caster = fighter(job='僧侶', rules=[])
+        ally = fighter(job='弓兵', attack=100, rules=[])
+        enemy = fighter('enemy', 1, hp=10000, rules=[])
+        battle = Battle([caster, ally, enemy], seed=1)
+        battle.round = 1
+        battle.use_skill(caster, Rule(2, 1, True, 'always', 'strongest'),
+                         SKILLS['僧侶'][1], ally)
+        battle = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        caster, ally, enemy = battle.fighters
+        self.assertEqual(caster.ready[2], 5)
+        self.assertTrue(all(ally.has('bless', turn) for turn in (1, 2, 3)))
+        self.assertFalse(ally.has('bless', 4))
+        self.assertEqual(ally.status_stacks['bless_attack_percent'], 40)
+        battle.round = 3
+        with patch.object(battle, 'hit', return_value=True):
+            battle.use_skill(ally, Rule(1, 1, True, 'always', 'lowest'),
+                             SKILLS['弓兵'][4], enemy)
+        self.assertEqual(enemy.status_stacks['poison_arrows'][0]['damage'], 98)
+        enemy.stats['防禦'] = 0
+        battle.round = 4
+        before = enemy.hp
+        battle.hit(ally, enemy, precise=True)
+        self.assertEqual(before - enemy.hp, 100)
+
+    def test_warband_inspiration_still_grants_twenty_five_percent(self):
+        captain = fighter('captain', 1, job='哥布林隊長', attack=100, rules=[])
+        target = fighter(hp=1000, rules=[])
+        target.stats['防禦'] = 0
+        battle = Battle([captain, target], seed=1)
+        battle.round = 3
+        battle.act(captain)
+        battle = load_battle(json.loads(json.dumps(dump_battle(battle))))
+        captain, target = battle.fighters
+        battle.hit(captain, target, precise=True)
+        self.assertEqual(target.hp, 875)
+        self.assertTrue(captain.has('bless', 4))
+        self.assertFalse(captain.has('bless', 5))
+        captain.status_stacks.pop('bless_attack_percent')
+        battle.hit(captain, target, precise=True)
+        self.assertEqual(target.hp, 750)
 
     def test_lifesteal_uses_actual_damage_and_survives_restart(self):
         from unittest.mock import patch
@@ -846,10 +888,40 @@ class BattleTests(unittest.TestCase):
         self.assertIsNone(battle.select(knight))
         golem.effects['charged_punch'] = 2
         self.assertEqual(battle.select(knight)[1].name, '盾擊')
-        battle.act(knight)
+        with patch.object(battle.rng, 'random', return_value=0):
+            battle.act(knight)
         self.assertNotIn('charged_punch', golem.effects)
         self.assertTrue(golem.has('stun', 1))
         self.assertTrue(any('蓄力被打斷' in line for line in battle.log))
+
+    def test_interrupt_hit_and_stun_chance_are_independent(self):
+        for job, skill_id in (('騎士', 4), ('弓兵', 2)):
+            for hit_result in (True, False):
+                for roll in (0.499, 0.5):
+                    with self.subTest(job=job, hit=hit_result, roll=roll):
+                        actor = fighter(job=job, rules=[])
+                        enemy = fighter('魔像', 1, job='鐵殼魔像', hp=1000, rules=[])
+                        enemy.effects['charged_punch'] = 2
+                        battle = Battle([actor, enemy], seed=1)
+                        battle.round = 1
+                        with patch.object(battle, 'hit', return_value=hit_result), \
+                                patch.object(battle.rng, 'random', return_value=roll):
+                            battle.use_skill(actor, Rule(1, 1, True, 'always', 'lowest'),
+                                             SKILLS[job][skill_id - 1], enemy)
+                        self.assertEqual('charged_punch' in enemy.effects, not hit_result)
+                        self.assertEqual(enemy.has('stun', 1),
+                                         hit_result and job == '騎士' and roll < 0.5)
+                        self.assertNotIn('weak', enemy.effects)
+
+    def test_break_deals_full_damage_before_reducing_defense(self):
+        actor = fighter(job='裝甲步兵', attack=100, rules=[])
+        enemy = fighter('敵人', 1, hp=1000, rules=[])
+        enemy.stats['防禦'] = 0
+        battle = Battle([actor, enemy], seed=1)
+        battle.round = 1
+        battle.use_skill(actor, Rule(2, 1, True, 'always', 'lowest'), SKILLS['裝甲步兵'][1], enemy)
+        self.assertEqual(enemy.hp, 900)
+        self.assertTrue(enemy.has('break', 2))
 
     def test_slime_three_hits_taunt_and_stop_when_no_targets(self):
         from unittest.mock import patch
@@ -1035,7 +1107,7 @@ class BattleTests(unittest.TestCase):
         self.assertNotIn('stun', ally.effects)
         self.assertNotIn('corruption', ally.status_stacks)
 
-    def test_hindering_shot_reduces_attack_twenty_percent(self):
+    def test_hindering_shot_interrupts_without_weakness_or_stun(self):
         archer = fighter('弓兵', job='弓兵', attack=100,
                          rules=[Rule(2, 1, True, 'always', 'lowest')])
         enemy = fighter('敵人', 1, attack=100, hp=1000, rules=[])
@@ -1043,11 +1115,14 @@ class BattleTests(unittest.TestCase):
         victim.stats['防禦'] = 0
         battle = Battle([archer, victim, enemy], seed=1)
         battle.round = 1
+        enemy.effects['charged_punch'] = 2
         battle.act(archer)
-        self.assertTrue(enemy.has('weak', 1))
+        self.assertNotIn('charged_punch', enemy.effects)
+        self.assertFalse(enemy.has('weak', 1))
+        self.assertFalse(enemy.has('stun', 1))
         before = victim.hp
         battle.hit(enemy, victim, precise=True)
-        self.assertEqual(before - victim.hp, 80)
+        self.assertEqual(before - victim.hp, 100)
 
     def test_guard_uses_strongest_bonus_without_stacking_or_extending(self):
         strong = fighter('強騎士', job='騎士', hp=2000, rules=[Rule(2, 1, True, 'always', 'lowest')])

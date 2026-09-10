@@ -121,10 +121,10 @@ def effect_status(fighter, battle):
             counters = {
                 ('裝甲步兵', 1): f'連式{state.get("chain", 0)}/3',
                 ('裝甲步兵', 2): f'攻勢{state.get("offense", 0)}/2・守勢{state.get("guard_stance", 0)}/2',
-                ('裝甲步兵', 3): f'血怒{state.get("blood_rage", 0)}/5',
+                ('裝甲步兵', 3): '技能耗血5%・等額增加當次攻擊',
                 ('騎士', 1): f'復仇{state.get("revenge", 0)}/3',
                 ('騎士', 2): f'守望{state.get("watch", 0)}/2',
-                ('騎士', 3): {'opening': '破綻', 'momentum': '衝勢'}.get(state.get('lance_combo'), '待機'),
+                ('騎士', 3): f'連攜{state.get("lance_stacks", 0)}/5',
                 ('弓兵', 1): f'箭勢{state.get("arrow_tempo", 0)}/6',
                 ('弓兵', 3): f'洞察{state.get("insight", 0)}/3',
                 ('僧侶', 1): f'恩典{state.get("grace", 0)}/3',
@@ -136,7 +136,7 @@ def effect_status(fighter, battle):
     if fighter.has('guard', turn):
         buffs.append(f'護衛(防禦+{fighter.guard_bonus}・負面免疫・{remaining("guard")}回合)')
     if fighter.has('bless', turn):
-        buffs.append(f'祝福(攻擊+25%・{remaining("bless")}回合)')
+        buffs.append(f'祝福(攻擊+{fighter.bless_attack_percent}%・{remaining("bless")}回合)')
     if fighter.has('stance', turn):
         reduction = {'民兵': 20, '騎士': 50}.get(fighter.job, 35)
         buffs.append(f'防禦姿態(減傷{reduction}%・{remaining("stance")}回合)')
@@ -147,7 +147,7 @@ def effect_status(fighter, battle):
     if fighter.food_regen_left and turn >= fighter.food_regen_start:
         buffs.append(f'{fighter.food_name}緩補({fighter.food_regen_left}回合)')
     if fighter.has('break', turn):
-        effect = '防禦-25%' if isinstance(battle, WitchRaidBattle) else '防禦歸零'
+        effect = '防禦-25%' if isinstance(battle, WitchRaidBattle) else '防禦-80%'
         debuffs.append(f'破甲({effect}・{remaining("break")}回合)')
     if fighter.has('poison', turn):
         debuffs.append(f'中毒({remaining("poison")}回合)')
@@ -160,7 +160,7 @@ def effect_status(fighter, battle):
         debuffs.append(f'毒箭侵蝕({len(poison_arrows)}支)')
     toxicity = fighter.status_stacks.get('passive_toxicity', {})
     if toxicity and max(toxicity.values(), default=0):
-        debuffs.append(f'毒性(最高{max(toxicity.values())}/3層)')
+        debuffs.append(f'毒性(最高{max(toxicity.values())}/5層)')
     if fighter.has('vulnerable', turn):
         debuffs.append(f'易傷(+10%・{remaining("vulnerable")}回合)')
     corruption = fighter.status_stacks.get('corruption', 0)
@@ -224,7 +224,7 @@ def active_effect_notes(battle):
         'float': '浮游：漢娜承受裝甲步兵與騎士的非必中攻擊時減傷 30%。',
         'defend': '防禦：本回合承受傷害減半。',
         'guard': '護衛：提高防禦；負面免疫依護衛剩餘效果生效，無法阻擋洗腦。',
-        'bless': '祝福：攻擊力提高 25%。',
+        'bless': '祝福：攻擊力提高 40%，持續 3 回合（含施放回合）。',
         'stance': '防禦姿態：依職業降低承受傷害，比例見角色增益列。',
         'taunt': '挑釁反擊：吸引尚未鎖定目標的攻擊並反擊；已預告的魔女指定技能不再轉向。',
         'moon_shadow': '月影：閃避提高 15 個百分點。',
@@ -247,7 +247,7 @@ def active_effect_notes(battle):
         if fighter.status_stacks.get('poison_arrows'):
             notes['poison_arrows'] = '毒箭侵蝕：每支毒箭獨立計算持續傷害與期限，可淨化。'
         if fighter.status_stacks.get('passive_toxicity'):
-            notes['toxicity'] = '毒性：每位施毒者各最多 3 層；猛毒調律直接命中滿層目標時可引爆。'
+            notes['toxicity'] = '毒性：每位施毒者對每個目標獨立累積，最多 5 層；每層使該目標後續受到的所有該施毒者毒傷 +30%，不再引爆。'
         if fighter.status_stacks.get('corruption'):
             notes['corruption'] = '腐敗：滿 3 層時於行動前爆裂，自身扣除最大 HP 的 12%，其他隊友扣除最大 HP 的 3%，然後清空。'
         if fighter.food_regen_left and turn >= fighter.food_regen_start:
