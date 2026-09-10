@@ -126,6 +126,8 @@ class RaidStore:
                 support_damage INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (raid_id, user_id))''')
             participant_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_battle_participants)')}
+            if 'support_taken' not in participant_columns:
+                self.db.execute('ALTER TABLE rpg_battle_participants ADD COLUMN support_taken INTEGER NOT NULL DEFAULT 0')
             if 'direct_damage' not in participant_columns:
                 self.db.execute('ALTER TABLE rpg_battle_participants ADD COLUMN direct_damage INTEGER NOT NULL DEFAULT 0')
             if 'support_damage' not in participant_columns:
@@ -484,13 +486,13 @@ class RaidStore:
                 self.db.execute('''INSERT OR REPLACE INTO rpg_battle_participants
                     (raid_id,user_id,job,level,max_hp,final_hp,damage_dealt,damage_taken,
                      healing_done,healing_received,overhealing,attacks,hits,misses,critical_hits,
-                     knockouts,deaths,skills_used,direct_damage,support_damage)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                     knockouts,deaths,skills_used,direct_damage,support_damage,support_taken)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (raid['id'], participant['id'], fighter['job'], participant['state']['level'],
                      fighter['stats']['HP'], fighter['hp'], *values,
                      json.dumps(stats.get('skills_used', {}), ensure_ascii=False),
                      stats.get('direct_damage', stats.get('damage_dealt', 0)),
-                     stats.get('support_damage', 0)))
+                     stats.get('support_damage', 0), stats.get('support_taken', 0)))
             if raid['participants'] and not raid.get('no_dynamic'):
                 balance_version = raid['monster'].get('balance_version', 1)
                 before = self.difficulty(raid['guild_id'], raid['channel_id'], balance_version)
@@ -537,7 +539,7 @@ class RaidStore:
             GROUP BY monster_kind,quality ORDER BY COUNT(*) DESC, monster_kind,quality LIMIT 8''',
                                    (guild_id, since)).fetchall()
         jobs = self.db.execute('''SELECT p.job, COUNT(*), SUM(r.result='勝利'), AVG(p.direct_damage),
-            AVG(p.support_damage), AVG(p.healing_done), AVG(p.damage_taken)
+            AVG(p.support_damage), AVG(p.healing_done), AVG(p.damage_taken), AVG(p.support_taken)
             FROM rpg_battle_participants p JOIN rpg_battle_results r ON r.raid_id=p.raid_id
             WHERE r.guild_id=? AND r.completed_at>=? GROUP BY p.job ORDER BY COUNT(*) DESC, p.job''',
                                (guild_id, since)).fetchall()

@@ -43,7 +43,7 @@ BASIC_TARGETS = {key: label for key, label in TARGETS.items() if key not in ('se
 def empty_combat_stats():
     """Per-fighter counters kept in battle snapshots for settlement and analysis."""
     return dict(damage_dealt=0, direct_damage=0, support_damage=0,
-                damage_taken=0, healing_done=0, healing_received=0,
+                damage_taken=0, support_taken=0, healing_done=0, healing_received=0,
                 overhealing=0, attacks=0, hits=0, misses=0, critical_hits=0,
                 knockouts=0, deaths=0, skills_used={})
 
@@ -738,6 +738,7 @@ class Battle:
                 amount = self.heal(actor, ally, actor.stats['HP'] * 2 // 100,
                                    passive_trigger=False)
                 ally.effects['watch_guard'] = self.round + 1
+                ally.effect_sources['watch_guard'] = actor.user_id
                 self.log.append(f'{ally.name} 受到守望誓約保護，恢復 {amount} HP 並獲得 10% 減傷。')
 
         if self.passive(actor, '騎士', 3):
@@ -1173,7 +1174,7 @@ class Battle:
             total = actual + partner_actual
             if source is not None and source is not target:
                 source.combat_stats['damage_dealt'] += total
-                source.combat_stats['support_damage'] += total
+                source.combat_stats['direct_damage'] += total
                 source.combat_stats['knockouts'] += int(actual and target.hp == 0)
                 if partner is not None:
                     source.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
@@ -1443,7 +1444,7 @@ class Battle:
                          and not self.mechanics.get('puppet_phase_two'))
         defense_effectiveness = DEFENSE_EFFECTIVENESS.get(target.job, 0.35)
 
-        def final_damage(attack_value, defense_value):
+        def final_damage(attack_value, defense_value, watch_guard=True):
             value = max(1, int(attack_value * power - defense_value * defense_effectiveness))
             value = max(1, value * stability // 100)
             if critical:
@@ -1469,7 +1470,7 @@ class Battle:
             if guarded:
                 value = max(1, value // 2)
             value = max(1, int(value * self.damage_taken_multiplier(target)))
-            if target.has('watch_guard', self.round):
+            if watch_guard and target.has('watch_guard', self.round):
                 value = max(1, value * 90 // 100)
             value = max(1, int(value * passive_multiplier))
             return value
@@ -1483,6 +1484,24 @@ class Battle:
         if vulnerable:
             damage = max(1, damage * 110 // 100)
             undefended_damage = max(1, undefended_damage * 110 // 100)
+        # Attribute successive reductions so overlapping effects are never counted twice.
+        # These are mitigated hit values, before HP caps, shields and survival effects.
+        def mitigation_damage(attack_value, defense_value, watch_guard=False):
+            value = final_damage(attack_value, defense_value, watch_guard)
+            return max(1, value * 110 // 100) if vulnerable else value
+
+        unguarded_defense = 0 if broken else target.stats['防禦']
+        weak = actor.has('weak', self.round)
+        before_support = mitigation_damage(attack / .8 if weak else attack, unguarded_defense)
+        after_weak = mitigation_damage(attack, unguarded_defense)
+        after_guard = mitigation_damage(attack, defense)
+        for affected, effect, prevented in (
+                (actor, 'weak', before_support - after_weak),
+                (target, 'guard', after_weak - after_guard),
+                (target, 'watch_guard', after_guard - damage)):
+            source = self.effect_source(affected, effect) if affected.has(effect, self.round) else None
+            if source is not None and source is not target and source.team == target.team:
+                source.combat_stats['support_taken'] += max(0, prevented)
         actual_damage = min(target.hp, damage)
         pre_vulnerable_actual = min(target.hp, pre_vulnerable_damage)
         base_actual = min(target.hp, base_damage)

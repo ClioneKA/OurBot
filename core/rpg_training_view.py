@@ -47,7 +47,7 @@ class TrainingView(AdventureView):
             embed.add_field(name=f'測試結果｜{actor.job}', inline=False,
                 value=(f'總傷害 **{stats["damage_dealt"]:,}**\n'
                        f'平均每回合 **{stats["damage_dealt"] / self.battle.round:,.1f}**\n'
-                       f'直接傷害 {stats["direct_damage"]:,}・追加／持續傷害 {stats["support_damage"]:,}\n'
+                       f'實際傷害 {stats["direct_damage"]:,}・輔助傷害 {stats["support_damage"]:,}\n'
                        f'命中 {stats["hits"]}・未命中 {stats["misses"]}・暴擊 {stats["critical_hits"]}'))
             embed.add_field(name='每回合傷害', inline=False,
                 value=' / '.join(f'{value:,}' for value in self.damage_by_round)[:1024])

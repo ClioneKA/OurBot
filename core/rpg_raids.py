@@ -459,7 +459,7 @@ class RaidService:
                 label = f'<@{fighter.user_id}>' if fighter.user_id else safe_text(fighter.name, 24)
                 summary.append(f'{label}：實際傷害 {stats["direct_damage"]:,}｜輔助傷害 {stats["support_damage"]:,}｜'
                                f'治療 {stats["healing_done"]:,}｜'
-                               f'承傷 {stats["damage_taken"]:,}｜命中 {stats["hits"]}/{stats["attacks"]}')
+                               f'承傷 {stats["damage_taken"]:,}｜輔助承傷 {stats["support_taken"]:,}｜命中 {stats["hits"]}/{stats["attacks"]}')
             embed.add_field(name='戰鬥結算｜依實際＋輔助傷害排序',
                             value='\n'.join(summary)[:1024] or '沒有戰鬥數據', inline=False)
         embed.set_footer(text='準備型增益優先，其餘依速度排序；每回合每人一次行動。完整戰報於結束後附上。')
@@ -543,7 +543,7 @@ class RaidService:
             report = '\n'.join(battle.log) + '\n\n戰鬥結算：\n' + '\n'.join(
                 f'{f.user_id or f.name}: 實際傷害 {f.combat_stats["direct_damage"]}, '
                 f'輔助傷害 {f.combat_stats["support_damage"]}, 治療 {f.combat_stats["healing_done"]}, '
-                f'承傷 {f.combat_stats["damage_taken"]}, 命中 {f.combat_stats["hits"]}/{f.combat_stats["attacks"]}, '
+                f'承傷 {f.combat_stats["damage_taken"]}, 輔助承傷 {f.combat_stats["support_taken"]}, 命中 {f.combat_stats["hits"]}/{f.combat_stats["attacks"]}, '
                 f'暴擊 {f.combat_stats["critical_hits"]}, 技能 {json.dumps(f.combat_stats["skills_used"], ensure_ascii=False)}'
                 for f in battle.fighters if f.team == 0) + '\n\n獎勵：\n' + '\n'.join(
                 f'{r["id"]}: {r["xp"]} XP, {r.get("gold", 0)} 金幣, '

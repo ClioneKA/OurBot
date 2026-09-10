@@ -39,7 +39,8 @@ class TrainingTests(unittest.TestCase):
         actor, dummy = battle.fighters
         self.assertEqual(actor.hp, actor.stats['HP'])
         self.assertEqual(actor.combat_stats['damage_taken'], 0)
-        self.assertGreater(actor.combat_stats['support_damage'], 0)
+        self.assertGreater(actor.combat_stats['direct_damage'], 0)
+        self.assertEqual(actor.combat_stats['support_damage'], 0)
         self.assertEqual(sum(damage), actor.combat_stats['damage_dealt'])
         self.assertEqual(sum(damage), dummy.combat_stats['damage_taken'])
         self.assertEqual(dummy.hp, dummy.stats['HP'])

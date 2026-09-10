@@ -600,6 +600,68 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(battle.fighters[1].combat_stats['damage_taken'], 1)
         self.assertEqual(battle.fighters[1].combat_stats['deaths'], 1)
 
+    def test_support_taken_stacks_without_double_counting_and_survives_reload(self):
+        protector = fighter('protector', rules=[])
+        protector.user_id = 1
+        target = fighter('ally', hp=1000, rules=[])
+        target.user_id = 2
+        target.stats['防禦'] = 0
+        target.guard_bonus = 100
+        target.effects.update(guard=2, watch_guard=2)
+        target.effect_sources.update(guard=1, watch_guard=1)
+        enemy = fighter('enemy', 1, attack=200, rules=[])
+        enemy.effects['weak'] = 2
+        enemy.effect_sources['weak'] = 1
+        battle = load_battle(json.loads(json.dumps(dump_battle(
+            Battle([protector, target, enemy], seed=1)))))
+        protector, target, enemy = battle.fighters
+        battle.round = 1
+        battle.hit(enemy, target, precise=True)
+        self.assertEqual(target.combat_stats['damage_taken'], 112)
+        self.assertEqual(protector.combat_stats['support_taken'], 88)
+        self.assertEqual(target.combat_stats['support_taken'], 0)
+        restored = load_battle(dump_battle(battle))
+        self.assertEqual(restored.fighters[0].combat_stats['support_taken'], 88)
+        legacy = dump_battle(battle)
+        legacy['fighters'][0]['combat_stats'].pop('support_taken')
+        self.assertEqual(load_battle(legacy).fighters[0].combat_stats['support_taken'], 0)
+
+    def test_support_taken_ignores_expired_broken_self_and_missed_guard(self):
+        for case in ('expired', 'broken', 'self', 'miss'):
+            with self.subTest(case=case):
+                protector = fighter('protector', rules=[])
+                protector.user_id = 1
+                target = fighter('ally', hp=1000, rules=[])
+                target.user_id = 2
+                target.guard_bonus = 100
+                target.effects['guard'] = 0 if case == 'expired' else 2
+                target.effect_sources['guard'] = 2 if case == 'self' else 1
+                if case == 'broken':
+                    target.effects['break'] = 2
+                enemy = fighter('enemy', 1, attack=200, rules=[])
+                battle = Battle([protector, target, enemy], seed=1)
+                battle.round = 1
+                with patch.object(battle, 'hit_chance', return_value=0):
+                    battle.hit(enemy, target, precise=case != 'miss')
+                self.assertEqual(protector.combat_stats['support_taken'], 0)
+                self.assertEqual(target.combat_stats['support_taken'], 0)
+
+    def test_poison_arrow_ticks_are_actual_damage_after_reload_and_hp_cap(self):
+        archer = fighter('archer', rules=[])
+        archer.user_id = 1
+        target = fighter('enemy', 1, hp=100, rules=[])
+        target.hp = 13
+        target.status_stacks['poison_arrows'] = [
+            dict(source_id=1, damage=70, next_round=1, remaining=2)]
+        battle = load_battle(json.loads(json.dumps(dump_battle(Battle([archer, target])))))
+        battle.round = 1
+        battle.tick_poison_arrows(battle.fighters[1])
+        stats = battle.fighters[0].combat_stats
+        self.assertEqual(stats['direct_damage'], 13)
+        self.assertEqual(stats['damage_dealt'], 13)
+        self.assertEqual(stats['support_damage'], 0)
+        self.assertEqual(stats['knockouts'], 1)
+
     def test_bless_bonus_is_attributed_as_support_damage_without_double_counting(self):
         caster = fighter('施法者', hp=100, rules=[])
         caster.user_id = 1

@@ -690,7 +690,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         battle = raid_battle([participant], self.monster, 1)
         player = battle.fighters[0]
         player.combat_stats.update(damage_dealt=321, direct_damage=280, support_damage=41,
-                                   damage_taken=45, healing_done=67,
+                                   damage_taken=45, healing_done=67, support_taken=89,
                                    attacks=5, hits=4, misses=1, critical_hits=2)
         player.combat_stats['skills_used'] = {'奮力一擊': 2}
         battle.result = '勝利'
@@ -699,14 +699,15 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
 
         stored = self.store.db.execute('''SELECT damage_dealt, direct_damage, support_damage,
             damage_taken, healing_done,
-            attacks, hits, misses, critical_hits, skills_used
+            attacks, hits, misses, critical_hits, skills_used, support_taken
             FROM rpg_battle_participants WHERE raid_id=? AND user_id=?''',
                                        (raid['id'], 1)).fetchone()
-        self.assertEqual(stored, (321, 280, 41, 45, 67, 5, 4, 1, 2, '{"奮力一擊": 2}'))
+        self.assertEqual(stored, (321, 280, 41, 45, 67, 5, 4, 1, 2, '{"奮力一擊": 2}', 89))
         report = self.repo.balance_report(1, 0)
         self.assertEqual(report['overall'][:2], (1, 1))
         self.assertEqual(report['monsters'][0][:3], ('巨獸', 1, 1))
         self.assertEqual(report['jobs'][0][:3], ('民兵', 1, 1))
+        self.assertEqual(report['jobs'][0][-1], 89)
 
     async def test_tiers_one_to_three_award_raid_proofs_but_admin_raids_do_not(self):
         from core.rpg_monsters import prepare_monster
