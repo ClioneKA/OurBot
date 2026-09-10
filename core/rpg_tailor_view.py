@@ -10,6 +10,7 @@ from core.rpg_equipment_view import PanelSelect
 from core.rpg_witch_embroideries import DESCRIPTIONS, REQUIREMENTS
 from core.rpg_witch_catalog import PROFILE
 from core.rpg_menu import add_help, navigate
+from core.rpg_affinity import hanna_affinity, tailoring_price
 
 
 PAGE_SIZE = 20
@@ -110,11 +111,13 @@ class TailorView(discord.ui.View):
         return embroidery[0] if embroidery else None
 
     def embed(self, notice=None):
+        dye_price = tailoring_price(self.cog.store.db, self.guild_id, self.owner.id, DYE_PRICE)
+        embroidery_price = tailoring_price(self.cog.store.db, self.guild_id, self.owner.id, EMBROIDERY_PRICE)
         if self.mode == 'dye':
-            description = (f'消耗對應噴漆罐並支付 **{DYE_PRICE:,} 金幣**，替諾亞武器或套裝染色。'
+            description = (f'消耗對應噴漆罐並支付 **{dye_price:,} 金幣**，替諾亞武器或套裝染色。'
                            '再次染色會取代原顏色，舊顏料與費用不返還。')
         else:
-            description = (f'支付 **{EMBROIDERY_PRICE:,} 金幣**，在具有刺繡格的討伐飾品上縫製圖樣。'
+            description = (f'支付 **{embroidery_price:,} 金幣**，在具有刺繡格的討伐飾品上縫製圖樣。'
                            '魔女刺繡需先通關對應魔女的試煉，另需 3 個魔女繡線。再次刺繡會覆蓋原圖樣；免費初始飾品沒有刺繡格。')
         embed = discord.Embed(title='安安大冒險｜漢娜的裁縫所',
                               description=description, color=0xE85D75)
@@ -139,6 +142,9 @@ class TailorView(discord.ui.View):
             f'金幣：{self.cog.store.gold(self.guild_id, self.owner.id):,}\n'
             + '｜'.join(f'{ITEMS[key].name} ×{counts.get(key, 0)}' for key in PAINT_ITEMS.values())
             + f'\n魔女繡線 ×{counts.get("witch:thread", 0)}'), inline=False)
+        score = hanna_affinity(self.cog.store.db, self.guild_id, self.owner.id)
+        embed.add_field(name='漢娜好感度', value=f'{score}/100｜加工費減免 {score / 4:g}%（最高 25%）\n'
+                        '報價已套用折扣，金幣無條件進位；材料數量不變。', inline=False)
         if notice:
             embed.add_field(name='加工結果', value=notice, inline=False)
         embed.set_footer(text='每件裝備以編號區分；顏料結晶的鑲嵌、替換、出售與轉交也在此處辦理。')
@@ -189,13 +195,15 @@ class TailorView(discord.ui.View):
                     if not self.selected:
                         raise CharacterError('請先選擇要加工的裝備。')
                     if self.mode == 'dye':
+                        price = tailoring_price(self.cog.store.db, self.guild_id, self.owner.id, DYE_PRICE)
                         self.cog.characters.dye_equipment(
                             self.guild_id, self.owner.id, self.selected, self.option)
-                        notice = f'染色完成，已消耗 {ITEMS[PAINT_ITEMS[self.option]].name}與 {DYE_PRICE:,} 金幣。'
+                        notice = f'染色完成，已消耗 {ITEMS[PAINT_ITEMS[self.option]].name}與 {price:,} 金幣。'
                     else:
+                        price = tailoring_price(self.cog.store.db, self.guild_id, self.owner.id, EMBROIDERY_PRICE)
                         self.cog.characters.embroider_accessory(
                             self.guild_id, self.owner.id, self.selected, self.option)
-                        notice = f'{EMBROIDERIES[self.option][0]}完成，已支付 {EMBROIDERY_PRICE:,} 金幣。'
+                        notice = f'{EMBROIDERIES[self.option][0]}完成，已支付 {price:,} 金幣。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

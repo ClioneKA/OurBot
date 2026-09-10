@@ -85,6 +85,8 @@ def equipment_drop_chance(base_chance, meal=None, fortune=None):
 class RaidStore:
     def __init__(self, store):
         self.store, self.db = store, store.db
+        from core.rpg_commissions import DailyCommissions
+        self.commissions = DailyCommissions(store)
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_raids (
                 id TEXT PRIMARY KEY, guild_id INTEGER, channel_id INTEGER,
@@ -458,6 +460,8 @@ class RaidStore:
             self.db.execute('''UPDATE rpg_divinations
                 SET card=NULL,bound_raid_id=NULL,summon_raid_id=NULL
                 WHERE bound_raid_id=?''', (raid['id'],))
+            if victory:
+                self.commissions.record_victory(raid)
             raid.update(status='completed', battle=battle_data, rewards=rewards)
             difficulty = raid.get('difficulty', {}).get('current', 1.0)
             recorded_strength = raid['monster'].get('strength', 1.0)

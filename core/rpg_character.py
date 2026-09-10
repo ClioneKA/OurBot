@@ -786,6 +786,8 @@ class Characters:
     def __init__(self, store, settings):
         self.store = store
         self.db = store.db
+        from core.rpg_affinity import initialize_affinity
+        initialize_affinity(self.db)
         self.settings = settings
         # Separate tables leave all legacy XP and cooldown values intact.
         with self.db:
@@ -1470,10 +1472,12 @@ class Characters:
             paint_key = PAINT_ITEMS[color]
             if counts.get(paint_key, 0) < 1:
                 raise CharacterError(f'背包中沒有{ITEMS[paint_key].name}。')
+            from core.rpg_affinity import tailoring_price
+            price = tailoring_price(self.db, guild, user, DYE_PRICE)
             paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
-                WHERE guild_id=? AND user_id=? AND gold>=?''', (DYE_PRICE, guild, user, DYE_PRICE))
+                WHERE guild_id=? AND user_id=? AND gold>=?''', (price, guild, user, price))
             if not paid.rowcount:
-                raise CharacterError(f'金幣不足，染色需要 {DYE_PRICE:,} 金幣。')
+                raise CharacterError(f'金幣不足，染色需要 {price:,} 金幣。')
             self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
                             'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, paint_key))
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
@@ -1512,11 +1516,13 @@ class Characters:
                     WHERE guild_id=? AND user_id=? AND item_id='witch:thread' AND quantity>=3''', (guild, user))
                 if not paid_thread.rowcount:
                     raise CharacterError('魔女刺繡需要 3 個魔女繡線。')
+            from core.rpg_affinity import tailoring_price
+            price = tailoring_price(self.db, guild, user, EMBROIDERY_PRICE)
             paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
                 WHERE guild_id=? AND user_id=? AND gold>=?''',
-                                   (EMBROIDERY_PRICE, guild, user, EMBROIDERY_PRICE))
+                                   (price, guild, user, price))
             if not paid.rowcount:
-                raise CharacterError(f'金幣不足，刺繡需要 {EMBROIDERY_PRICE:,} 金幣。')
+                raise CharacterError(f'金幣不足，刺繡需要 {price:,} 金幣。')
             self.db.execute('''INSERT INTO rpg_instance_affixes
                 (instance_id,affix_index,affix_id,effect_key,rolled_value)
                 VALUES (?,?,?,?,?) ON CONFLICT(instance_id,affix_index) DO UPDATE SET

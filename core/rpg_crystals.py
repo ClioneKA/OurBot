@@ -165,6 +165,8 @@ class CrystalInstance:
 class CrystalStore:
     def __init__(self, store):
         self.db = store.db
+        from core.rpg_affinity import initialize_affinity
+        initialize_affinity(self.db)
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_crystal_instances (
                 instance_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -416,11 +418,13 @@ class CrystalStore:
                 (equipment_id, socket_index, user_id)).fetchone()
             if not crystal_row:
                 raise CharacterError('這個槽位目前沒有結晶。')
+            from core.rpg_affinity import tailoring_price
+            price = tailoring_price(self.db, guild_id, user_id, CRYSTAL_REMOVAL_PRICE)
             paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
                 WHERE guild_id=? AND user_id=? AND gold>=?''',
-                (CRYSTAL_REMOVAL_PRICE, guild_id, user_id, CRYSTAL_REMOVAL_PRICE))
+                (price, guild_id, user_id, price))
             if not paid.rowcount:
-                raise CharacterError(f'金幣不足，完整拆除需要 {CRYSTAL_REMOVAL_PRICE:,} 金幣。')
+                raise CharacterError(f'金幣不足，完整拆除需要 {price:,} 金幣。')
             self.db.execute('''UPDATE rpg_crystal_instances
                 SET equipment_instance_id=NULL,socket_index=NULL WHERE instance_id=?''', crystal_row)
         return self.get(crystal_row[0])

@@ -61,6 +61,21 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.gold(1, 1), 5000 - DYE_PRICE - EMBROIDERY_PRICE)
         self.assertEqual(self.view.current_embroidery(raid), '羽翼刺繡')
 
+    async def test_friendship_discount_matches_display_and_actual_charges(self):
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_hanna_affinity VALUES (1,1,100)')
+        self.assertIn('750 金幣', self.view.embed().description)
+        await self.view.handle(self.interaction, 'item', f'instance:{self.noah_id}')
+        await self.view.handle(self.interaction, 'option', 'blue')
+        await self.view.handle(self.interaction, 'apply')
+        self.assertEqual(self.store.gold(1, 1), 4250)
+        self.assertIn('750 金幣', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+        await self.view.handle(self.interaction, 'mode:embroidery')
+        self.assertIn('375 金幣', self.view.embed().description)
+        await self.view.handle(self.interaction, 'item', f'instance:{self.raid_id}')
+        await self.view.handle(self.interaction, 'apply')
+        self.assertEqual(self.store.gold(1, 1), 3875)
+
     async def test_equipped_marker_tracks_exact_copy_and_refresh(self):
         duplicate = self.characters.grant_item(1, 1, 'noah:archer:weapon')[0]
         self.characters.equip(1, 1, f'instance:{self.noah_id}')

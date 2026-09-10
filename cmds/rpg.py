@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from pathlib import Path
 import time
 from weakref import WeakSet
@@ -51,6 +52,11 @@ class RPG(commands.Cog):
         self.loadouts = Loadouts(self.store, self.characters, self.tactics)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)
+        from core.memory import MemoryStore
+        memory_path = Path(os.getenv('AI_MEMORY_DB', 'data/memory.db'))
+        if not memory_path.is_absolute():
+            memory_path = Path(__file__).resolve().parent.parent / memory_path
+        self.commission_memory = MemoryStore(str(memory_path))
         self.tavern = TavernService(self)
         self.total_raids = TotalRaidService(self)
         self.painted_maze = PaintedMazeService(self)

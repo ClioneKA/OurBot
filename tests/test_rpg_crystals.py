@@ -205,6 +205,12 @@ class CrystalStoreTests(unittest.TestCase):
         removed = self.crystals.remove(1, 1, equipment_id, 'outline')
         self.assertIsNone(removed.equipment_instance_id)
         self.assertEqual(self.rpg.gold(1, 1), 2000 - CRYSTAL_REMOVAL_PRICE)
+        self.crystals.socket(1, 1, removed.instance_id, equipment_id)
+        with self.rpg.db:
+            self.rpg.db.execute('INSERT INTO rpg_hanna_affinity VALUES (1,1,100)')
+            self.rpg.db.execute('UPDATE rpg_wallets SET gold=2000 WHERE guild_id=1 AND user_id=1')
+        self.crystals.remove(1, 1, equipment_id, 'outline')
+        self.assertEqual(self.rpg.gold(1, 1), 875)
 
     def test_overwrite_destroys_old_crystal_and_equipment_transfer_keeps_new_one(self):
         now = self.finish_stage(1, 120)

@@ -8,6 +8,8 @@ import uuid
 import discord
 
 from core.rpg_character import CharacterError
+from core.rpg_commissions import DailyCommissions
+from core.rpg_affinity import hanna_affinity
 from core.rpg_menu import add_help, add_back
 from core.rpg_provisions import effect_text, guest_reward_target
 
@@ -325,6 +327,7 @@ class MealOfferView(discord.ui.View):
 class TavernService:
     def __init__(self, cog):
         self.cog, self.store = cog, TavernStore(cog.store)
+        self.commissions = DailyCommissions(cog.store, getattr(cog, 'commission_memory', None))
         self.views = {}
         try:
             self.environment_channel_ids = tuple(dict.fromkeys(
@@ -431,6 +434,14 @@ class TavernView(discord.ui.View):
         for package_id, package in DRINK_PACKAGES.items():
             self._button(f'{package.name}（{package.price:,}／{package.capacity} 杯）',
                          f'drink:{package_id}', 1, discord.ButtonStyle.success)
+        self.commission_date, board = self.cog.tavern.commissions.board(self.guild_id, self.owner.id)
+        for npc, name in (('annan', '安安'), ('hanna', '漢娜')):
+            quest = board[npc]
+            label = f'{name}｜已完成' if quest['claimed'] else (
+                '安安｜領取討伐獎勵' if npc == 'annan' else '漢娜｜交付食材並領獎')
+            self._button(label, f'commission:{self.commission_date}:{npc}', 2,
+                         discord.ButtonStyle.success)
+            self.children[-1].disabled = quest['claimed']
         add_help(self, 3, 'life', 'tavern')
         add_back(self, 3)
         self._button('重新整理', 'refresh', 3)
@@ -461,6 +472,25 @@ class TavernView(discord.ui.View):
                          f'<t:{int(meal["valid_until"])}:R> 到期')
         embed.add_field(name='目前飲料效果', value=drink_text, inline=False)
         embed.add_field(name='目前料理效果', value=meal_text, inline=False)
+        from core.rpg_character import ITEMS
+        day, board = self.cog.tavern.commissions.board(self.guild_id, self.owner.id)
+        lines = []
+        for npc, name in (('annan', '安安'), ('hanna', '漢娜')):
+            quest = board[npc]
+            target = quest['target'] if npc == 'annan' else ITEMS[quest['target']].name
+            request = (f'「幫我討伐 {target} 吧！」' if npc == 'annan'
+                       else f'「廚房缺一些 {target}，可以幫我帶來嗎？」')
+            status = ('好感度待補發，重新整理可重試' if quest['pending'] else
+                      '✅ 已完成' if quest['claimed'] else f'{quest["progress"]}/{quest["quantity"]}')
+            lines.append(f'**{name}** {request}\n'
+                         f'{"勝場" if npc == "annan" else "交付食材"} ×{quest["quantity"]}｜'
+                         f'{status}｜{name}好感度 +{quest["affinity"]}')
+        embed.add_field(name=f'每日委託｜{day}', value='\n\n'.join(lines) +
+            '\n\n台灣時間 00:00 更新，每人各限一次，獎勵須當日領取。'
+            '\n無須接取；討伐依勝利結算日期累計（含懸賞，不含管理員召喚）。'
+            '\n食材可使用庫存，按交付後扣除；依品質 1～5，整張委託好感度 +1～5。', inline=False)
+        score = hanna_affinity(self.cog.store.db, self.guild_id, self.owner.id)
+        embed.add_field(name='漢娜好感度', value=f'{score}/100｜裁縫加工費減免 {score / 4:g}%（最高 25%）', inline=False)
         if notice:
             embed.add_field(name='酒館消息', value=notice, inline=False)
         embed.set_footer(text='請客與料理會發布至酒館專用頻道；懸賞會發布至對應的討伐頻道。')
@@ -489,6 +519,7 @@ class TavernView(discord.ui.View):
                 await interaction.response.edit_message(content='你離開了冒險者酒館。', embed=None, view=None)
                 return
             if action == 'refresh':
+                self.rebuild()
                 await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
             if action == 'cooking':
@@ -497,7 +528,13 @@ class TavernView(discord.ui.View):
                 return
             await interaction.response.defer(ephemeral=True)
             try:
-                if action.startswith('bounty:'):
+                if action.startswith('commission:'):
+                    _, day, npc = action.split(':')
+                    reward = self.cog.tavern.commissions.claim(self.guild_id, self.owner.id, day, npc)
+                    name = '安安' if npc == 'annan' else '漢娜'
+                    notice = (f'完成了{name}的每日委託，好感度 +{reward["delta"]}！'
+                              f'目前 {reward["score"]}/100' + ('（已達上限）' if reward['score'] == 100 else ''))
+                elif action.startswith('bounty:'):
                     pool = action.split(':', 1)[1]
                     channel, _, raid = await self.cog.tavern.post_bounty(interaction.guild, self.owner, pool)
                     notice = f'已花費 {BOUNTY_PRICES[pool]:,} 金幣在 {channel.mention} 張貼懸賞，並自動報名。'

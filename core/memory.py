@@ -408,6 +408,29 @@ class MemoryStore:
             ).fetchone()
         return int(row["score"]) if row is not None else 0
 
+    def award_commission_affinity(self, guild_id, user_id, day):
+        """Grant +1 once per commission day without using a chat change slot."""
+        with self.lock, self._connection() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            connection.execute('''CREATE TABLE IF NOT EXISTS affinity_commission_rewards (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+                score INTEGER NOT NULL, delta INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id,day))''')
+            row = connection.execute('''SELECT score,delta FROM affinity_commission_rewards
+                WHERE guild_id=? AND user_id=? AND day=?''', (guild_id, user_id, day)).fetchone()
+            if row:
+                return dict(row)
+            row = connection.execute('SELECT score FROM user_affinity WHERE guild_id=? AND user_id=?',
+                                     (guild_id, user_id)).fetchone()
+            before = row['score'] if row else 0
+            score = min(100, before + 1)
+            connection.execute('''INSERT INTO user_affinity(guild_id,user_id,score) VALUES (?,?,?)
+                ON CONFLICT(guild_id,user_id) DO UPDATE SET score=excluded.score,
+                updated_at=CURRENT_TIMESTAMP''', (guild_id, user_id, score))
+            connection.execute('INSERT INTO affinity_commission_rewards VALUES (?,?,?,?,?)',
+                               (guild_id, user_id, day, score, score - before))
+            return dict(score=score, delta=score - before)
+
     def set_affinity(self, guild_id: int, user_id: int, score: int) -> int:
         score = max(-100, min(score, 100))
         with self.lock, self._connection() as connection:

@@ -343,6 +343,38 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('剩餘', fields['目前料理效果'])
         self.assertIn('到期', fields['目前料理效果'])
 
+    async def test_daily_delivery_button_updates_wallet_and_completed_state(self):
+        self.store.create_player(1, 1)
+        day, board = self.service.commissions.board(1, 1)
+        quest = board['hanna']
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,?)',
+                                  (quest['target'], quest['quantity']))
+        self.interaction.response = SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock())
+        self.interaction.edit_original_response = AsyncMock()
+        view = TavernView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        self.assertTrue(any(field.name.startswith('每日委託') for field in view.embed().fields))
+        button = next(item for item in view.children if item.label == '漢娜｜交付食材並領獎')
+        await button.callback(self.interaction)
+        self.assertEqual(self.store.gold(1, 1), 10000)
+        from core.rpg_affinity import hanna_affinity
+        self.assertEqual(hanna_affinity(self.store.db, 1, 1), quest['affinity'])
+        completed = next(item for item in view.children if item.label == '漢娜｜已完成')
+        self.assertTrue(completed.disabled)
+        self.assertIn('完成了漢娜', self.interaction.edit_original_response.call_args.kwargs[
+            'embed'].fields[-1].value)
+
+    async def test_other_user_cannot_deliver_owner_commission(self):
+        view = TavernView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        other = SimpleNamespace(guild_id=1, user=SimpleNamespace(id=2),
+                                response=SimpleNamespace(send_message=AsyncMock()))
+        button = next(item for item in view.children if item.label == '漢娜｜交付食材並領獎')
+        await button.callback(other)
+        other.response.send_message.assert_awaited_once()
+        self.assertEqual(self.store.gold(1, 1), 10000)
+
 
 class TavernBountyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
