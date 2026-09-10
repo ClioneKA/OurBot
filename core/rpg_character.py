@@ -703,11 +703,18 @@ def speed_from_equipment(job, equipped=()):
     return max(1, min(100, BASE_SPEED.get(job, 50) + sum(ITEMS[key].speed for key in keys if key in ITEMS)))
 
 
+def equipment_tier(item):
+    """Return the canonical tier, or None for non-equipment items."""
+    if item.slot not in ('武器', '套裝', '飾品'):
+        return None
+    return item.required_level if item.required_level is not None else (10, 20, 50, 90)[item.stage]
+
+
 def item_display_name(item):
     """Show canonical equipment tier, independent of configurable wear levels."""
-    if item.slot not in ('武器', '套裝', '飾品'):
+    tier = equipment_tier(item)
+    if tier is None:
         return item.name
-    tier = item.required_level if item.required_level is not None else (10, 20, 50, 90)[item.stage]
     return f'T{tier}｜{item.name}'
 
 
@@ -1595,6 +1602,28 @@ class Characters:
                 self._dispose(guild, user, key, amount, recipient)
                 results.append((item, amount))
         return results
+
+    def sell_equipment_batch(self, guild, user, references, max_tier, expected_gold):
+        """Sell exactly the previewed instances, atomically rechecking eligibility."""
+        references = list(references)
+        if not references or len(set(references)) != len(references):
+            raise CharacterError('沒有可一併販售的裝備，請重新選擇。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            total = 0
+            for key in references:
+                if not isinstance(key, str) or not key.startswith('instance:'):
+                    raise CharacterError('請重新選擇要販售的裝備。')
+                item = self.item_for_reference(guild, user, key)
+                if item is None:
+                    raise CharacterError('裝備已不在背包，請重新選擇販售範圍。')
+                tier = equipment_tier(item)
+                if tier is None or tier > max_tier or not item_sellable(item):
+                    raise CharacterError('裝備已變更，請重新選擇販售範圍。')
+                total += self._dispose(guild, user, key, 1)
+            if total != expected_gold:
+                raise CharacterError('收購價格已變更，請重新選擇販售範圍。')
+        return total
 
     def _dispose(self, guild, user, key, quantity, recipient=None):
         """Apply one disposal inside the caller's transaction."""

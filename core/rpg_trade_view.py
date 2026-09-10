@@ -2,13 +2,14 @@
 import asyncio
 import discord
 
-from core.rpg_character import CharacterError, ITEMS, inventory_entry_label, item_sell_price, item_sellable, item_text
+from core.rpg_character import CharacterError, ITEMS, equipment_tier, inventory_entry_label, item_sell_price, item_sellable, item_text
 from core.rpg_menu import BACKPACK_CATEGORIES, add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
 
 TRADE_CATEGORIES = tuple(dict.fromkeys((*BACKPACK_CATEGORIES,
                                       *(item.category for item in ITEMS.values()))))
+BULK_TIERS = tuple(range(10, 101, 10))
 
 
 class QuantityModal(discord.ui.Modal):
@@ -63,6 +64,7 @@ class TradeView(discord.ui.View):
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.selected, self.recipient, self.page = None, None, 0
         self.selected_keys = []
+        self.bulk_preview = None
         self.category = '全部'
         self.closed, self.revision = False, 0
         self.lock = asyncio.Lock()
@@ -102,6 +104,10 @@ class TradeView(discord.ui.View):
                 for key in keys] or [discord.SelectOption(label='此分類沒有可用物品', value='empty')]))
         if self.mode == 'give':
             self.add_item(RecipientSelect())
+        else:
+            self.add_item(PanelSelect('bulk_tier', row=2, placeholder='一併販售：選擇 T 等級上限（含）', options=[
+                discord.SelectOption(label=f'T{tier} 以下（含 T{tier}）', value=str(tier))
+                for tier in BULK_TIERS]))
         for label, action, disabled in (
             ('上一頁', 'previous', self.page == 0), ('下一頁', 'next', self.page == self.pages-1),
             ('填寫數量並確認', 'confirm', not self.selected or self.selected_equipped or self.mode == 'give' and not self.recipient),
@@ -117,6 +123,14 @@ class TradeView(discord.ui.View):
             await self.handle(interaction, 'back')
         button.callback = back
         self.add_item(button)
+
+        if self.mode == 'sell':
+            button = discord.ui.Button(label='確認一併販售', style=discord.ButtonStyle.danger,
+                                       row=4, disabled=not self.bulk_preview)
+            async def bulk_confirm(interaction):
+                await self.handle(interaction, 'bulk_confirm')
+            button.callback = bulk_confirm
+            self.add_item(button)
 
     def embed(self, notice=None):
         embed = discord.Embed(title='安安大冒險｜' + ('給予物品' if self.mode == 'give' else '商店收購'),
@@ -137,6 +151,12 @@ class TradeView(discord.ui.View):
             embed.add_field(name='收件人', value=f'<@{self.recipient}>' if self.recipient else '尚未選擇')
         else:
             embed.add_field(name='持有金幣', value=str(self.cog.store.gold(self.guild_id, self.owner.id)))
+            embed.description += '\n一併販售會從整個背包篩選指定 T 等級以下（含）的未穿戴裝備，不受分類或頁數限制。'
+            if self.bulk_preview:
+                tier, references, gold = self.bulk_preview
+                embed.add_field(name='一併販售預覽',
+                    value=f'T{tier} 以下（含 T{tier}）：共 {len(references)} 件，合計 {gold:,} 金幣。\n'
+                          '包含裝備上的附魔與鑲嵌物，出售後一併移除。按「確認一併販售」完成出售。', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
         embed.set_footer(text='閒置 3 分鐘後關閉；使用 /冒險 重新開啟。')
@@ -164,11 +184,38 @@ class TradeView(discord.ui.View):
                 self.stop()
                 return
             self.rebuild()
+            notice = None
+            if action == 'bulk_confirm' and self.mode == 'sell':
+                preview, self.bulk_preview = self.bulk_preview, None
+                if preview:
+                    tier, references, gold = preview
+                    try:
+                        total = self.cog.characters.sell_equipment_batch(
+                            self.guild_id, self.owner.id, references, tier, gold)
+                        notice = f'已一併賣出 T{tier} 以下裝備 {len(references)} 件，獲得 {total:,} 金幣。'
+                    except CharacterError as exc:
+                        notice = str(exc)
+                else:
+                    notice = '請先選擇一併販售的 T 等級範圍。'
+            else:
+                self.bulk_preview = None
             if action == 'confirm' and self.selected and not self.selected_equipped and (self.mode == 'sell' or self.recipient):
                 await interaction.response.send_modal(QuantityModal(self))
                 return
             self.revision += 1
-            if action == 'category' and value in TRADE_CATEGORIES:
+            if action == 'bulk_tier' and self.mode == 'sell' and str(value) in {str(t) for t in BULK_TIERS}:
+                tier = int(value)
+                entries = [entry for entry in self.entries.values()
+                           if entry.instance_id is not None and entry.instance_id not in self.equipped_ids
+                           and equipment_tier(entry.item) is not None and equipment_tier(entry.item) <= tier
+                           and item_sellable(entry.item)]
+                self.selected, self.selected_keys = None, []
+                if entries:
+                    self.bulk_preview = (tier, [entry.reference for entry in entries],
+                                         sum(item_sell_price(entry.item) for entry in entries))
+                else:
+                    notice = f'沒有可販售的 T{tier} 以下未穿戴裝備。'
+            elif action == 'category' and value in TRADE_CATEGORIES:
                 self.category, self.page, self.selected = value, 0, None
                 self.selected_keys = []
             elif action == 'item':
@@ -188,7 +235,7 @@ class TradeView(discord.ui.View):
                 self.selected = None
                 self.selected_keys = []
             self.rebuild()
-            await interaction.response.edit_message(embed=self.embed(), view=self, allowed_mentions=discord.AllowedMentions.none())
+            await interaction.response.edit_message(embed=self.embed(notice), view=self, allowed_mentions=discord.AllowedMentions.none())
 
     async def execute(self, interaction, key, recipient, amount, revision, requests=None):
         if not await self.interaction_check(interaction):

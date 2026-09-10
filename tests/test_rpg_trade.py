@@ -13,6 +13,63 @@ from core.settings import RPGSettings
 
 
 class TradeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bulk_sale_inclusive_across_pages_preserves_other_items(self):
+        self.characters.grant_item(1, 1, '騎士:1:武器', 12)
+        self.characters.grant_item(1, 1, '騎士:2:武器', 1)
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 2)
+        self.characters.equip(1, 1, 'raid:0')
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'category', '料理素材')
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        tier, references, gold = view.bulk_preview
+        self.assertEqual((tier, len(references)), (20, 14))
+        self.assertEqual(self.store.gold(1, 1), 0)
+        self.assertIn('14 件', view.embed().fields[-1].value)
+        self.assertLessEqual(len(view.to_components()), 5)
+        await view.handle(self.interaction, 'bulk_confirm')
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertEqual(counts['raid:0'], 1)
+        self.assertEqual(counts['騎士:2:武器'], 1)
+        self.assertEqual(counts['fishing:pond:common'], 2)
+        self.assertNotIn('騎士:1:武器', counts)
+        self.assertEqual(self.store.gold(1, 1), gold)
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertEqual(self.store.gold(1, 1), gold)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        self.assertIsNone(view.bulk_preview)
+
+    async def test_bulk_preview_does_not_sell_new_items_and_refresh_cancels(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        self.characters.grant_item(1, 1, 'raid:0', 1)
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        await view.handle(self.interaction, 'refresh')
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+
+    async def test_bulk_sale_rolls_back_if_previewed_equipment_changes(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        tier, references, gold = view.bulk_preview
+        self.characters.equip(1, 1, references[-1])
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
+        self.assertEqual(self.store.gold(1, 1), 0)
+        self.characters.unequip(1, 1, '飾品1')
+        with self.assertRaises(CharacterError):
+            self.characters.sell_equipment_batch(1, 1, references, tier, gold + 1)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
+        self.characters.dispose(1, 1, references[-1], 1)
+        with self.assertRaises(CharacterError):
+            self.characters.sell_equipment_batch(1, 1, references, tier, gold)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 2)
+        self.assertEqual(self.store.gold(1, 1), 60)
+
     async def test_batch_modal_clamps_current_stock_and_sends_one_receipt(self):
         self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
         view = TradeView(self.cog, self.interaction, 'give')
