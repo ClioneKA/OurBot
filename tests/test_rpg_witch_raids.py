@@ -276,6 +276,49 @@ class WitchRoomTests(TotalRaidRoomTests):
         channel.delete.assert_awaited_once()
         self.assertTrue(self.service.repo.get(room['id'])['channel_deleted'])
 
+    async def test_manual_autoplay_button_clears_draft_and_can_take_back(self):
+        room, _, _ = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
+                    round_deadline=time.time() + 120)
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.private_choice(room['id'], 1, 1, 'attack')
+            view = WitchPrivateActionView(self.service, room['id'], 1, b)
+            self.assertFalse(view.autoplay.disabled)
+            self.assertTrue(view.takeover.disabled)
+            interaction = SimpleNamespace(response=SimpleNamespace(defer=AsyncMock()),
+                                          followup=SimpleNamespace(send=AsyncMock()))
+            with patch.object(view, 'refresh', new=AsyncMock()) as refresh:
+                await view.autoplay.callback(interaction)
+                refresh.assert_awaited_once()
+            interaction.followup.send.assert_not_awaited()
+            saved = self.service.repo.get(room['id'])
+            b = load_total_battle(saved['battle'])
+            self.assertEqual(b.auto_players, {1})
+            self.assertNotIn('1', saved['action_drafts'])
+            self.assertNotIn(1, b.waiting_player_ids())
+            view = WitchPrivateActionView(self.service, room['id'], 1, b)
+            self.assertTrue(view.autoplay.disabled)
+            self.assertFalse(view.takeover.disabled)
+            await self.service.takeover_action(room['id'], 1, expected_round=1)
+            b = load_total_battle(self.service.repo.get(room['id'])['battle'])
+            self.assertNotIn(1, b.auto_players)
+            self.assertIn(1, b.waiting_player_ids())
+            with self.assertRaisesRegex(TotalRaidError, '回合已結束'):
+                await self.service.enable_auto_action(room['id'], 1, expected_round=0)
+            with self.assertRaises(TotalRaidError):
+                await self.service.enable_auto_action(room['id'], 99, expected_round=1)
+
+    async def test_manual_autoplay_resolves_when_everyone_is_ready(self):
+        room, host, _ = await self.setup_witch_room()
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel):
+            await self.service.begin(room['id'], host)
+            await self.service.enable_auto_action(room['id'], 1, expected_round=1)
+        b = load_total_battle(self.service.repo.get(room['id'])['battle'])
+        self.assertEqual(b.round, 1)
+        self.assertIn(1, b.auto_players)
+
     async def test_private_panel_keeps_each_players_draft_and_validates_round_and_target(self):
         room, host, channel = await self.setup_witch_room()
         b = battle_fixtures.WitchBattleTests().make()

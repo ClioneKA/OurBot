@@ -648,6 +648,6 @@ class PaintedMazeService:
             if guild is None:
                 continue
             try:
-                await self.cog.spaces.rename_maze_channel(guild)
+                await self.cog.spaces.sync_maze_channel(guild)
             except discord.HTTPException:
                 logger.exception('Painted Maze channel rename failed: %s', space.guild_id)

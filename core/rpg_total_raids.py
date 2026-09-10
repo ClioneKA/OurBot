@@ -509,7 +509,7 @@ class TotalRaidRunningView(discord.ui.View):
         except (CharacterError, TotalRaidError) as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 
-    @discord.ui.button(label='接管自動普攻', style=discord.ButtonStyle.secondary,
+    @discord.ui.button(label='接回手動操作', style=discord.ButtonStyle.secondary,
                        custom_id='witch_raid:running:takeover')
     async def takeover(self, interaction, _button):
         await interaction.response.defer(ephemeral=True)
@@ -640,6 +640,7 @@ class WitchPrivateActionView(discord.ui.View):
                 self.add_item(WitchPrivateTargetSelect(battle, draft, targets))
         self.confirm.disabled = user_id not in battle.choices or bool(draft)
         self.takeover.disabled = user_id not in battle.auto_players
+        self.autoplay.disabled = user_id in battle.auto_players
         votes = set(room.get('surrender_votes', [])) & battle.living_player_ids()
         self.surrender.label = ('撤回投降' if user_id in votes else
                                 '投降（結束戰鬥）' if len(battle.living_player_ids()) == 1 else '同意投降')
@@ -665,7 +666,16 @@ class WitchPrivateActionView(discord.ui.View):
         except (CharacterError, TotalRaidError) as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 
-    @discord.ui.button(label='接管自動普攻', style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label='交給機器人', style=discord.ButtonStyle.primary, row=3)
+    async def autoplay(self, interaction, _button):
+        await interaction.response.defer()
+        try:
+            await self.service.enable_auto_action(self.room_id, self.user_id, expected_round=self.planning_round)
+            await self.refresh(interaction)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+    @discord.ui.button(label='接回手動操作', style=discord.ButtonStyle.secondary, row=3)
     async def takeover(self, interaction, _button):
         await interaction.response.defer()
         try:
@@ -1154,8 +1164,12 @@ class TotalRaidService:
         if isinstance(battle, WitchRaidBattle):
             buffs, debuffs = effect_status(actor, battle)
             lines.extend((f'Buff：{buffs}', f'Debuff：{debuffs}'))
-            lines.append('✅ 已確認，等待其他玩家。' if user_id in battle.confirmed else '尚未確認本回合。')
-            lines.append('選擇後請按「確認本回合」；修改行動會取消確認。')
+            lines.append('🤖 機器人自動戰鬥中，不需手動確認；可按「接回手動操作」。'
+                         if user_id in battle.auto_players else
+                         '✅ 已確認，等待其他玩家。' if user_id in battle.confirmed else '尚未確認本回合。')
+            lines.append('選擇行動會接回手動操作，選擇後請按「確認本回合」。'
+                         if user_id in battle.auto_players else
+                         '選擇後請按「確認本回合」；也可按「交給機器人」立即開啟自動戰鬥。')
             if battle.washed(actor, battle.planning_round):
                 lines.append('洗腦：強制普攻隊友。' if battle.forced(actor, battle.planning_round) else '洗腦：攻擊打隊友，治療給魔女；可防禦或安全支援。')
         lines.extend(('', '請選擇本回合行動。'))
@@ -1170,6 +1184,23 @@ class TotalRaidService:
             if str(user_id) in room.get('action_drafts', {}):
                 raise TotalRaidError('請先選擇目標，完成本回合行動。')
             battle.confirm(user_id)
+            room['battle'] = dump_total_battle(battle)
+            self.repo.save(room)
+            if battle.ready_to_resolve():
+                await self._resolve(room, battle)
+            else:
+                await self._edit_public(room, battle)
+
+    async def enable_auto_action(self, room_id, user_id, expected_round=None):
+        async with self.lock(room_id):
+            room, battle = self.running_battle(room_id, user_id)
+            if not isinstance(battle, WitchRaidBattle):
+                raise TotalRaidError('只有魔女試煉支援自動戰鬥。')
+            await self.check_witch_deadline(room, battle)
+            if expected_round is not None and expected_round != battle.planning_round:
+                raise TotalRaidError('此面板的回合已結束，請重新開啟個人操作面板。')
+            battle.enable_auto(user_id)
+            room.get('action_drafts', {}).pop(str(user_id), None)
             room['battle'] = dump_total_battle(battle)
             self.repo.save(room)
             if battle.ready_to_resolve():
@@ -1328,7 +1359,8 @@ class TotalRaidService:
         if room['boss'] == WITCH_BOSS:
             embed.title = f'魔女試煉｜{room["witch_day"]} #{room["number"]}'
             embed.description = ('、'.join(PROFILE[k][1] for k in room['witch_ids']) +
-                '\n由房主開始，所有玩家免費入場。勝利每人取得 1 個魔女繡線。\n每回合 120 秒，全員確認可提早結算；連續三回合逾時轉自動普攻，可隨時接管。')
+                '\n由房主開始，所有玩家免費入場。每日首次勝利取得 1 個魔女繡線。\n每回合 120 秒，全員確認可提早結算；連續三回合逾時轉自動戰鬥，可隨時接回手動。'
+                '\n自動戰鬥依技能欄順序使用已啟用且冷卻完成的技能，優先選血量比例最低的合法目標；無可用技能則普攻。')
         embed.add_field(name='房主', value=f'<@{room["host_id"]}>')
         embed.add_field(name='隊伍', value=f'{len(room["members"])}/{self.settings.max_participants}', inline=True)
         embed.add_field(name='參戰成員', value=roster or '尚無成員', inline=False)
@@ -1651,7 +1683,7 @@ class TotalRaidService:
         else:
             embed.set_footer(text='測試版不發放獎勵；頻道目前保留供檢查戰報。')
         if room['boss'] == WITCH_BOSS:
-            embed.set_footer(text=room.get('reward_text', '點擊「開啟個人操作面板」選擇並確認；逾時普攻，連續三次轉自動。🤖 可於個人面板接管。'))
+            embed.set_footer(text=room.get('reward_text', '個人操作面板可按「交給機器人」或「接回手動操作」；逾時普攻，連續三次轉自動技能。'))
         return embed
 
     @tasks.loop(seconds=5)

@@ -143,7 +143,7 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(self.channels[11].overwrites_for(self.adventurer_role).send_messages, False)
             self.assertIs(self.channels[special_id].overwrites_for(self.adventurer_role).send_messages, False)
             self.assertIs(self.channels[14].overwrites_for(self.adventurer_role).send_messages, True)
-            self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages, False)
+            self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages, True)
             self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages_in_threads, True)
             self.assertIs(self.channels[11].overwrites_for(self.default_role).view_channel, False)
             self.assertIn('皆正常', self.service.status_text(self.guild))
@@ -164,8 +164,31 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.service.store.get(9).maze_channel_id, channel.id)
             self.guild.create_text_channel.assert_not_awaited()
             channel.edit.assert_awaited_once()
-            await self.service.rename_maze_channel(self.guild)
+            await self.service.sync_maze_channel(self.guild)
             channel.edit.assert_awaited_once()
+
+    async def test_sync_maze_opens_input_preserves_overwrites_and_is_idempotent(self):
+        with patch('core.rpg_spaces.discord.TextChannel', FakeTextChannel), \
+                patch('core.rpg_spaces.discord.CategoryChannel', FakeCategory):
+            await self.service.setup(self.guild)
+            space = self.service.store.get(9)
+            channel = self.channels[space.maze_channel_id]
+            role = self.roles[space.adventurer_role_id]
+            overwrite = channel.overwrites_for(role)
+            overwrite.send_messages = False
+            overwrite.use_application_commands = False
+            overwrite.attach_files = False
+            channel.overwrites[role] = overwrite
+            await self.service.sync_maze_channel(self.guild)
+            updated = channel.overwrites_for(role)
+            self.assertIs(updated.send_messages, True)
+            self.assertIs(updated.use_application_commands, True)
+            self.assertIs(updated.attach_files, False)
+            self.assertIs(updated.send_messages_in_threads, True)
+            self.assertIs(channel.overwrites_for(self.default_role).view_channel, False)
+            channel.set_permissions.assert_awaited_once()
+            await self.service.sync_maze_channel(self.guild)
+            channel.set_permissions.assert_awaited_once()
 
     async def test_setup_creates_only_missing_objects(self):
         self.rpg.create_player(9, 55)

@@ -182,7 +182,8 @@ class AdventureSpaceService:
             maze = field == 'maze_channel_id'
             checks.extend(((channel, guild.default_role, 'view_channel', False),
                            (channel, role, 'view_channel', True),
-                           (channel, role, 'send_messages', tavern),
+                           (channel, role, 'send_messages', tavern or maze),
+                           (channel, role, 'use_application_commands', True),
                            (channel, role, 'send_messages_in_threads', tavern or maze),
                            (channel, guild.me, 'send_messages', True),
                            (channel, guild.me, 'manage_threads', maze)))
@@ -255,7 +256,7 @@ class AdventureSpaceService:
         # Discord request can be retried without duplicating earlier creations.
         save_progress()
 
-        await self.rename_maze_channel(guild)
+        await self.sync_maze_channel(guild)
         created = []
         for field, (label, name) in SPACE_CHANNELS.items():
             if self._valid_channel(guild, values[field]) is not None:
@@ -300,7 +301,7 @@ class AdventureSpaceService:
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             role: discord.PermissionOverwrite(
                 view_channel=True, read_message_history=True, use_application_commands=True,
-                send_messages=tavern, embed_links=tavern, attach_files=tavern,
+                send_messages=tavern or maze, embed_links=tavern, attach_files=tavern,
                 add_reactions=tavern, create_public_threads=tavern,
                 create_private_threads=False, send_messages_in_threads=tavern or maze),
             guild.me: discord.PermissionOverwrite(
@@ -310,13 +311,21 @@ class AdventureSpaceService:
                 manage_threads=maze),
         }
 
-    async def rename_maze_channel(self, guild):
-        """Rename the registered maze channel without replacing its ID or contents."""
+    async def sync_maze_channel(self, guild):
+        """Update the maze name and command access while preserving other overwrites."""
         space = self.store.get(guild.id)
         channel = self._valid_channel(guild, space.maze_channel_id) if space else None
         name = SPACE_CHANNELS['maze_channel_id'][1]
         if channel is not None and channel.name != name:
             await channel.edit(name=name, reason='統一繪境迷宮頻道名稱')
+        role = self._valid_role(guild, space.adventurer_role_id) if space else None
+        if channel is not None and role is not None:
+            overwrite = channel.overwrites_for(role)
+            if overwrite.send_messages is not True or overwrite.use_application_commands is not True:
+                overwrite.send_messages = True
+                overwrite.use_application_commands = True
+                await channel.set_permissions(role, overwrite=overwrite,
+                                              reason='開放繪境迷宮輸入訊息與使用指令')
 
     async def repair(self, guild):
         """Create missing objects, then align category placement and required overwrites."""

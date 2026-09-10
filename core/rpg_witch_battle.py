@@ -1,6 +1,6 @@
 """Manual, restartable daily witch raid using real character snapshots."""
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from core.rpg_battle import ALLY_EFFECTS, FIXED_TARGETS, Fighter, dump_battle, load_battle, raid_battle
 from core.rpg_total_battle import ActionChoice, EnemyIntent, TotalRaidBattle, TotalRaidError, ACTION_ATTACK, ACTION_SKILL
@@ -137,6 +137,15 @@ class WitchRaidBattle(WitchBattleV9):
             raise TotalRaidError('請先選擇本回合行動。')
         self.confirmed.add(user_id)
 
+    def enable_auto(self, user_id):
+        actor = self._player(user_id)
+        if self.result or actor.hp <= 0:
+            raise TotalRaidError('戰鬥已結束或你已倒下。')
+        self.auto_players.add(user_id)
+        self.confirmed.discard(user_id)
+        self.choices.pop(user_id, None)
+        self.timeout_streak[user_id] = 0
+
     def takeover(self, user_id):
         self._player(user_id)
         self.auto_players.discard(user_id)
@@ -153,9 +162,21 @@ class WitchRaidBattle(WitchBattleV9):
         for uid in sorted(self.living_player_ids()):
             if uid in self.confirmed and uid in self.choices:
                 continue
-            targets = self.valid_targets(uid, ACTION_ATTACK)
-            target = min(targets, key=lambda k: self.fighter_for_key(k).hp) if targets else None
-            choice = ActionChoice(uid, ACTION_ATTACK, target, automatic=True)
+            action, slot = ACTION_ATTACK, None
+            if uid in self.auto_players:
+                actor = self._player(uid)
+                enabled = {rule.slot for rule in actor.rules if rule.enabled}
+                skills = sorted((item for item in self.available_actions(uid)
+                                 if item['action'] == ACTION_SKILL
+                                 and item['skill_slot'] in enabled
+                                 and not item.get('cooldown_remaining', 0)),
+                                key=lambda item: item['skill_slot'])
+                if skills:
+                    action, slot = ACTION_SKILL, skills[0]['skill_slot']
+            targets = self.valid_targets(uid, action, slot)
+            target = min(targets, key=lambda k: self.fighter_for_key(k).hp
+                         / self.fighter_for_key(k).stats['HP']) if targets else None
+            choice = ActionChoice(uid, action, target, slot, automatic=True)
             self.choices[uid] = choice
             added.append(choice)
         return added
@@ -190,6 +211,10 @@ class WitchRaidBattle(WitchBattleV9):
         return key
 
     def _resolve_player(self, actor, choice):
+        if choice.automatic:
+            name = self._skill(actor, choice.skill_slot)[1].name if choice.action == ACTION_SKILL else '普通攻擊'
+            self.log.append(f'{actor.name} 自動戰鬥：使用{name}。')
+            choice = replace(choice, automatic=False)
         if choice.action == ACTION_DEFEND and not self.forced(actor, self.round):
             actor.passive_state.pop('witch_camera_target', None)
             self.mechanics.setdefault('embroidery_last_action', {})[str(actor.team)] = dict(

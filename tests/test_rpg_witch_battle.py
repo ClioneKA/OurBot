@@ -42,6 +42,77 @@ class WitchBattleTests(unittest.TestCase):
         self.assertEqual(b.timeout_streak[uid], 0)
         self.assertIn(uid, b.waiting_player_ids())
 
+    def test_auto_uses_ready_skills_in_slot_order_and_lowest_hp_ratio(self):
+        b = self.make()
+        actor = next(p for p in b.living(0) if p.job == '弓兵')
+        uid = actor.user_id
+        b.auto_players.add(uid)
+        enemies = b.living(1)
+        enemies[0].hp, enemies[0].stats['HP'] = 100, 200
+        enemies[1].hp, enemies[1].stats['HP'] = 200, 1000
+        enemies[2].hp = enemies[2].stats['HP']
+        actor.rules.reverse()
+        b.fill_defaults()
+        choice = b.choices[uid]
+        self.assertEqual((choice.action, choice.skill_slot, choice.target),
+                         (ACTION_SKILL, 1, b.key(enemies[1])))
+        actor.ready[1] = b.planning_round + 2
+        b.fill_defaults()
+        self.assertEqual(b.choices[uid].skill_slot, 2)
+        actor.ready[2] = b.planning_round + 2
+        b.fill_defaults()
+        self.assertEqual(b.choices[uid].skill_slot, 3)
+        actor.ready[3] = b.planning_round + 2
+        b.fill_defaults()
+        self.assertEqual((b.choices[uid].action, b.choices[uid].target),
+                         (ACTION_ATTACK, b.key(enemies[1])))
+        actor.ready.clear()
+        actor.rules = [Rule(r.slot, r.priority, False, r.condition, r.target, r.skill_id)
+                       for r in actor.rules]
+        b.fill_defaults()
+        self.assertEqual(b.choices[uid].action, ACTION_ATTACK)
+
+    def test_auto_heals_allies_and_preserves_confirmed_manual_action(self):
+        b = self.make()
+        healer = next(p for p in b.living(0) if p.job == '僧侶')
+        slot = next(r.slot for r in healer.rules if b._skill(healer, r.slot)[1].effect == 'heal')
+        healer.rules = [r for r in healer.rules if r.slot == slot]
+        b.living(0)[0].hp = 1
+        b.auto_players.add(healer.user_id)
+        b.fill_defaults()
+        choice = b.choices[healer.user_id]
+        self.assertEqual((choice.action, choice.target), (ACTION_SKILL, b.key(b.living(0)[0])))
+        b.submit(healer.user_id, ACTION_DEFEND)
+        b.confirm(healer.user_id)
+        b.fill_defaults()
+        self.assertEqual(b.choices[healer.user_id].action, ACTION_DEFEND)
+
+    def test_auto_respects_forced_brainwash_and_timeout_still_basic(self):
+        b = self.make(2)
+        b.fill_defaults()
+        self.assertTrue(all(c.action == ACTION_ATTACK for c in b.choices.values()))
+        b.prepare(b.witch('anan'))
+        player = b.fighter_for_key(next(iter(b.commands)))
+        b.auto_players.add(player.user_id)
+        b.fill_defaults()
+        choice = b.choices[player.user_id]
+        self.assertEqual(choice.action, ACTION_ATTACK)
+        self.assertIn(choice.target, b.valid_targets(player.user_id, ACTION_ATTACK))
+
+    def test_auto_skill_executes_after_restore_with_accurate_log(self):
+        b = self.make()
+        actor = next(p for p in b.living(0) if p.job == '弓兵')
+        b.auto_players.add(actor.user_id)
+        b = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        actor = b._player(actor.user_id)
+        b.fill_defaults()
+        choice = b.choices[actor.user_id]
+        b.round = b.planning_round
+        b._resolve_player(actor, choice)
+        self.assertIn(choice.skill_slot, actor.ready)
+        self.assertTrue(any(f'{actor.name} 自動戰鬥：使用' in line for line in b.log))
+        self.assertFalse(any(f'{actor.name} 未及時選擇，改為普通攻擊' in line for line in b.log))
+
     def test_brainwash_ui_and_strict_forced_validation(self):
         b = self.make(2)
         b.prepare(b.witch('anan'))
