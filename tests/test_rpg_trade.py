@@ -13,6 +13,50 @@ from core.settings import RPGSettings
 
 
 class TradeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sell_modal_clamps_to_current_stock_and_reports_actual_sale(self):
+        self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'item', 'fishing:pond:common')
+        modal = QuantityModal(view)
+        self.addCleanup(modal.stop)
+        modal.amount._value = '999'
+        self.characters.consume_item(1, 1, 'fishing:pond:common', 3)
+        from core.rpg_character import ITEMS, item_sell_price
+        expected = item_sell_price(ITEMS['fishing:pond:common']) * 4
+        await modal.on_submit(self.interaction)
+        self.assertNotIn('fishing:pond:common', self.characters.inventory_counts(1, 1))
+        self.assertEqual(self.store.gold(1, 1), expected)
+        notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value
+        self.assertIn(f'×4，獲得 {expected} 金幣', notice)
+        await modal.on_submit(self.interaction)
+        self.assertEqual(self.store.gold(1, 1), expected)
+
+    async def test_sell_modal_clamps_single_instance(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        key = next(key for key in view.catalog if view.entries[key].item_id == 'raid:0')
+        await view.handle(self.interaction, 'item', key)
+        modal = QuantityModal(view)
+        self.addCleanup(modal.stop)
+        modal.amount._value = '999'
+        await modal.on_submit(self.interaction)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 2)
+        self.assertEqual(self.store.gold(1, 1), 60)
+        self.assertIn('×1，獲得 60 金幣',
+                      self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value)
+
+    async def test_sell_up_to_preserves_equipped_and_rejects_invalid_quantities(self):
+        self.characters.equip(1, 1, 'raid:0')
+        for amount in (0, -1, 1.5):
+            with self.assertRaises(CharacterError):
+                self.characters.sell_up_to(1, 1, 'raid:0', amount)
+        self.assertEqual(self.characters.sell_up_to(1, 1, 'raid:0', 999), (2, 120))
+        with self.assertRaises(CharacterError):
+            self.characters.sell_up_to(1, 1, 'raid:0', 999)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+        self.assertEqual(self.store.gold(1, 1), 120)
+
     async def test_bulk_sale_inclusive_across_pages_preserves_other_items(self):
         self.characters.grant_item(1, 1, '騎士:1:武器', 12)
         self.characters.grant_item(1, 1, '騎士:2:武器', 1)

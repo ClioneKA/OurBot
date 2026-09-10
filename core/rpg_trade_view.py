@@ -36,9 +36,6 @@ class QuantityModal(discord.ui.Modal):
             await interaction.response.send_message('請輸入正整數數量。', ephemeral=True)
             return
         amount = requests[0][1]
-        if self.panel.mode == 'sell' and self.key.startswith('instance:') and amount != 1:
-            await interaction.response.send_message('獨立裝備一次只能操作一件。', ephemeral=True)
-            return
         await self.panel.execute(interaction, self.key, self.recipient, amount, self.revision,
                                  requests=requests if self.panel.mode == 'give' else None)
 
@@ -151,6 +148,7 @@ class TradeView(discord.ui.View):
             embed.add_field(name='收件人', value=f'<@{self.recipient}>' if self.recipient else '尚未選擇')
         else:
             embed.add_field(name='持有金幣', value=str(self.cog.store.gold(self.guild_id, self.owner.id)))
+            embed.description += '\n填寫數量超過可售量時，會自動賣出最大可售量。'
             embed.description += '\n一併販售會從整個背包篩選指定 T 等級以下（含）的未穿戴裝備，不受分類或頁數限制。'
             if self.bulk_preview:
                 tier, references, gold = self.bulk_preview
@@ -264,7 +262,7 @@ class TradeView(discord.ui.View):
                     notice = f'已給予 <@{recipient}>：\n' + '\n'.join(f'{item.name} ×{actual}' for item, actual in results)
                 else:
                     item = self.cog.characters.item_for_reference(self.guild_id, self.owner.id, key)
-                    gold = self.cog.characters.dispose(self.guild_id, self.owner.id, key, amount)
+                    amount, gold = self.cog.characters.sell_up_to(self.guild_id, self.owner.id, key, amount)
                     notice = f'已賣出 {item.name} ×{amount}，獲得 {gold} 金幣。'
                 self.selected = None
                 self.selected_keys = []

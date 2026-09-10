@@ -1582,6 +1582,18 @@ class Characters:
             self.db.execute('BEGIN IMMEDIATE')
             return self._dispose(guild, user, key, quantity, recipient)
 
+    def sell_up_to(self, guild, user, key, quantity):
+        """Sell up to the current available stock, returning quantity and gold."""
+        if type(quantity) is not int or quantity < 1:
+            raise CharacterError('數量必須是正整數。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            amount = min(quantity, self.available_quantity(guild, user, key))
+            if amount < 1:
+                raise CharacterError('物品已無可售數量；穿戴中的裝備請先卸下。')
+            gold = self._dispose(guild, user, key, amount)
+        return amount, gold
+
     def give_batch(self, guild, user, requests, recipient):
         """Transfer a batch atomically, returning each item's actual quantity."""
         requests = list(requests)
