@@ -47,6 +47,14 @@ def safe_text(value, length):
     return discord.utils.escape_markdown(discord.utils.escape_mentions(' '.join(str(value).split())[:length]))
 
 
+def reward_item_name(item_id):
+    item = ITEMS[item_id]
+    icon = {'武器': '⚔️', '套裝': '🛡️', '飾品': '💍'}.get(item.slot)
+    if icon:
+        return f'{icon} **{discord.utils.escape_markdown(item.name)}**'
+    return item.name
+
+
 class RaidSignup(discord.ui.View):
     def __init__(self, service, raid_id):
         super().__init__(timeout=None)
@@ -438,13 +446,13 @@ class RaidService:
                 embed.add_field(name='失敗獎勵比例', value=f'怪物剩餘 HP：{remaining:,}/{maximum:,}；'
                                 f'依已削減血量 {percent:.2f}% 發放經驗與金幣（無條件捨去），無掉落。', inline=False)
             lines = [f'<@{r["id"]}>：+{r["xp"]} XP、+{r.get("gold", 0)} 金幣'
-                     + (f'、{ITEMS[r["item"]].name}' if r['item'] else '')
-                     + (f'、{ITEMS[r["fixed_item"]].name}' if r.get('fixed_item') else '')
-                     + (f'、{ITEMS[r["chance_item"]].name}' if r.get('chance_item') else '')
-                     + ''.join(f'、{ITEMS[item].name}' for item in r.get('chance_items', ()))
-                     + (f'、{ITEMS[r["extra_item"]].name}' if r.get('extra_item') else '')
-                     + (f'、{ITEMS[r["food_item"]].name}' if r.get('food_item') else '')
-                     + (f'、{ITEMS[r["fishing_item"]].name} ×{r["fishing_quantity"]}'
+                     + (f'、{reward_item_name(r["item"])}' if r['item'] else '')
+                     + (f'、{reward_item_name(r["fixed_item"])}' if r.get('fixed_item') else '')
+                     + (f'、{reward_item_name(r["chance_item"])}' if r.get('chance_item') else '')
+                     + ''.join(f'、{reward_item_name(item)}' for item in r.get('chance_items', ()))
+                     + (f'、{reward_item_name(r["extra_item"])}' if r.get('extra_item') else '')
+                     + (f'、{reward_item_name(r["food_item"])}' if r.get('food_item') else '')
+                     + (f'、{reward_item_name(r["fishing_item"])} ×{r["fishing_quantity"]}'
                         if r.get('fishing_item') else '') for r in raid['rewards']]
             lines = [line + (f'、討伐之證 ×{reward["raid_proofs"]}'
                              if reward.get('raid_proofs') else '')
