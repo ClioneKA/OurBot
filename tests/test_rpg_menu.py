@@ -149,7 +149,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.cog.painted_maze.create.assert_awaited_once_with(
             self.interaction, 'noah:unfinished')
         notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value
-        self.assertIn('繪境迷廊 #7', notice)
+        self.assertIn('繪境迷宮 #7', notice)
         self.assertIn('開始探索時消耗', notice)
 
         self.characters.grant_item(1, 1, 'maze:choice_box:archer')

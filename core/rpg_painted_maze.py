@@ -10,9 +10,9 @@ from core.rpg_expeditions import require_not_expedition
 from core.rpg_maze_traits import descriptions as trait_descriptions
 
 
-MODE_NAME = '繪境迷廊'
-ENTRY_ENABLED = False
-ENTRY_CLOSED_NOTICE = '繪境迷廊目前暫停開放，正在調整中；入場畫作不會消耗。'
+MODE_NAME = '繪境迷宮'
+ENTRY_ENABLED = True
+ENTRY_CLOSED_NOTICE = '繪境迷宮目前暫停開放，正在調整中；入場畫作不會消耗。'
 MIN_LEVEL = 50
 MAX_PARTICIPANTS = 8
 ROOM_LIFETIME_SECONDS = 24 * 60 * 60
@@ -186,15 +186,15 @@ class PaintedMazeStore:
     def create(self, guild_id, host_id, entry_item, host_level, *, channel_id=None,
                now=None, seed=None, require_entry=True):
         if entry_item not in ENTRY_ROUTES:
-            raise PaintedMazeError('這件物品不能開啟繪境迷廊。')
+            raise PaintedMazeError('這件物品不能開啟繪境迷宮。')
         if host_level < MIN_LEVEL:
-            raise PaintedMazeError(f'繪境迷廊需要 Lv.{MIN_LEVEL} 才能進入。')
+            raise PaintedMazeError(f'繪境迷宮需要 Lv.{MIN_LEVEL} 才能進入。')
         now = time.time() if now is None else now
         seed = secrets.randbits(63) if seed is None else seed
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             if self.active_for_user(guild_id, host_id):
-                raise PaintedMazeError('你已在這個伺服器的另一個繪境迷廊房間中。')
+                raise PaintedMazeError('你已在這個伺服器的另一個繪境迷宮房間中。')
             require_not_expedition(self.db, host_id, now)
             if require_entry:
                 owned = self.db.execute('''SELECT quantity FROM rpg_inventory
@@ -282,14 +282,14 @@ class PaintedMazeStore:
                 room['members'].remove(user_id)
             else:
                 if level < MIN_LEVEL:
-                    raise PaintedMazeError(f'繪境迷廊需要 Lv.{MIN_LEVEL} 才能進入。')
+                    raise PaintedMazeError(f'繪境迷宮需要 Lv.{MIN_LEVEL} 才能進入。')
                 require_not_expedition(self.db, user_id, now)
                 if user_id in room['members']:
                     raise PaintedMazeError('你已經在隊伍中。')
                 if len(room['members']) >= MAX_PARTICIPANTS:
-                    raise PaintedMazeError('繪境迷廊隊伍已滿。')
+                    raise PaintedMazeError('繪境迷宮隊伍已滿。')
                 if self.active_for_user(room['guild_id'], user_id, exclude=room_id):
-                    raise PaintedMazeError('你已在另一個繪境迷廊房間中。')
+                    raise PaintedMazeError('你已在另一個繪境迷宮房間中。')
                 room['members'].append(user_id)
             self._save(room)
             return room
@@ -303,7 +303,7 @@ class PaintedMazeStore:
             if not room or room['status'] != 'lobby':
                 raise PaintedMazeError('這個房間已經開始或關閉。')
             if actor_id != room['host_id']:
-                raise PaintedMazeError('只有房主可以開始繪境迷廊。')
+                raise PaintedMazeError('只有房主可以開始繪境迷宮。')
             if now >= room['expires_at']:
                 raise PaintedMazeError('這個房間已經逾期。')
             participant_ids = [participant['id'] for participant in participants]
@@ -344,7 +344,7 @@ class PaintedMazeStore:
             self.db.execute('BEGIN IMMEDIATE')
             room = self.get(room_id)
             if not room:
-                raise PaintedMazeError('找不到繪境迷廊房間。')
+                raise PaintedMazeError('找不到繪境迷宮房間。')
             prior = next((item for item in room.get('battle_history', [])
                           if item['painting_index'] == painting_index), None)
             if prior:
@@ -354,7 +354,7 @@ class PaintedMazeStore:
             if room['status'] != 'running':
                 raise PaintedMazeError('目前不能結算畫作戰鬥。')
             if actor_id not in room['members']:
-                raise PaintedMazeError('只有隊伍成員可以推進繪境迷廊。')
+                raise PaintedMazeError('只有隊伍成員可以推進繪境迷宮。')
             if painting_index != room['boss_index'] or painting_index >= len(room['paintings']):
                 raise PaintedMazeError('畫作進度與房間狀態不一致。')
             if result not in ('勝利', '戰敗', '平手', '平手（達回合上限）'):
@@ -404,7 +404,7 @@ class PaintedMazeStore:
             self.db.execute('BEGIN IMMEDIATE')
             room = self.get(room_id)
             if not room:
-                raise PaintedMazeError('找不到繪境迷廊房間。')
+                raise PaintedMazeError('找不到繪境迷宮房間。')
             prior = room.get('final_battle')
             if prior:
                 if prior['result'] != result:
@@ -428,7 +428,7 @@ class PaintedMazeStore:
             room['party_state'] = party_state
             if result == '勝利':
                 room.setdefault('reward_due', []).append({'kind': 'final', 'checkpoint': 4})
-                self._finish(room, 'completed', actor_id, '完成繪境迷廊', now)
+                self._finish(room, 'completed', actor_id, '完成繪境迷宮', now)
             else:
                 self._finish(room, 'failed', actor_id, f'最終戰鬥{result}', now)
             self._save(room)
@@ -450,7 +450,7 @@ class PaintedMazeStore:
             if not room or room['status'] != 'running':
                 raise PaintedMazeError('目前不能推進下一幅畫作。')
             if actor_id not in room['members']:
-                raise PaintedMazeError('只有隊伍成員可以推進繪境迷廊。')
+                raise PaintedMazeError('只有隊伍成員可以推進繪境迷宮。')
             if room['boss_index'] >= len(room['paintings']):
                 raise PaintedMazeError('前置畫作已全部完成。')
             room['boss_index'] += 1
@@ -706,7 +706,7 @@ class PaintedMazeStore:
             self.db.execute('BEGIN IMMEDIATE')
             room = self.get(room_id)
             if not room:
-                raise PaintedMazeError('找不到繪境迷廊房間。')
+                raise PaintedMazeError('找不到繪境迷宮房間。')
             room['reward_due'] = [item for item in room.get('reward_due', [])
                                   if not (item.get('kind') == kind
                                           and item.get('checkpoint') == checkpoint)]

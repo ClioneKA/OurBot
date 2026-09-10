@@ -4,13 +4,13 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from core.rpg import RPGStore
 from core.rpg_battle import dump_battle, load_battle, Tactics
 from core.rpg_character import Characters, CharacterError
 from core.rpg_monsters import REFERENCE_LEVELS
-from core.rpg_painted_maze import COLOR_CONTRACTS, ENTRY_ENABLED, PaintedMazeError
+from core.rpg_painted_maze import COLOR_CONTRACTS, PaintedMazeError
 from core.rpg_painted_maze_battle import build_final_battle, build_painting_battle
 from core.rpg_painted_maze_service import PaintedMazeService, ContractVoteView
 from core.rpg_painted_maze_views import FinalVoteView
@@ -68,8 +68,8 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         self.now = room['final_vote']['deadline']
         return self.repo.resolve_final_vote(room['id'], now=self.now)
 
-    async def test_regular_entry_creation_join_and_start_stay_closed(self):
-        self.assertFalse(ENTRY_ENABLED)
+    @patch('core.rpg_painted_maze_service.ENTRY_ENABLED', False)
+    async def test_regular_entry_creation_join_and_start_when_disabled(self):
         with self.assertRaisesRegex(PaintedMazeError, '暫停開放'):
             await self.service.create(None, 'painting:balloon')
         with self.assertRaisesRegex(PaintedMazeError, '暫停開放'):
@@ -77,6 +77,7 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(PaintedMazeError, '暫停開放'):
             await self.service.begin(self.room['id'], SimpleNamespace(id=1))
 
+    @patch('core.rpg_painted_maze_service.ENTRY_ENABLED', False)
     async def test_admin_room_can_be_created_joined_and_started_while_regular_entry_closed(self):
         players = {uid: SimpleNamespace(id=uid, bot=False, display_name=f'玩家{uid}')
                    for uid in (3, 4)}

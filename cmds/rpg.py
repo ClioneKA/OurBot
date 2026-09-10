@@ -224,7 +224,7 @@ class RPG(commands.Cog):
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
-    @app_commands.command(name='開啟繪境迷廊', description='管理員測試：以指定畫作建立繪境迷廊房間')
+    @app_commands.command(name='開啟繪境迷宮', description='管理員測試：以指定畫作建立繪境迷宮房間')
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     @app_commands.rename(painting='畫作')
@@ -250,13 +250,13 @@ class RPG(commands.Cog):
         await interaction.followup.send(
             f'已建立 **{MODE_NAME} #{room["number"]}** 與私人討論串。', ephemeral=True)
 
-    @app_commands.command(name='結束繪境迷廊', description='管理員強制結束目前私人討論串的迷廊房間')
+    @app_commands.command(name='結束繪境迷宮', description='管理員強制結束目前私人討論串的迷宮房間')
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     async def end_painted_maze(self, interaction: discord.Interaction):
         room = self.painted_maze.repo.by_thread(interaction.channel_id)
         if not room:
-            await interaction.response.send_message('目前頻道不是進行中的繪境迷廊房間。', ephemeral=True)
+            await interaction.response.send_message('目前頻道不是進行中的繪境迷宮房間。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:

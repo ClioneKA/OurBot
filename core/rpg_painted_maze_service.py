@@ -71,7 +71,7 @@ class MazeLobbyView(discord.ui.View):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         self.stop()
-        await interaction.response.edit_message(content='繪境迷廊房間已關閉。', embed=None, view=None)
+        await interaction.response.edit_message(content='繪境迷宮房間已關閉。', embed=None, view=None)
 
 
 class MazeProgressView(discord.ui.View):
@@ -187,7 +187,7 @@ class PaintedMazeService:
             raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
         space = self.cog.spaces.store.get(interaction.guild_id)
         if not space or interaction.channel_id != space.maze_channel_id:
-            raise PaintedMazeError('請在「🎨・繪境迷廊」頻道開啟畫作。')
+            raise PaintedMazeError('請在「🎨・繪境迷宮」頻道開啟畫作。')
         level = self.cog.characters.snapshot(interaction.guild_id, interaction.user.id)['level']
         room = self.repo.create(interaction.guild_id, interaction.user.id, entry_item, level,
                                 channel_id=interaction.channel_id, require_entry=require_entry)
@@ -198,7 +198,7 @@ class PaintedMazeService:
                 allowed_mentions=discord.AllowedMentions.none())
             thread = await interaction.channel.create_thread(
                 name=f'{MODE_NAME} #{room["number"]}', type=discord.ChannelType.private_thread,
-                invitable=False, auto_archive_duration=1440, reason='開啟繪境迷廊私人房')
+                invitable=False, auto_archive_duration=1440, reason='開啟繪境迷宮私人房')
             await thread.add_user(interaction.user)
             message = await thread.send(embed=self.room_embed(room))
             return self.repo.attach_discord(
@@ -214,14 +214,14 @@ class PaintedMazeService:
             if thread is not None:
                 try:
                     await thread.edit(archived=True, locked=True,
-                                      reason='繪境迷廊建立失敗，封存殘留討論串')
+                                      reason='繪境迷宮建立失敗，封存殘留討論串')
                 except discord.HTTPException:
                     pass
             raise
 
     async def change_member(self, room_id, member, *, leave=False):
         if member.bot:
-            raise PaintedMazeError('機器人不能進入繪境迷廊。')
+            raise PaintedMazeError('機器人不能進入繪境迷宮。')
         async with self.lock(room_id):
             room = self.repo.get(room_id)
             if not leave and room.get('requires_entry', True) and not ENTRY_ENABLED:
@@ -241,7 +241,7 @@ class PaintedMazeService:
         async with self.lock(room_id):
             room = self.repo.get(room_id)
             if not room or member.id != room['host_id']:
-                raise PaintedMazeError('只有房主可以開始繪境迷廊。')
+                raise PaintedMazeError('只有房主可以開始繪境迷宮。')
             if room.get('requires_entry', True) and not ENTRY_ENABLED:
                 raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
             thread = await self._thread(room)
@@ -293,9 +293,9 @@ class PaintedMazeService:
         async with self.lock(room_id):
             room = self.repo.get(room_id)
             if not room or member.id not in room.get('members', ()):
-                raise PaintedMazeError('你不在這個繪境迷廊隊伍中。')
+                raise PaintedMazeError('你不在這個繪境迷宮隊伍中。')
             if room['status'] != 'running' or room.get('battle'):
-                raise PaintedMazeError('目前不能推進繪境迷廊。')
+                raise PaintedMazeError('目前不能推進繪境迷宮。')
             self.repo.rest_participant(room_id, member.id, expected_index=expected_index)
             if set(room.get('rest_ready', [])) != set(room['members']):
                 raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
@@ -434,7 +434,7 @@ class PaintedMazeService:
         await self._post_battle_report(room)
         thread = await self._thread(room)
         if thread and not thread.archived:
-            await thread.edit(archived=True, locked=True, reason='繪境迷廊已結束')
+            await thread.edit(archived=True, locked=True, reason='繪境迷宮已結束')
         self.repo.mark_terminal_refreshed(room['id'])
 
     def lobby_embed(self, room):
@@ -625,3 +625,11 @@ class PaintedMazeService:
     @tick.before_loop
     async def before_tick(self):
         await self.bot.wait_until_ready()
+        for space in self.cog.spaces.store.all():
+            guild = self.bot.get_guild(space.guild_id)
+            if guild is None:
+                continue
+            try:
+                await self.cog.spaces.rename_maze_channel(guild)
+            except discord.HTTPException:
+                logger.exception('Painted Maze channel rename failed: %s', space.guild_id)

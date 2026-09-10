@@ -409,7 +409,7 @@ ITEMS['paint:set'] = Item(
     description='由紅、黃、藍色噴漆罐各一罐組合；可在背包中使用，召喚特殊四階討伐「城崎諾亞」。')
 ITEMS['noah:unfinished'] = Item(
     '未完成的魔女畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
-    description='城崎諾亞留下的未完成畫作；可從背包使用，開啟繪境迷廊的城崎諾亞路線。')
+    description='城崎諾亞留下的未完成畫作；可從背包使用，開啟繪境迷宮的城崎諾亞路線。')
 ITEMS['witch:thread'] = Item(
     '魔女繡線', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
     description='魔女總力戰勝利報酬；3 個可在漢娜的裁縫所製作一個魔女刺繡。',
@@ -420,7 +420,7 @@ ITEMS['proof:raid'] = Item(
     transferable=False)
 ITEMS['painting:balloon'] = Item(
     '《氣球》的畫作', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
-    description='可開啟繪境迷廊的繪畫之影路線；不會遭遇繪畫魔女，也不會掉落菁英裝備。')
+    description='可開啟繪境迷宮的繪畫之影路線；不會遭遇繪畫魔女，也不會掉落菁英裝備。')
 
 BALLOON_PAINTING_PROOF_COST = 30
 

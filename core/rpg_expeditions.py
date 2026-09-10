@@ -37,7 +37,7 @@ def require_no_battle(db, user):
         for (data,) in db.execute(f"SELECT data FROM {table} WHERE status IN "
                                   "('posting','lobby','running','contract')"):
             if user in json.loads(data).get('members', []):
-                raise CharacterError('你已報名或正在參加討伐／迷廊，請先退出或完成後再遠征。')
+                raise CharacterError('你已報名或正在參加討伐／迷宮，請先退出或完成後再遠征。')
 
 
 class Expeditions:

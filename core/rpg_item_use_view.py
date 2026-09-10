@@ -11,8 +11,8 @@ from core.rpg_painted_maze import ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, ENTRY_ROUT
 ITEM_ACTIONS = {
     'recipe:paint_set': ('組合噴漆罐套組', '消耗紅、黃、藍色噴漆罐各 1 個'),
     'paint:set': ('使用噴漆罐套組', '召喚特殊四階討伐「城崎諾亞」'),
-    'noah:unfinished': ('展開未完成的魔女畫作', '建立城崎諾亞路線的 1～8 人繪境迷廊房間'),
-    'painting:balloon': ('展開《氣球》的畫作', '建立繪畫之影路線的 1～8 人繪境迷廊房間'),
+    'noah:unfinished': ('展開未完成的魔女畫作', '建立城崎諾亞路線的 1～8 人繪境迷宮房間'),
+    'painting:balloon': ('展開《氣球》的畫作', '建立繪畫之影路線的 1～8 人繪境迷宮房間'),
 }
 ITEM_ACTIONS.update({box_id: (f'開啟{ITEMS[box_id].name}', '選擇本職 T60 菁英武器或套裝')
                      for box_id in MAZE_CHOICE_BOXES})

@@ -43,14 +43,14 @@ class PaintedMazeRewardStore:
 
     def seal_currency(self, room_id, checkpoint, *, now=None):
         if checkpoint not in CHECKPOINT_REWARDS:
-            raise CharacterError('無效的繪境迷廊獎勵封存點。')
+            raise CharacterError('無效的繪境迷宮獎勵封存點。')
         now = int(time.time() if now is None else now)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             row = self.db.execute(
                 'SELECT data FROM rpg_painted_maze_rooms WHERE id=?', (room_id,)).fetchone()
             if not row:
-                raise CharacterError('找不到繪境迷廊房間。')
+                raise CharacterError('找不到繪境迷宮房間。')
             room = json.loads(row[0])
             if not room.get('requires_entry', True):
                 return []  # Administrator-created practice rooms never grant rewards.
@@ -168,7 +168,7 @@ class PaintedMazeRewardStore:
             row = self.db.execute(
                 'SELECT data FROM rpg_painted_maze_rooms WHERE id=?', (room_id,)).fetchone()
             if not row:
-                raise CharacterError('找不到繪境迷廊房間。')
+                raise CharacterError('找不到繪境迷宮房間。')
             room = json.loads(row[0])
             if not room.get('requires_entry', True):
                 return []  # Administrator-created practice rooms never grant rewards.

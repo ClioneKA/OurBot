@@ -47,7 +47,7 @@ class ExpeditionView(AdventureView):
     def embed(self, notice=None):
         session = self.cog.expeditions.state(self.owner.id)
         embed = discord.Embed(title='安安大冒險｜遠征', color=0x527A70,
-            description='遠征中不能參加討伐、總力戰或繪境迷廊；釣魚、農耕與聊天照常。\n'
+            description='遠征中不能參加討伐、總力戰或繪境迷宮；釣魚、農耕與聊天照常。\n'
                         '可隨時中斷，但本趟全部獎勵歸零。完成後即可參戰，不必先領獎。')
         if session:
             ready = time.time() >= session['ready_at']

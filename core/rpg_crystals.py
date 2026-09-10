@@ -242,14 +242,14 @@ class CrystalStore:
         """Grant every member one deterministic crystal and mark the room atomically."""
         crystal_type = STAGE_CRYSTAL_TYPES.get(stage)
         if not crystal_type:
-            raise CharacterError('無效的繪境迷廊階段。')
+            raise CharacterError('無效的繪境迷宮階段。')
         now = int(time.time() if now is None else now)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             row = self.db.execute(
                 'SELECT data FROM rpg_painted_maze_rooms WHERE id=?', (room_id,)).fetchone()
             if not row:
-                raise CharacterError('找不到繪境迷廊房間。')
+                raise CharacterError('找不到繪境迷宮房間。')
             room = json.loads(row[0])
             if not room.get('requires_entry', True):
                 return []  # Administrator-created practice rooms never grant rewards.
@@ -304,7 +304,7 @@ class CrystalStore:
             row = self.db.execute(
                 'SELECT data FROM rpg_painted_maze_rooms WHERE id=?', (room_id,)).fetchone()
             if not row:
-                raise CharacterError('找不到繪境迷廊房間。')
+                raise CharacterError('找不到繪境迷宮房間。')
             room = json.loads(row[0])
             if not room.get('requires_entry', True):
                 return []  # Administrator-created practice rooms never grant rewards.

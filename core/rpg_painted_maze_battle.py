@@ -51,7 +51,7 @@ def painting_monster(painting, participant_count):
     if painting.get('tier') not in STAGE_PROFILE:
         raise PaintedMazeError('畫作的內容階級無效。')
     if not 1 <= participant_count <= 8:
-        raise PaintedMazeError('繪境迷廊隊伍人數必須為 1～8 人。')
+        raise PaintedMazeError('繪境迷宮隊伍人數必須為 1～8 人。')
     source = STAGE_PROFILE[painting['tier']]
     # raid_battle applies linear party HP scaling. Counter-adjust the profile to
     # reach 1 + 85% per additional player, as specified by the mode.
@@ -212,10 +212,10 @@ def simulate_room_painting(room):
 def final_monster(room):
     participant_count = len(room.get('participants', ()))
     if not 1 <= participant_count <= 8:
-        raise PaintedMazeError('繪境迷廊隊伍人數必須為 1～8 人。')
+        raise PaintedMazeError('繪境迷宮隊伍人數必須為 1～8 人。')
     route = room.get('route')
     if route not in ('noah', 'shadow'):
-        raise PaintedMazeError('繪境迷廊尾王路線無效。')
+        raise PaintedMazeError('繪境迷宮尾王路線無效。')
     # Noah's scripted charges and phase adds spend more of the threat budget.
     hp_base, attack_base, defense = ((13.0, 1.80, 1.80) if route == 'noah'
                                      else (19.0, 2.30, 1.80))

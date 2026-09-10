@@ -44,8 +44,11 @@ class FakeTextChannel(FakeCategory):
         self.category_id = category.id if category else None
         self.edit = AsyncMock(side_effect=self._edit)
 
-    def _edit(self, *, category, **_kwargs):
-        self.category_id = category.id
+    def _edit(self, *, category=None, name=None, **_kwargs):
+        if category is not None:
+            self.category_id = category.id
+        if name is not None:
+            self.name = name
         return self
 
 
@@ -128,7 +131,7 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_spaces.discord.TextChannel', FakeTextChannel), \
                 patch('core.rpg_spaces.discord.CategoryChannel', FakeCategory):
             message = await self.service.setup(self.guild)
-            self.assertIn('繪境迷廊', message)
+            self.assertIn('繪境迷宮', message)
             self.guild.create_category.assert_not_awaited()
             self.assertEqual(self.guild.create_text_channel.await_count, 2)
             maze_id = self.service.store.get(9).maze_channel_id
@@ -148,6 +151,22 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
         self.cog.raids.refresh_channels.assert_called()
         self.assertGreaterEqual(self.cog.raids.notifications.ensure.await_count, 3)
 
+    async def test_setup_renames_existing_maze_channel_without_recreating_it(self):
+        with patch('core.rpg_spaces.discord.TextChannel', FakeTextChannel), \
+                patch('core.rpg_spaces.discord.CategoryChannel', FakeCategory):
+            await self.service.setup(self.guild)
+            space = self.service.store.get(9)
+            channel = self.channels[space.maze_channel_id]
+            channel.name = '舊迷宮頻道'
+            self.guild.create_text_channel.reset_mock()
+            await self.service.setup(self.guild)
+            self.assertEqual(channel.name, '🎨・繪境迷宮')
+            self.assertEqual(self.service.store.get(9).maze_channel_id, channel.id)
+            self.guild.create_text_channel.assert_not_awaited()
+            channel.edit.assert_awaited_once()
+            await self.service.rename_maze_channel(self.guild)
+            channel.edit.assert_awaited_once()
+
     async def test_setup_creates_only_missing_objects(self):
         self.rpg.create_player(9, 55)
         member = SimpleNamespace(id=55, bot=False, roles=[], add_roles=AsyncMock())
@@ -160,7 +179,7 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(space.adventurer_role_id)
             self.assertEqual(self.guild.create_text_channel.await_count, 6)
             self.assertEqual(self.channels[space.tavern_channel_id].name, '冒險者酒館')
-            self.assertEqual(self.channels[space.maze_channel_id].name, '🎨・繪境迷廊')
+            self.assertEqual(self.channels[space.maze_channel_id].name, '🎨・繪境迷宮')
             self.assertIn('皆正常', self.service.status_text(self.guild))
             member.add_roles.assert_awaited_once()
 

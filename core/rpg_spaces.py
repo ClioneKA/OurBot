@@ -12,7 +12,7 @@ SPACE_CHANNELS = {
     'high_channel_id': ('高階討伐', '高階討伐'),
     'special_channel_id': ('特殊討伐', '特殊討伐'),
     'tavern_channel_id': ('冒險者酒館', '冒險者酒館'),
-    'maze_channel_id': ('繪境迷廊', '🎨・繪境迷廊'),
+    'maze_channel_id': ('繪境迷宮', '🎨・繪境迷宮'),
 }
 
 
@@ -255,6 +255,7 @@ class AdventureSpaceService:
         # Discord request can be retried without duplicating earlier creations.
         save_progress()
 
+        await self.rename_maze_channel(guild)
         created = []
         for field, (label, name) in SPACE_CHANNELS.items():
             if self._valid_channel(guild, values[field]) is not None:
@@ -308,6 +309,14 @@ class AdventureSpaceService:
                 create_private_threads=maze, send_messages_in_threads=maze,
                 manage_threads=maze),
         }
+
+    async def rename_maze_channel(self, guild):
+        """Rename the registered maze channel without replacing its ID or contents."""
+        space = self.store.get(guild.id)
+        channel = self._valid_channel(guild, space.maze_channel_id) if space else None
+        name = SPACE_CHANNELS['maze_channel_id'][1]
+        if channel is not None and channel.name != name:
+            await channel.edit(name=name, reason='統一繪境迷宮頻道名稱')
 
     async def repair(self, guild):
         """Create missing objects, then align category placement and required overwrites."""

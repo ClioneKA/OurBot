@@ -71,7 +71,7 @@ class MazeSkillView(SkillView):
         super().__init__(proxy, interaction)
 
     def skills_embed(self, guild_id, user_id):
-        embed = discord.Embed(title=f'繪境迷廊｜休息點技能設定｜{self.rest_tactics.job}', color=0x7C3AED)
+        embed = discord.Embed(title=f'繪境迷宮｜休息點技能設定｜{self.rest_tactics.job}', color=0x7C3AED)
         for rule in sorted(self.rest_tactics.rules(guild_id, user_id, self.rest_tactics.job), key=lambda r: r.slot):
             skill = rule_skill(self.rest_tactics.job, rule)
             embed.add_field(name=f'槽 {rule.slot}｜{skill.name}｜優先 {rule.priority}',
