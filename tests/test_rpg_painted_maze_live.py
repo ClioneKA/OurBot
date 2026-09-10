@@ -58,7 +58,6 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
             room = self.repo.record_boss_victory(room['id'], 1, now=self.now)
             self.now = room['contract_vote']['deadline']
             room = self.repo.resolve_contract(room['id'], now=self.now)
-        self.ready_all()
         return self.repo.ensure_final_vote(room['id'], now=self.now)
 
     def decide(self, enter):
@@ -66,7 +65,11 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         for uid in room['members']:
             self.repo.vote_final(room['id'], uid, 'enter' if enter else 'retreat', now=self.now)
         self.now = room['final_vote']['deadline']
-        return self.repo.resolve_final_vote(room['id'], now=self.now)
+        room = self.repo.resolve_final_vote(room['id'], now=self.now)
+        if enter:
+            self.ready_all()
+            room = self.repo.get(room['id'])
+        return room
 
     @patch('core.rpg_painted_maze_service.ENTRY_ENABLED', False)
     async def test_regular_entry_creation_join_and_start_when_disabled(self):
@@ -76,6 +79,42 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
             await self.service.change_member(self.room['id'], SimpleNamespace(id=3, bot=False))
         with self.assertRaisesRegex(PaintedMazeError, '暫停開放'):
             await self.service.begin(self.room['id'], SimpleNamespace(id=1))
+
+    async def test_terminal_thread_stays_open_until_one_day_after_end_across_restart(self):
+        room = self.repo.close(self.room['id'], 1, administrator=True, now=self.now)
+        deadline = self.now + 24 * 60 * 60
+        self.assertEqual(room['archive_at'], deadline)
+        thread = SimpleNamespace(archived=False, locked=False, edit=AsyncMock())
+        self.service._thread = AsyncMock(return_value=thread)
+        with patch('core.rpg_painted_maze_service.time.time', return_value=self.now):
+            await PaintedMazeService._archive(self.service, room)
+        self.service._post_battle_report.assert_awaited_once()
+        thread.edit.assert_not_awaited()
+        self.assertEqual(self.repo.terminal_refreshes(), [])
+
+        restarted = PaintedMazeService(self.cog)
+        restarted._thread = AsyncMock(return_value=thread)
+        restarted._post_battle_report = AsyncMock()
+        self.assertEqual(restarted.repo.archives_due(now=deadline - 1), [])
+        due = restarted.repo.archives_due(now=deadline)
+        self.assertEqual([item['id'] for item in due], [room['id']])
+        # Discord may have auto-archived an idle thread; it must still be locked.
+        thread.archived = True
+        with patch('core.rpg_painted_maze_service.time.time', return_value=deadline):
+            await restarted._archive(due[0])
+        thread.edit.assert_awaited_once_with(
+            archived=True, locked=True, reason='繪境迷宮結束後已保留一天')
+        self.assertEqual(restarted.repo.archives_due(now=deadline + 1), [])
+
+    async def test_delayed_archive_failure_remains_pending_for_retry(self):
+        room = self.repo.close(self.room['id'], 1, administrator=True, now=self.now)
+        thread = SimpleNamespace(archived=False, locked=False,
+                                 edit=AsyncMock(side_effect=RuntimeError('temporary failure')))
+        self.service._thread = AsyncMock(return_value=thread)
+        with patch('core.rpg_painted_maze_service.time.time', return_value=room['archive_at']):
+            with self.assertRaisesRegex(RuntimeError, 'temporary failure'):
+                await PaintedMazeService._archive(self.service, room)
+        self.assertEqual(len(self.repo.archives_due(now=room['archive_at'])), 1)
 
     @patch('core.rpg_painted_maze_service.ENTRY_ENABLED', False)
     async def test_admin_room_can_be_created_joined_and_started_while_regular_entry_closed(self):
@@ -200,6 +239,8 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         room = self.decide(True)
         await self.service.tick.coro(self.service)
         room = self.repo.get(room['id'])
+        self.assertFalse(room.get('battle'))
+        room = await self.service.advance(room['id'], SimpleNamespace(id=1))
         self.assertEqual(room['battle']['round'], 0)
         self.assertTrue(room['final_entered'])
         self.assertIsNone(self.service.room_view(room))
@@ -292,14 +333,52 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
             room = self.repo.resolve_contract(room['id'], now=room['contract_vote']['deadline'])
         self.assertEqual(room['boss_index'], 3)
         self.assertEqual(len(room['contracts']), 3)
-        self.assertFalse(room.get('final_vote'))
+        self.assertTrue(room.get('final_vote'))
         self.assertEqual(room['rest_ready'], [])
+        self.assertIsInstance(self.service.room_view(room), FinalVoteView)
+        with self.assertRaisesRegex(PaintedMazeError, '休息點'):
+            await self.service.advance(room['id'], SimpleNamespace(id=1))
+        with self.assertRaisesRegex(PaintedMazeError, '休息點'):
+            self.repo.rest_participant(room['id'], 1, expected_index=3)
+        for uid in room['members']:
+            self.repo.vote_final(room['id'], uid, 'enter', now=room['final_vote']['deadline'] - 1)
+        with patch('core.rpg_painted_maze_service.time.time', return_value=room['final_vote']['deadline']):
+            await self.service.tick()
+        room = self.repo.get(room['id'])
+        self.assertEqual(room['final_vote']['result'], 'enter')
+        self.assertFalse(room.get('battle'))
+        self.assertEqual(room['rest_ready'], [])
+        self.repo.rest_participant(room['id'], 1, expected_index=3)
         with self.assertRaisesRegex(PaintedMazeError, '全隊'):
             await self.service.advance(room['id'], SimpleNamespace(id=1))
         self.ready_all()
-        vote = await self.service.advance(room['id'], SimpleNamespace(id=1))
-        self.assertTrue(vote['final_vote'])
-        self.assertFalse(vote.get('battle'))
+        started = await self.service.advance(room['id'], SimpleNamespace(id=1))
+        self.assertTrue(started['battle'])
+        self.assertTrue(started['final_entered'])
+
+    async def test_rest_skill_summary_follows_priority_after_reordering(self):
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1), guild_id=1)
+        view = MazeSkillView(self.service, self.room, interaction)
+        self.addCleanup(view.stop)
+        rule = view.rest_tactics.rules(1, 1, view.rest_tactics.job)[2]
+        view.rest_tactics.configure(1, 1, view.rest_tactics.job, rule.slot, 1,
+                                   rule.enabled, rule.condition, rule.target, rule.condition_value)
+        fields = view.skills_embed(1, 1).fields
+        self.assertIn(f'優先 1｜槽 {rule.slot}', fields[0].name)
+        self.assertTrue(fields[1].name.startswith('優先 2'))
+        self.assertTrue(fields[2].name.startswith('優先 3'))
+
+    async def test_rest_panels_show_painting_and_final_monster_traits(self):
+        embed = self.service.room_embed(self.room)
+        self.assertTrue(next(field.value for field in embed.fields if field.name == '怪物特性'))
+        room = self.decide(True)
+        for route in ('shadow', 'noah'):
+            room['route'] = route
+            fields = self.service.room_embed(room).fields
+            traits = next(field.value for field in fields if field.name == '怪物特性')
+            self.assertIn('70%', traits)
+            self.assertEqual('未乾色塊' in traits, route == 'noah')
+            self.assertIn('戰前休息點', [field.name for field in fields])
 
     async def test_rest_panel_has_no_job_equipment_or_home_navigation(self):
         interaction = SimpleNamespace(user=SimpleNamespace(id=1), guild_id=1)

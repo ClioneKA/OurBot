@@ -72,9 +72,9 @@ class MazeSkillView(SkillView):
 
     def skills_embed(self, guild_id, user_id):
         embed = discord.Embed(title=f'繪境迷宮｜休息點技能設定｜{self.rest_tactics.job}', color=0x7C3AED)
-        for rule in sorted(self.rest_tactics.rules(guild_id, user_id, self.rest_tactics.job), key=lambda r: r.slot):
+        for rule in self.rest_tactics.rules(guild_id, user_id, self.rest_tactics.job):
             skill = rule_skill(self.rest_tactics.job, rule)
-            embed.add_field(name=f'槽 {rule.slot}｜{skill.name}｜優先 {rule.priority}',
+            embed.add_field(name=f'優先 {rule.priority}｜槽 {rule.slot}：{skill.name}｜{"開" if rule.enabled else "關"}',
                 value=f'{skill_description(skill)}\n{condition_text(rule.condition, rule.condition_value)}', inline=False)
         embed.description = '只調整本房間的技能；職業、裝備與攜帶效果維持入場時的狀態。修改後需重新確認準備。'
         return embed

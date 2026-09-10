@@ -16,6 +16,7 @@ from core.rpg_painted_maze import (
 )
 from core.rpg_battle import dump_battle, load_battle
 from core.rpg_painted_maze_battle import (
+    encounter_traits,
     build_final_battle, build_painting_battle, carry_party_state, painting_battle_seed,
 )
 from core.rpg_painted_maze_views import FinalVoteView
@@ -80,7 +81,7 @@ class MazeProgressView(discord.ui.View):
         self.service, self.room_id = service, room_id
         room = service.repo.get(room_id)
         self.index = room['boss_index']
-        self.advance.label = '開始尾王去留投票' if final else '開始本場戰鬥'
+        self.advance.label = '開始尾王戰鬥' if final else '開始本場戰鬥'
         self.advance.disabled = set(room.get('rest_ready', [])) != set(room['members'])
 
     @discord.ui.button(label='調整技能', style=discord.ButtonStyle.primary,
@@ -117,7 +118,7 @@ class MazeProgressView(discord.ui.View):
         except CharacterError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
             return
-        notice = '已開啟尾王去留投票。' if room.get('final_vote') else '戰鬥已開始，回合進度會更新在房間面板。'
+        notice = '戰鬥已開始，回合進度會更新在房間面板。'
         await interaction.followup.send(notice, ephemeral=True)
 
 
@@ -300,10 +301,9 @@ class PaintedMazeService:
             if set(room.get('rest_ready', [])) != set(room['members']):
                 raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
             if room['boss_index'] == len(room['paintings']):
-                room = self.repo.ensure_final_vote(room_id)
-                await self._refresh(room)
-                return room
-            if room['boss_index'] < len(room['paintings']):
+                battle = build_final_battle(room)
+                data, delay = dump_battle(battle), 2
+            else:
                 index = room['boss_index']
                 battle = build_painting_battle(room['participants'], room['paintings'][index],
                     painting_battle_seed(room['seed'], index), room.get('contracts', ()), room.get('party_state'))
@@ -366,6 +366,11 @@ class PaintedMazeService:
         if room.get('battle'):
             reports.append({'title': '結束時尚未完成的戰鬥', 'battle': room['battle']})
         if not reports:
+            message = await thread.send(
+                '探索已結束；討論串再保留 24 小時供隊員聊天，之後鎖定並封存。',
+                allowed_mentions=discord.AllowedMentions.none())
+            self.repo.mark_report_sent(room['id'], message.id)
+            room['report_message_id'] = message.id
             return
         lines, summaries = [], []
         for report in reports:
@@ -433,8 +438,14 @@ class PaintedMazeService:
     async def _archive(self, room):
         await self._post_battle_report(room)
         thread = await self._thread(room)
-        if thread and not thread.archived:
-            await thread.edit(archived=True, locked=True, reason='繪境迷宮已結束')
+        if time.time() < room.get('archive_at', 0):
+            if thread and (thread.archived or thread.locked):
+                await thread.edit(archived=False, locked=False,
+                                  reason='繪境迷宮結束後保留一天供隊員交流')
+        else:
+            if thread and (not thread.archived or not thread.locked):
+                await thread.edit(archived=True, locked=True, reason='繪境迷宮結束後已保留一天')
+            self.repo.mark_archived(room['id'])
         self.repo.mark_terminal_refreshed(room['id'])
 
     def lobby_embed(self, room):
@@ -523,7 +534,8 @@ class PaintedMazeService:
                                 value='\n\n'.join(lines[offset:offset + 3]), inline=False)
             embed.add_field(name='截止', value=f'<t:{int(vote["deadline"])}:R>')
         elif room['status'] == 'running':
-            if not room.get('final_vote'):
+            embed.add_field(name='怪物特性', value=encounter_traits(room), inline=False)
+            if not room.get('final_vote') or room['final_vote'].get('result') == 'enter':
                 ready = set(room.get('rest_ready', []))
                 embed.add_field(name='戰前休息點', value=(
                     '可調整主動／被動技能與自動施放規則；職業、裝備及攜帶效果固定。\n'
@@ -558,11 +570,13 @@ class PaintedMazeService:
                         + risk), inline=False)
         else:
             embed.add_field(name='結果', value=room.get('end_reason', room['status']), inline=False)
+            if room.get('archive_at'):
+                embed.add_field(name='討論串關閉時間', value=f'<t:{int(room["archive_at"])}:R>', inline=False)
             if room['status'] == 'completed' and room['route'] == 'noah':
                 embed.add_field(name='菁英裝備', value=(
                     '首次通關者會取得本職菁英裝備自選箱，可從背包使用；'
                     '已有通關紀錄者已隨機發放。'), inline=False)
-        embed.set_footer(text='房間最長保留 24 小時；結束後討論串會封存但隊員仍可查看。')
+        embed.set_footer(text='探索期限為 24 小時；結束後討論串再保留 24 小時供聊天，之後鎖定並封存，隊員仍可查看。')
         return embed
 
     @tasks.loop(seconds=1)
@@ -594,6 +608,10 @@ class PaintedMazeService:
                     room = self.repo.get(active['id'])
                     if room['status'] != 'running':
                         continue
+                    if (room['boss_index'] == len(room['paintings'])
+                            and not room.get('battle') and not room.get('final_vote')):
+                        room = self.repo.ensure_final_vote(room['id'], now=now)
+                        await self._refresh(room)
                     vote = room.get('final_vote')
                     if vote and not vote.get('result') and now >= vote['deadline']:
                         room = self.repo.resolve_final_vote(room['id'], now=now)
@@ -603,13 +621,8 @@ class PaintedMazeService:
                             await self._refresh(room)
                             await self._archive(room)
                             continue
-                    if (room.get('final_vote', {}).get('result') == 'enter'
-                            and not room.get('battle') and not room.get('final_battle')):
-                        battle = build_final_battle(room)
-                        room = self.repo.start_battle(room['id'], room['host_id'], dump_battle(battle),
-                                                     deadline=time.time() + 2)
                         await self._refresh(room)
-                    elif room.get('battle') and (room['battle'].get('result') or now >= room['battle_deadline']):
+                    if room.get('battle') and (room['battle'].get('result') or now >= room['battle_deadline']):
                         await self._step_battle(room)
             except Exception:
                 logger.exception('Painted Maze round update failed: %s', active['id'])
@@ -621,6 +634,11 @@ class PaintedMazeService:
                 await self._archive(room)
             except Exception:
                 logger.exception('Painted Maze terminal refresh failed: %s', room['id'])
+        for room in self.repo.archives_due(now=now):
+            try:
+                await self._archive(room)
+            except Exception:
+                logger.exception('Painted Maze delayed archive failed: %s', room['id'])
 
     @tick.before_loop
     async def before_tick(self):

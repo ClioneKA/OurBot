@@ -16,6 +16,7 @@ ENTRY_CLOSED_NOTICE = '繪境迷宮目前暫停開放，正在調整中；入場
 MIN_LEVEL = 50
 MAX_PARTICIPANTS = 8
 ROOM_LIFETIME_SECONDS = 24 * 60 * 60
+THREAD_RETENTION_SECONDS = 24 * 60 * 60
 CONTRACT_VOTE_SECONDS = 60
 ACTIVE_STATUSES = ('lobby', 'running', 'contract')
 ENTRY_ROUTES = {
@@ -515,6 +516,9 @@ class PaintedMazeStore:
             room['last_contract_vote'] = vote
             room['contract_vote'] = None
             room['status'] = 'running'
+            if room['boss_index'] == len(room['paintings']):
+                room['final_vote'] = {'votes': {}, 'deadline': now + 60, 'result': None}
+                room['rest_ready'] = []
             self._save(room)
             return room
 
@@ -541,7 +545,9 @@ class PaintedMazeStore:
         now = time.time() if now is None else now
         room = self.get(room_id)
         if (not room or room['status'] != 'running' or room.get('battle')
-                or room.get('final_vote') or now >= room['expires_at']):
+                or (room['boss_index'] == len(room['paintings'])
+                    and (room.get('final_vote') or {}).get('result') != 'enter')
+                or now >= room['expires_at']):
             raise PaintedMazeError('目前不是可調整技能的休息點。')
         if expected_index is not None and room['boss_index'] != expected_index:
             raise PaintedMazeError('這個休息點已結束，請重新開啟技能面板。')
@@ -612,9 +618,8 @@ class PaintedMazeStore:
             room = self.get(room_id)
             if (room and room['status'] == 'running' and room['boss_index'] == len(room['paintings'])
                     and not room.get('battle') and not room.get('final_vote')):
-                if set(room.get('rest_ready', [])) != set(room['members']):
-                    raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
                 room['final_vote'] = {'votes': {}, 'deadline': now + 60, 'result': None}
+                room['rest_ready'] = []
                 self._save(room)
             return room
 
@@ -630,6 +635,7 @@ class PaintedMazeStore:
                 raise PaintedMazeError('尾王去留投票尚未截止。')
             entering = sum(vote['votes'].get(str(uid)) == 'enter' for uid in room['members'])
             vote['result'] = 'enter' if entering > len(room['members']) / 2 else 'retreat'
+            room['rest_ready'] = []
             if vote['result'] == 'retreat':
                 self._finish(room, 'retreated', None, '全隊投票撤退，保留全部累積掉落', now)
             self._save(room)
@@ -646,6 +652,8 @@ class PaintedMazeStore:
     def _finish(room, status, actor_id, reason, now):
         room.update(status=status, ended_at=now, ended_by=actor_id, end_reason=reason)
         room['terminal_refresh_pending'] = True
+        room['archive_at'] = now + THREAD_RETENTION_SECONDS
+        room['archive_pending'] = True
         if room.get('reward_policy') == 'escrow_v2':
             room['loot_percent'] = 50 if room.get('final_entered') and status != 'completed' else 100
             if room['loot_percent'] == 50:
@@ -698,6 +706,20 @@ class PaintedMazeStore:
             room = self.get(room_id)
             if room:
                 room.pop('terminal_refresh_pending', None)
+                self._save(room)
+
+    def archives_due(self, *, now=None):
+        now = time.time() if now is None else now
+        rows = self.db.execute('SELECT data FROM rpg_painted_maze_rooms').fetchall()
+        return [room for row in rows if (room := json.loads(row[0])).get('archive_pending')
+                and room['archive_at'] <= now]
+
+    def mark_archived(self, room_id):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            room = self.get(room_id)
+            if room:
+                room.pop('archive_pending', None)
                 self._save(room)
 
     def mark_reward_complete(self, room_id, kind, checkpoint, *, now=None):
