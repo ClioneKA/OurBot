@@ -125,11 +125,16 @@ class ProvisionView(discord.ui.View):
 
     def embed(self, notice=None):
         state = self.cog.provisions.state(self.guild_id, self.owner.id)
+        counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
         selected = Counter(self.ingredients)
         lines = [f'{ITEMS[key].name} ×{amount}｜'
                  + ('調味料' if INGREDIENTS[key].seasoning else
                     f'{INGREDIENTS[key].tag_text}・品質 {INGREDIENTS[key].quality}')
                  + (f'・餘韻 +{INGREDIENTS[key].aftertaste}' if INGREDIENTS[key].aftertaste else '')
+                 + f'\n庫存 {counts.get(key, 0)}｜料理後剩餘 {max(0, counts.get(key, 0) - amount)}'
+                 + (f'｜⚠ 尚缺 {amount - counts.get(key, 0)} 份，需補充'
+                    if counts.get(key, 0) < amount else
+                    '｜⚠ 料理後用完，需補充' if counts.get(key, 0) == amount else '')
                  for key, amount in selected.items()]
         selection = '\n'.join(lines) or '尚未選擇食材。'
         selection += f'\n\n已選擇 {len(self.ingredients)}/{INGREDIENT_COUNT} 份'
