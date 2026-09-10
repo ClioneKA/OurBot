@@ -809,6 +809,8 @@ class Characters:
     def __init__(self, store, settings):
         self.store = store
         self.db = store.db
+        from core.rpg_slot_expansions import SlotExpansions
+        self.expansions = SlotExpansions(store)
         from core.rpg_affinity import initialize_affinity
         initialize_affinity(self.db)
         self.settings = settings

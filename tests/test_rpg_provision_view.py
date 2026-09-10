@@ -37,6 +37,15 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,?)', (key, quantity))
 
+    async def test_select_purchased_recipe_slot(self):
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,2000)')
+        self.characters.expansions.buy(1, 1, 'expansion:recipe', expected_purchased=0)
+        view = ProvisionView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'preset_slot', '4')
+        self.assertEqual(view.current_preset()['slot'], 4)
+
     async def test_panel_selects_five_owned_ingredients_and_previews(self):
         self.grant('fishing:pond:common', 3)
         self.grant('farming:potato', 2)

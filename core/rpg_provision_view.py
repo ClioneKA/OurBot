@@ -7,7 +7,7 @@ import discord
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
-from core.rpg_provisions import (COOKING_PRESET_SLOTS, INGREDIENT_COUNT, INGREDIENTS,
+from core.rpg_provisions import (INGREDIENT_COUNT, INGREDIENTS,
                                  effect_text, guest_reward_target)
 
 
@@ -218,7 +218,8 @@ class ProvisionView(discord.ui.View):
                     self.ingredient_page += 1
                 elif action == 'preset_slot':
                     if (not isinstance(value, str) or not value.isdigit()
-                            or not 1 <= int(value) <= COOKING_PRESET_SLOTS):
+                            or not 1 <= int(value) <= self.cog.provisions.preset_capacity(
+                                self.guild_id, self.owner.id)):
                         raise CharacterError('無效的料理配方格。')
                     self.preset_slot = int(value)
                 elif action == 'preset_save':

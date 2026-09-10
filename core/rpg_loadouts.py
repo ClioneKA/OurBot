@@ -22,9 +22,11 @@ class Loadouts:
                 PRIMARY KEY(guild_id,user_id,slot),
                 CHECK(slot >= 1))''')
 
-    @staticmethod
-    def _slot(slot):
-        if type(slot) is not int or not 1 <= slot <= FREE_LOADOUT_SLOTS:
+    def capacity(self, guild, user):
+        return self.characters.expansions.capacity(guild, user, 'expansion:loadout', FREE_LOADOUT_SLOTS)
+
+    def _slot(self, guild, user, slot):
+        if type(slot) is not int or not 1 <= slot <= self.capacity(guild, user):
             raise CharacterError('無效的出戰配置格。')
         return slot
 
@@ -38,7 +40,7 @@ class Loadouts:
         return name
 
     def get(self, guild, user, slot):
-        slot = self._slot(slot)
+        slot = self._slot(guild, user, slot)
         row = self.db.execute('''SELECT name,data FROM rpg_loadouts
             WHERE guild_id=? AND user_id=? AND slot=?''', (guild, user, slot)).fetchone()
         if not row:
@@ -50,10 +52,10 @@ class Loadouts:
         return dict(slot=slot, name=row[0], data=data)
 
     def all(self, guild, user):
-        return [self.get(guild, user, slot) for slot in range(1, FREE_LOADOUT_SLOTS + 1)]
+        return [self.get(guild, user, slot) for slot in range(1, self.capacity(guild, user) + 1)]
 
     def save(self, guild, user, slot):
-        slot = self._slot(slot)
+        slot = self._slot(guild, user, slot)
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.characters.snapshot(guild, user)
@@ -75,7 +77,7 @@ class Loadouts:
         return self.get(guild, user, slot)
 
     def rename(self, guild, user, slot, name):
-        slot = self._slot(slot)
+        slot = self._slot(guild, user, slot)
         name = self._name(name)
         with self.db:
             self.db.execute('''INSERT INTO rpg_loadouts(guild_id,user_id,slot,name,data)
@@ -84,7 +86,7 @@ class Loadouts:
         return self.get(guild, user, slot)
 
     def clear(self, guild, user, slot):
-        slot = self._slot(slot)
+        slot = self._slot(guild, user, slot)
         with self.db:
             self.db.execute('DELETE FROM rpg_loadouts WHERE guild_id=? AND user_id=? AND slot=?',
                             (guild, user, slot))
@@ -169,7 +171,7 @@ class Loadouts:
         return job, validated_equipment, rules, passive_id, basic_target
 
     def apply(self, guild, user, slot):
-        profile = self.get(guild, user, self._slot(slot))
+        profile = self.get(guild, user, slot)
         if profile['data'] is None:
             raise CharacterError('這個配置格尚未保存內容。')
         job, equipment, rules, passive_id, basic_target = self._validated(guild, user, profile['data'])

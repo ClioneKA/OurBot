@@ -38,6 +38,15 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
         self.view = LoadoutView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
 
+    async def test_select_and_save_purchased_slot(self):
+        self.cog.characters.grant_item(1, 1, 'proof:raid', 20)
+        self.cog.characters.expansions.buy(1, 1, 'expansion:loadout', expected_purchased=0)
+        await self.view.handle(self.interaction, 'refresh')
+        await self.view.handle(self.interaction, 'slot', '4')
+        await self.view.handle(self.interaction, 'save')
+        self.assertEqual(self.view.current()['slot'], 4)
+        self.assertEqual(self.view.current()['data']['job'], '僧侶')
+
     async def test_save_select_rename_apply_and_clear(self):
         self.assertTrue(next(child for child in self.view.children
                              if getattr(child, 'label', '') == '套用配置').disabled)

@@ -60,6 +60,7 @@ class ShopViewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exchange_balloon_painting_with_raid_proofs(self):
         self.characters.grant_item(1, 1, 'proof:raid', 30)
+        await self.view.handle(self.interaction, 'currency', 'proof')
         await self.view.handle(self.interaction, 'item', 'painting:balloon')
         self.assertEqual(self.view.buy_button.label, '兌換（30 證）')
         self.assertFalse(self.view.buy_button.disabled)
@@ -69,3 +70,36 @@ class ShopViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(counts['painting:balloon'], 1)
         self.assertEqual(self.store.gold(1, 1), 1000)
         self.assertTrue(self.view.buy_button.disabled)
+
+    async def test_currency_categories_and_expansion_prices(self):
+        self.assertIn('expansion:recipe', self.view.catalog)
+        self.assertNotIn('expansion:loadout', self.view.catalog)
+        self.assertNotIn('painting:balloon', self.view.catalog)
+        await self.view.handle(self.interaction, 'item', 'expansion:recipe')
+        self.assertTrue(self.view.buy_button.disabled)
+        await self.view.handle(self.interaction, 'currency', 'proof')
+        self.assertIsNone(self.view.item_id)
+        self.assertEqual(self.view.catalog, ['painting:balloon', 'expansion:loadout'])
+        self.characters.grant_item(1, 1, 'proof:raid', 400)
+        await self.view.handle(self.interaction, 'item', 'expansion:loadout')
+        for price in (20, 40, 70, 110, 160):
+            self.assertIn(str(price), self.view.buy_button.label)
+            await self.view.handle(self.interaction, 'buy')
+        self.assertTrue(self.view.buy_button.disabled)
+        self.assertIn('已售完', self.view.buy_button.label)
+        await self.view.handle(self.interaction, 'buy')
+        self.assertEqual(self.characters.inventory_counts(1, 1).get('proof:raid', 0), 0)
+        self.assertLessEqual(len(self.view.to_components()), 5)
+
+    async def test_stale_expansion_quote_requires_new_price_confirmation(self):
+        self.characters.grant_item(1, 1, 'proof:raid', 100)
+        await self.view.handle(self.interaction, 'currency', 'proof')
+        await self.view.handle(self.interaction, 'item', 'expansion:loadout')
+        self.characters.expansions.buy(1, 1, 'expansion:loadout', expected_purchased=0)
+        await self.view.handle(self.interaction, 'buy')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['proof:raid'], 80)
+        self.assertIn('40', self.view.buy_button.label)
+        self.assertIn('價格已變更',
+                      self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+        await self.view.handle(self.interaction, 'buy')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['proof:raid'], 40)

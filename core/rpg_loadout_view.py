@@ -123,7 +123,8 @@ class LoadoutView(discord.ui.View):
             notice = None
             try:
                 if action == 'slot':
-                    if value not in ('1', '2', '3'):
+                    if value not in {str(profile['slot']) for profile in
+                                     self.cog.loadouts.all(self.guild_id, self.owner.id)}:
                         raise CharacterError('無效的出戰配置格。')
                     self.slot = int(value)
                 elif action == 'save':
