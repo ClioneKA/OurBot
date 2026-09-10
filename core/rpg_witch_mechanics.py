@@ -881,6 +881,7 @@ class WitchBattleV8(WitchBattleV4):
         targets = self.witches() if skill.effect in ('group_heal', 'rally') else [p for p in self.living(0) if p is not actor]
         if not targets:
             self.events['brainwash_no_target'] += 1
+            self.log.append(f'{actor.name} 的【{skill.name}】沒有可用的洗腦反轉目標，本次未施放。')
             return
         self.record_skill(actor, skill.name)
         cooldown = max(2, skill.cooldown - actor.cooldown_reduction)
@@ -888,11 +889,16 @@ class WitchBattleV8(WitchBattleV4):
             cooldown = max(2, cooldown - actor.first_skill_cooldown_reduction)
             actor.first_skill_cooldown_used = True
         actor.ready[rule.slot] = self.round + cooldown
+        reversal = ('治療改為給魔女' if skill.effect in ('group_heal', 'rally') else
+                    '群攻改為攻擊隊友，治療改為給魔女' if skill.effect == 'holy_light' else
+                    '群攻改為攻擊隊友')
+        self.log.append(f'{actor.name} 使用【{skill.name}】（洗腦反轉：{reversal}）')
         if skill.effect in ('group_heal', 'rally'):
             if skill.effect == 'rally':
                 targets = [self.rng.choice(targets)]
             for witch in targets:
-                self.heal(actor, witch, actor.stats['治療量'] * 65 // 100 if skill.effect == 'group_heal' else actor.stats['HP'] // 2)
+                amount = self.heal(actor, witch, actor.stats['治療量'] * 65 // 100 if skill.effect == 'group_heal' else actor.stats['HP'] // 2)
+                self.log.append(f'{witch.name} 恢復 {amount} HP')
         else:
             power = {'area': .4, 'cleave': 1.2, 'holy_light': .9}[skill.effect]
             for ally in targets:
@@ -900,7 +906,9 @@ class WitchBattleV8(WitchBattleV4):
                     if actor.hp > 0 and ally.hp > 0:
                         self.hit(actor, ally, power, attack_scope='group')
             if skill.effect == 'holy_light' and actor.hp > 0 and self.witches():
-                self.heal(actor, target if target in self.witches() else self.rng.choice(self.witches()), actor.stats['治療量'] * 70 // 100)
+                receiver = target if target in self.witches() else self.rng.choice(self.witches())
+                amount = self.heal(actor, receiver, actor.stats['治療量'] * 70 // 100)
+                self.log.append(f'{receiver.name} 恢復 {amount} HP')
 
 
 class WitchBattleV9(WitchBattleV8):

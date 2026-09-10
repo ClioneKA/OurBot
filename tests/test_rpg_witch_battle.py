@@ -165,6 +165,54 @@ class WitchBattleTests(unittest.TestCase):
         self.assertTrue(any(f'{actor.name} 自動戰鬥：使用' in line for line in b.log))
         self.assertFalse(any(f'{actor.name} 未及時選擇，改為普通攻擊' in line for line in b.log))
 
+    def test_auto_group_skills_resolve_and_log_normal_and_brainwashed_effects(self):
+        for job, skill_id, effect in (('僧侶', 4, 'group_heal'), ('弓兵', 3, 'area'),
+                                      ('裝甲步兵', 4, 'cleave'), ('僧侶', 5, 'holy_light')):
+            for washed in (False, True):
+                with self.subTest(effect=effect, washed=washed):
+                    b = self.make()
+                    b.round = 1
+                    actor = next(p for p in b.living(0) if p.job == job)
+                    actor.rules = [Rule(1, 1, True, 'always', 'lowest', skill_id=skill_id)]
+                    for fighter in b.fighters:
+                        fighter.hp = fighter.stats['HP'] // 2
+                    if washed:
+                        actor.effects['brainwash'] = 2
+                        b.commands[b.key(actor)] = ('brainwash', 2)
+                        b.forced_brainwash[b.key(actor)] = -1
+                    b.enable_auto(actor.user_id)
+                    for player in b.living(0):
+                        if player is not actor:
+                            b.submit(player.user_id, ACTION_DEFEND)
+                            b.confirm(player.user_id)
+                    # Exercise the saved auto state and the entire round resolver.
+                    b = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+                    actor = b._player(actor.user_id)
+                    b.act = Mock()  # Isolate player effects from enemy damage/healing.
+                    b.hit_chance = lambda _actor, _target: 100
+                    allies, enemies = b.living(0), b.witches()
+                    before = {b.key(f): f.hp for f in b.fighters}
+                    b.resolve()
+                    if effect == 'group_heal':
+                        healed, unchanged = (enemies, allies) if washed else (allies, enemies)
+                        self.assertTrue(all(f.hp > before[b.key(f)] for f in healed))
+                        self.assertTrue(all(f.hp == before[b.key(f)] for f in unchanged))
+                        for target in healed:
+                            self.assertTrue(any(f'{target.name} 恢復 ' in line for line in b.log))
+                    else:
+                        damaged = [p for p in allies if p is not actor] if washed else enemies
+                        self.assertTrue(all(f.hp < before[b.key(f)] for f in damaged))
+                        if effect == 'holy_light':
+                            healed = enemies if washed else allies
+                            self.assertTrue(any(f.hp > before[b.key(f)] for f in healed))
+                            self.assertTrue(any('恢復 ' in line for line in b.log))
+                    name = b._skill(actor, 1)[1].name
+                    self.assertIn(f'{actor.name} 自動戰鬥：使用{name}。', b.log)
+                    self.assertTrue(any(f'{actor.name} 使用【{name}】' in line for line in b.log))
+                    self.assertGreater(actor.ready[1], b.round)
+                    if washed:
+                        self.assertTrue(any('洗腦反轉' in line for line in b.log))
+
     def test_brainwash_ui_and_strict_forced_validation(self):
         b = self.make(2)
         b.prepare(b.witch('anan'))
