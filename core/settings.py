@@ -99,8 +99,13 @@ class AISettings:
 
 @dataclass(frozen=True)
 class TTSSettings:
+    language_boost: str = field(default='auto', metadata={})
     voice_id: str = field(default='moss_audio_8434cf0e-cc87-11f0-9bff-daa50e7d99bd', metadata={'nonempty': True})
     model: str = field(default='speech-2.6-turbo', metadata={'nonempty': True})
+
+    def __post_init__(self):
+        if self.language_boost not in {'auto', 'Chinese', 'Japanese', 'English'}:
+            raise SettingsError('tts.language_boost 必須是 auto、Chinese、Japanese 或 English')
 
 
 @dataclass(frozen=True)

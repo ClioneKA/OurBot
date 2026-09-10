@@ -155,7 +155,15 @@ class Anan(Cog_Extension):
 
     @app_commands.command(name="洗腦", description="安安的固有魔法")
     @app_commands.default_permissions(administrator=True)
-    async def send_sound(self, interaction: discord.Interaction, text: str):
+    @app_commands.describe(language="朗讀語言；日文漢字請選日文，避免誤讀成中文")
+    @app_commands.rename(language="語言")
+    @app_commands.choices(language=[
+        Choice(name="自動辨識", value="auto"),
+        Choice(name="日文", value="Japanese"),
+        Choice(name="中文", value="Chinese"),
+        Choice(name="英文", value="English"),
+    ])
+    async def send_sound(self, interaction: discord.Interaction, text: str, language: str = None):
         """tts by command"""
         if not await self._require_administrator(interaction):
             return
@@ -179,12 +187,12 @@ class Anan(Cog_Extension):
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
 
         await interaction.response.send_message("魔法，很神奇吧", delete_after=5)
-        await self.speak(voice, text)
+        await self.speak(voice, text, language=language)
 
-    async def speak(self, voice, text, emotion=None):
+    async def speak(self, voice, text, emotion=None, language=None):
         """tts"""
         async with self.voice_locks[voice.guild.id]:
-            audio = await get_cached_sound(text, emotion)
+            audio = await get_cached_sound(text, emotion, language=language)
             if audio is None:
                 return False
 
@@ -214,13 +222,13 @@ class Anan(Cog_Extension):
             await asyncio.sleep(2.5)
             hr = datetime.now().hour
             if hr < 3:
-                await self.speak(voice, "おはようございます", "happy")
+                await self.speak(voice, "おはようございます", "happy", language="Japanese")
             elif hr < 10:
-                await self.speak(voice, "こんにちは", "happy")
+                await self.speak(voice, "こんにちは", "happy", language="Japanese")
             elif hr < 21:
-                await self.speak(voice, "こんばんは", "happy")
+                await self.speak(voice, "こんばんは", "happy", language="Japanese")
             else:
-                await self.speak(voice, "おはようございます", "happy")
+                await self.speak(voice, "おはようございます", "happy", language="Japanese")
 
 
 async def setup(bot):

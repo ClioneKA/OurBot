@@ -40,7 +40,7 @@
 | `[ai.limits]` | 個人／頻道冷卻、整體限頻、每日額度與重置時區 |
 | `[ai.memory]` | 印象、好感度及伺服器共同記憶設定；`summary_model` 留空時使用 `ai.model` |
 | `[ai.media]` | 圖片／語音回覆開關、長度、冷卻與額度 |
-| `[tts]` | MiniMax 語音模型與音色 ID |
+| `[tts]` | MiniMax 語音模型、音色 ID 與預設朗讀語言 `language_boost`（auto／Chinese／Japanese／English） |
 | `[rpg]` | RPG 等級開關、文字 XP／冷卻／長度、語音 XP／人數；詳見 [RPG 說明](RPG.md) |
 | `[rpg.raid]` | 討伐活動、AI 怪物、一般 30–60 分鐘隨機間隔、台灣時間 12:00–14:00／18:00–23:00 減半為 15–30 分鐘、人數與金幣；XP 改由怪物階層配置，專用頻道在 `.env` 的 `RPG_RAID_CHANNEL_IDS` 設定 |
 | `[rpg.mid_raid]` | 三、四階的中階討伐，預設 90–180 分鐘隨機間隔、勝利 200 金幣；XP 依怪物階層為 600／750，專用頻道在 `.env` 的 `RPG_MID_RAID_CHANNEL_IDS` 設定 |

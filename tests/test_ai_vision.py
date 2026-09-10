@@ -341,6 +341,20 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('目前無可加入的語音頻道，join_voice 必須為 false', instructions)
                 self.assertNotIn('好感度只能影響語氣', instructions)
 
+    async def test_japanese_language_reaches_voice_playback(self):
+        reply = self.ai._parse_reply(
+            '{"text":"世界","output":"voice","emotion":"普通","tts_language":"Japanese"}'
+        )
+        self.assertEqual(reply.tts_language, 'Japanese')
+        voice = object()
+        anan = SimpleNamespace(speak=AsyncMock(return_value=True))
+        self.ai.bot.get_cog = Mock(return_value=anan)
+        self.ai._voice_client_for = Mock(return_value=voice)
+        self.ai._reserve_tts = AsyncMock(return_value=True)
+        await self.ai._send_reply(self.message(), reply)
+        anan.speak.assert_awaited_once_with(voice, '世界', 'neutral', language='Japanese')
+        self.assertEqual(self.ai._parse_reply('{"text":"世界","tts_language":null}').tts_language, 'auto')
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,7 @@ REPLY_SCHEMA = {
         "properties": {
             "text": {"type": "string"},
             "join_voice": {"type": "boolean"},
+            "tts_language": {"type": "string", "enum": ["auto", "Chinese", "Japanese", "English"]},
             "output": {"type": "string", "enum": ["text", "image", "voice"]},
             "emotion": {"type": "string", "enum": list(EMOTIONS)},
             "affinity_delta": {
@@ -92,7 +93,7 @@ REPLY_SCHEMA = {
             },
         },
         "required": [
-            "text", "output", "emotion", "affinity_delta", "join_voice",
+            "text", "output", "emotion", "affinity_delta", "join_voice", "tts_language",
             "preferred_name_action", "preferred_name",
         ],
         "additionalProperties": False,
@@ -171,6 +172,7 @@ class AIReply:
     preferred_name_action: str = "keep"
     preferred_name: Optional[str] = None
     join_voice: bool = False
+    tts_language: str = "auto"
 
 
 def _snowflake_ids(name: str) -> Set[int]:
@@ -688,6 +690,9 @@ class AI(Cog_Extension):
             preferred_name_action=preferred_name_action,
             preferred_name=preferred_name,
             join_voice=data.get("join_voice") is True,
+            tts_language=(data.get("tts_language")
+                          if data.get("tts_language") in ("auto", "Chinese", "Japanese", "English")
+                          else "auto"),
         )
 
     def _enforce_media_policy(
@@ -1366,6 +1371,13 @@ class AI(Cog_Extension):
             f"{self._current_time_context()}"
             f"{vision_guidance}"
         )
+        instructions += (
+            "\n\ntts_language 是 text 實際朗讀時的語言：日文用 Japanese、中文用 Chinese、"
+            "英文用 English；其他語言或中日混合而無法指定單一語言時用 auto。"
+            "依朗讀內容與使用者指定的讀法判斷，不要只看漢字。"
+            "例如要求用日文念『世界』時用 Japanese，即使 text 全是漢字；"
+            "中文回覆仍用 Chinese。這個欄位不會翻譯文字，日文朗讀請提供日文內容。"
+        )
         anan = self.bot.get_cog("Anan") if hasattr(self.bot, "get_cog") else None
         invitation_channel = (
             anan.invitation_channel(message)
@@ -1572,7 +1584,9 @@ class AI(Cog_Extension):
                 and await self._reserve_tts(message)
             ):
                 try:
-                    if await anan_cog.speak(voice, reply.text, tts_emotion):
+                    if await anan_cog.speak(
+                        voice, reply.text, tts_emotion, language=reply.tts_language
+                    ):
                         return
                 except (discord.ClientException, OSError, TypeError):
                     logger.exception("在 Discord 語音頻道播放 TTS 失敗")

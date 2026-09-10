@@ -20,7 +20,16 @@ def is_tts_configured() -> bool:
     return bool(os.getenv("MINIMAX_API_KEY", "").strip())
 
 
-def _generate_sound_sync(text: str, emotion: Optional[str]) -> Optional[bytes]:
+def _resolve_language(language: Optional[str]) -> str:
+    language = language if language is not None else get_settings().tts.language_boost
+    if language not in {"auto", "Chinese", "Japanese", "English"}:
+        raise ValueError("不支援的 TTS 語言")
+    return language
+
+
+def _generate_sound_sync(
+    text: str, emotion: Optional[str], language: Optional[str] = None
+) -> Optional[bytes]:
     api_key = os.getenv("MINIMAX_API_KEY", "").strip()
     if not api_key:
         logger.warning("未設定 MINIMAX_API_KEY，無法產生語音")
@@ -40,6 +49,7 @@ def _generate_sound_sync(text: str, emotion: Optional[str]) -> Optional[bytes]:
         "model": get_settings().tts.model,
         "text": text,
         "voice_setting": voice_setting,
+        "language_boost": _resolve_language(language),
     }
 
     try:
@@ -59,22 +69,24 @@ def _generate_sound_sync(text: str, emotion: Optional[str]) -> Optional[bytes]:
 
 
 async def generate_sound(
-    text: str, emotion: Optional[str] = None
+    text: str, emotion: Optional[str] = None, language: Optional[str] = None
 ) -> Optional[bytes]:
     """在線程池呼叫 MiniMax，避免阻塞 Discord 事件迴圈。"""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _generate_sound_sync, text, emotion)
+    return await loop.run_in_executor(None, _generate_sound_sync, text, emotion, language)
 
 
 async def get_cached_sound(
     text: str,
     emotion: Optional[str] = None,
     cache_dir: str = "gen_sounds",
+    language: Optional[str] = None,
 ) -> Optional[bytes]:
     voice_id = get_settings().tts.voice_id
     model = get_settings().tts.model
+    language = _resolve_language(language)
     cache_key = hashlib.sha256(
-        f"{model}\0{voice_id}\0{emotion or ''}\0{text}".encode("utf-8")
+        f"{model}\0{voice_id}\0{language}\0{emotion or ''}\0{text}".encode("utf-8")
     ).hexdigest()
     directory = Path(cache_dir)
     path = directory / f"{cache_key}.mp3"
@@ -87,7 +99,7 @@ async def get_cached_sound(
             except OSError:
                 logger.exception("讀取 TTS 快取失敗：%s", path)
 
-        audio = await generate_sound(text, emotion)
+        audio = await generate_sound(text, emotion, language)
         if audio is None:
             return None
         try:
