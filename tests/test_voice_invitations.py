@@ -58,6 +58,43 @@ class VoiceInvitationTests(unittest.IsolatedAsyncioTestCase):
         self.channel.members = [self.author]
         self.assertIsNone(self.anan.invitation_channel(self.message))
 
+    async def test_admin_voice_join_and_leave_share_connection_control(self):
+        self.author.guild_permissions = discord.Permissions(administrator=True)
+        self.permissions.speak = True
+        interaction = SimpleNamespace(guild=self.guild, guild_id=1, user=self.author)
+        self.channel.name = '客廳'
+        result = await self.anan.admin_voice_action(interaction, 'join')
+        self.assertIn('客廳', result)
+        self.channel.connect.assert_awaited_once()
+        voice = SimpleNamespace(disconnect=AsyncMock(), channel=self.channel)
+        self.guild.voice_client = voice
+        result = await self.anan.admin_voice_action(interaction, 'leave')
+        voice.disconnect.assert_awaited_once()
+        self.assertIn('已離開', result)
+        self.assertIn(1, self.anan.invitation_attempts)
+
+    async def test_admin_voice_rejects_non_admin_and_other_channel(self):
+        interaction = SimpleNamespace(guild=self.guild, guild_id=1, user=self.author)
+        self.author.guild_permissions = discord.Permissions.none()
+        result = await self.anan.admin_voice_action(interaction, 'join')
+        self.assertIn('管理員', result)
+        self.channel.connect.assert_not_awaited()
+        self.author.guild_permissions = discord.Permissions(administrator=True)
+        self.guild.voice_client = SimpleNamespace(channel=object())
+        result = await self.anan.admin_voice_action(interaction, 'join')
+        self.assertIn('其他語音頻道', result)
+        self.channel.connect.assert_not_awaited()
+
+    async def test_admin_speech_preserves_language_and_reports_failure(self):
+        self.author.guild_permissions = discord.Permissions(administrator=True)
+        self.permissions.speak = True
+        self.guild.voice_client = SimpleNamespace(channel=self.channel)
+        self.anan.speak = AsyncMock(return_value=False)
+        interaction = SimpleNamespace(guild=self.guild, guild_id=1, user=self.author)
+        result = await self.anan.admin_voice_action(interaction, 'speak', '世界', 'Japanese')
+        self.anan.speak.assert_awaited_once_with(self.guild.voice_client, '世界', language='Japanese')
+        self.assertIn('朗讀失敗', result)
+
 
 if __name__ == '__main__':
     unittest.main()

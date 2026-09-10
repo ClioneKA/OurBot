@@ -59,70 +59,48 @@ class Anan(Cog_Extension):
                 return "吾輩想過去，但語音連線失敗了……待會再試吧。"
         return None
 
-    async def _require_administrator(
-        self, interaction: discord.Interaction
-    ) -> bool:
-        administrator = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if administrator:
-            return True
-        await interaction.response.send_message(
-            "只有伺服器管理員可以使用這個指令。", ephemeral=True
-        )
-        return False
+    async def admin_voice_action(self, interaction, action, text=None, language=None):
+        """Run panel voice actions; caller defers its private response first."""
+        if (interaction.guild is None or not isinstance(interaction.user, discord.Member)
+                or not interaction.user.guild_permissions.administrator):
+            return "只有伺服器管理員可以操作語音。"
+        if action not in {'join', 'leave', 'speak'}:
+            return "未知的語音操作。"
+        if action == 'speak' and (not isinstance(text, str) or not text.strip() or len(text) > 50):
+            return "朗讀文字必須介於 1 到 50 字。"
+        try:
+            async with self.connection_locks[interaction.guild_id]:
+                voice = interaction.guild.voice_client
+                if action == 'leave':
+                    self.invitation_attempts[interaction.guild_id] = time.monotonic()
+                    if voice is None:
+                        return "安安目前沒有在語音頻道裡。"
+                    await voice.disconnect()
+                    return "安安已離開語音頻道。"
+                state = interaction.user.voice
+                channel = state.channel if state else None
+                if not isinstance(channel, discord.VoiceChannel):
+                    return "請先加入一般語音頻道。"
+                permissions = channel.permissions_for(interaction.guild.me)
+                if not permissions.view_channel or not permissions.connect:
+                    return "安安沒有加入這個語音頻道的權限。"
+                if action == 'speak' and not permissions.speak:
+                    return "安安沒有在這個語音頻道發言的權限。"
+                if voice is not None and voice.channel != channel:
+                    return "安安已在其他語音頻道，請先讓她離開。"
+                if voice is None:
+                    if channel.user_limit and len(channel.members) >= channel.user_limit:
+                        return "這個語音頻道已滿。"
+                    voice = await channel.connect(timeout=20, reconnect=False, self_deaf=True)
+                if action == 'join':
+                    return f"安安已在 {channel.name} 語音頻道。"
+            if await asyncio.wait_for(self.speak(voice, text, language=language), timeout=60):
+                return "安安已開始朗讀。"
+            return "朗讀失敗，請確認語音服務設定與連線。"
+        except (discord.DiscordException, asyncio.TimeoutError, OSError, RuntimeError):
+            logging.getLogger(__name__).exception('管理面板語音操作失敗')
+            return "語音操作失敗，請確認權限與連線後重試。"
 
-    @app_commands.command(name="上線", description="叫安安上線")
-    @app_commands.default_permissions(administrator=True)
-    async def connect(self, interaction: discord.Interaction):
-        """connect bot to vc"""
-        if not await self._require_administrator(interaction):
-            return
-        await interaction.response.defer()
-        async with self.connection_locks[interaction.guild_id]:
-            await self._connect_manually(interaction)
-
-    async def _connect_manually(self, interaction):
-        voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
-        if interaction.user.voice is None:
-            await interaction.followup.send(
-                "你沒有在任何語音頻道內", delete_after=5
-            )
-            return
-        elif voice is None:
-            vc = interaction.user.voice.channel
-            await vc.connect()
-            await interaction.followup.send("來了", delete_after=5)
-        else:
-            await interaction.followup.send(
-                "吾輩已經在語音頻道裡了", delete_after=5
-            )
-
-    @app_commands.command(name="滾", description="送安安下去")
-    @app_commands.default_permissions(administrator=True)
-    async def leave(self, interaction: discord.Interaction):
-        """disconnect bot from vc"""
-        if not await self._require_administrator(interaction):
-            return
-        await interaction.response.defer()
-        async with self.connection_locks[interaction.guild_id]:
-            await self._leave_manually(interaction)
-
-    async def _leave_manually(self, interaction):
-        voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
-        if voice is None:
-            await interaction.followup.send(
-                "吾輩沒有在任何語音頻道內", delete_after=5
-            )
-        else:
-            self.invitation_attempts[interaction.guild.id] = time.monotonic()
-            picture = discord.File(
-                "images/ananout.png",
-                filename="安安出去.jpg",
-            )
-            await interaction.followup.send(file=picture, delete_after=5)
-            await voice.disconnect()
 
     @app_commands.command(name="安安傳話筒", description="請安安幫你說不想直接說的話")
     @app_commands.describe(text="輸入要說的話", emotion="安安的表情")
@@ -153,41 +131,6 @@ class Anan(Cog_Extension):
             file = discord.File(fp=io.BytesIO(image_bytes), filename="anan.jpg")
             await interaction.response.send_message(file=file)
 
-    @app_commands.command(name="洗腦", description="安安的固有魔法")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(language="朗讀語言；日文漢字請選日文，避免誤讀成中文")
-    @app_commands.rename(language="語言")
-    @app_commands.choices(language=[
-        Choice(name="自動辨識", value="auto"),
-        Choice(name="日文", value="Japanese"),
-        Choice(name="中文", value="Chinese"),
-        Choice(name="英文", value="English"),
-    ])
-    async def send_sound(self, interaction: discord.Interaction, text: str, language: str = None):
-        """tts by command"""
-        if not await self._require_administrator(interaction):
-            return
-        if len(text) > 50:
-            await interaction.response.send_message(
-                "嗚~安安不想說那麼多話", delete_after=5
-            )
-            return
-
-        voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
-
-        if interaction.user.voice is None:
-            await interaction.response.send_message(
-                "你沒有在任何語音頻道內", delete_after=5
-            )
-            return
-        elif voice is None:
-            vc = interaction.user.voice.channel
-            await vc.connect()
-
-        voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
-
-        await interaction.response.send_message("魔法，很神奇吧", delete_after=5)
-        await self.speak(voice, text, language=language)
 
     async def speak(self, voice, text, emotion=None, language=None):
         """tts"""

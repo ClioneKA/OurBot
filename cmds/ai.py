@@ -20,6 +20,7 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from core.classes import Cog_Extension
 from core.gen_image import BASEIMAGE_MAPPING, generate_image
 from core.memory import MemoryStore
+from core.anan_admin_view import AnanAdminView, require_admin
 from core.tts import is_tts_configured
 from core.settings import get_settings
 
@@ -1105,6 +1106,16 @@ class AI(Cog_Extension):
                 removed = self.memory.forget(guild_id, user_id, memory.id) or removed
         return removed
 
+    @app_commands.command(name="安安管理", description="管理安安的成員印象、記憶、好感度與語音")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def admin_panel(self, interaction: discord.Interaction):
+        if not await require_admin(interaction, self):
+            return
+        view = AnanAdminView(self, interaction.user.id, interaction.guild_id)
+        await interaction.response.send_message(embed=view.render(), view=view, ephemeral=True)
+        view.message = await interaction.original_response()
+
     @app_commands.command(name="安安叫我", description="設定安安對你的專用稱呼")
     @app_commands.describe(preferred_name="希望安安如何稱呼你，最多 32 字")
     @app_commands.rename(preferred_name="稱呼")
@@ -1145,156 +1156,6 @@ class AI(Cog_Extension):
         response = "好，之後改用你的伺服器暱稱。" if removed else "目前沒有設定專用稱呼。"
         await interaction.response.send_message(response, ephemeral=True)
 
-    @app_commands.command(
-        name="安安查看印象", description="管理員查看指定成員的互動印象"
-    )
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(member="要查看印象的成員")
-    @app_commands.rename(member="成員")
-    async def show_impression(
-        self, interaction: discord.Interaction, member: discord.Member
-    ):
-        administrator = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if not administrator:
-            await interaction.response.send_message(
-                "只有伺服器管理員可以使用這個指令。", ephemeral=True
-            )
-            return
-        if not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message(
-                "這個伺服器沒有開放安安的互動印象功能。", ephemeral=True
-            )
-            return
-
-        impression = self.memory.get_impression(
-            interaction.guild_id, member.id
-        )
-        response = (
-            f"安安目前對 {member.display_name} 的印象：\n{impression}"
-            if impression
-            else f"安安目前還沒有整理出對 {member.display_name} 的印象。"
-        )
-        await interaction.response.send_message(response, ephemeral=True)
-
-    @app_commands.command(
-        name="安安個人記憶", description="查看安安記得關於你的事情與近期相處狀態"
-    )
-    async def show_personal_memories(self, interaction: discord.Interaction):
-        if interaction.guild_id is None or not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message("請在已開放安安的伺服器使用。", ephemeral=True)
-            return
-        items = self.memory.list_personal_memories(interaction.guild_id, interaction.user.id)
-        pages = ["安安目前記得關於你的事："]
-        for item in items:
-            basis = "明確提及" if item['basis'] == 'explicit' else "暫時推測"
-            expiry = f"，有效至 {item['expires_at']} UTC" if item['expires_at'] else ""
-            line = f"\n#{item['id']} [{basis}{expiry}] {item['content']}"
-            if len(pages[-1]) + len(line) > 1800:
-                pages.append("")
-            pages[-1] += line
-        if not items:
-            pages = ["安安還沒有整理出關於你的個人記憶。"]
-        await interaction.response.send_message(pages[0], ephemeral=True)
-        for page in pages[1:]:
-            await interaction.followup.send(page, ephemeral=True)
-
-    @app_commands.command(name="安安忘記個人記憶", description="刪除一條安安關於你的個人記憶")
-    @app_commands.describe(memory_id="安安個人記憶顯示的編號")
-    @app_commands.rename(memory_id="記憶編號")
-    async def delete_personal_memory(self, interaction: discord.Interaction, memory_id: int):
-        if interaction.guild_id is None or not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message("請在已開放安安的伺服器使用。", ephemeral=True)
-            return
-        removed = self.memory.forget_personal_memory(
-            interaction.guild_id, interaction.user.id, memory_id
-        )
-        await interaction.response.send_message(
-            "已刪除這條個人記憶。" if removed else "找不到這條個人記憶。", ephemeral=True
-        )
-
-    @app_commands.command(
-        name="安安伺服器記憶", description="管理員查看安安的伺服器共同記憶"
-    )
-    @app_commands.default_permissions(administrator=True)
-    async def show_guild_memories(self, interaction: discord.Interaction):
-        administrator = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if not administrator:
-            await interaction.response.send_message(
-                "只有伺服器管理員可以使用這個指令。", ephemeral=True
-            )
-            return
-        if not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message(
-                "這個伺服器沒有開放安安的共同記憶功能。", ephemeral=True
-            )
-            return
-
-        memories = self.memory.list_guild_memories(
-            interaction.guild_id, self.guild_memory_limit
-        )
-        if not memories:
-            response = "安安目前還沒有整理出這個伺服器的共同記憶。"
-        else:
-            labels = {
-                "identity": "身分",
-                "culture": "文化",
-                "preference": "偏好",
-                "activity": "活動",
-                "other": "其他",
-            }
-            lines = ["安安目前的伺服器共同記憶："]
-            hidden = 0
-            for memory in memories:
-                line = f"#{memory.id}〔{labels[memory.category]}〕{memory.content}"
-                if len("\n".join((*lines, line))) > 1850:
-                    hidden += 1
-                    continue
-                lines.append(line)
-            if hidden:
-                lines.append(f"另有 {hidden} 條未顯示；可先刪除不需要的舊記憶。")
-            response = "\n".join(lines)
-        await interaction.response.send_message(response, ephemeral=True)
-
-    @app_commands.command(
-        name="安安刪除伺服器記憶", description="管理員按編號刪除一條伺服器共同記憶"
-    )
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(memory_id="由安安伺服器記憶顯示的編號")
-    @app_commands.rename(memory_id="記憶編號")
-    async def delete_guild_memory(
-        self, interaction: discord.Interaction, memory_id: int
-    ):
-        administrator = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if not administrator:
-            await interaction.response.send_message(
-                "只有伺服器管理員可以使用這個指令。", ephemeral=True
-            )
-            return
-        if not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message(
-                "這個伺服器沒有開放安安的共同記憶功能。", ephemeral=True
-            )
-            return
-
-        removed = self.memory.forget_guild_memory(interaction.guild_id, memory_id)
-        logger.info(
-            "管理員共同記憶操作 guild=%s admin=%s memory=%s removed=%s",
-            interaction.guild_id,
-            interaction.user.id,
-            memory_id,
-            removed,
-        )
-        response = f"已刪除共同記憶 #{memory_id}。" if removed else "找不到這條共同記憶。"
-        await interaction.response.send_message(response, ephemeral=True)
 
     @app_commands.command(name="安安好感度", description="查看安安目前對你的好感度")
     async def show_affinity(self, interaction: discord.Interaction):
@@ -1311,51 +1172,6 @@ class AI(Cog_Extension):
             f"安安對你的好感度：{score}／100（{level}）", ephemeral=True
         )
 
-    @app_commands.command(
-        name="安安管理好感度", description="管理員設定指定成員的好感度"
-    )
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.describe(member="要設定的成員", score="介於 -100 到 100")
-    @app_commands.rename(member="成員", score="好感度")
-    async def manage_affinity(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        score: int,
-    ):
-        administrator = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-        if not administrator:
-            await interaction.response.send_message(
-                "只有伺服器管理員可以使用這個指令。", ephemeral=True
-            )
-            return
-        if not self._guild_is_allowed(interaction.guild_id):
-            await interaction.response.send_message(
-                "這個伺服器沒有開放安安的好感度功能。", ephemeral=True
-            )
-            return
-        if not -100 <= score <= 100:
-            await interaction.response.send_message(
-                "好感度必須介於 -100 到 100。", ephemeral=True
-            )
-            return
-
-        score = self.memory.set_affinity(interaction.guild_id, member.id, score)
-        level, _ = self._affinity_profile(score)
-        logger.info(
-            "管理員好感度操作 guild=%s admin=%s target=%s score=%s",
-            interaction.guild_id,
-            interaction.user.id,
-            member.id,
-            score,
-        )
-        await interaction.response.send_message(
-            f"已將 {member.display_name} 的好感度設為 {score}（{level}）。",
-            ephemeral=True,
-        )
 
     async def _generate_reply(
         self, message: discord.Message, content: str, scene: str
