@@ -12,6 +12,27 @@ from core.settings import RPGSettings, SettingsError
 
 
 class CharacterTests(unittest.TestCase):
+    def test_weapon_stability_is_shared_by_source_across_jobs_and_variants(self):
+        sources = {}
+        for key, item in ITEMS.items():
+            if item.slot != '武器':
+                continue
+            source = key.split(':')[0]
+            if source in JOBS:
+                source = 'standard'
+            sources.setdefault(source, []).append(item)
+        self.assertGreater(len(sources), 1)
+        for source, weapons in sources.items():
+            with self.subTest(source=source):
+                ranges = {weapon.stability for weapon in weapons}
+                self.assertEqual(len(ranges), 1)
+                low, high = ranges.pop()
+                self.assertLessEqual(low, high)
+                self.assertEqual(low + high, 200)
+                if source != 'starter':
+                    self.assertGreater(len({weapon.job for weapon in weapons}), 1)
+        self.assertNotEqual(ITEMS['golem:bow'].stability, ITEMS['bat:bow'].stability)
+
     def test_each_job_uses_its_distinctive_attack_formula(self):
         stats = (40, 30, 20, 16, 12)
         self.assertEqual(combat_from_stats(stats, '裝甲步兵')['攻擊'], 90)

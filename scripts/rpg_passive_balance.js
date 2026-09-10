@@ -10,10 +10,10 @@ const ENEMY_DEFENSE = 110;
 const DEFENSE_FACTOR = 0.35;
 
 const stats = {
-  infantry: { attack: 576, hp: 1980, crit: 0.45, critDamage: 1.5, stability: [0.6, 1.4] },
+  infantry: { attack: 576, hp: 1980, crit: 0.45, critDamage: 1.5, stability: [0.8, 1.2] },
   knight: { attack: 392, hp: 2508, crit: 0.45, critDamage: 1.25, stability: [0.8, 1.2] },
-  archer: { attack: 480, hp: 1452, crit: 0.72, critDamage: 1.75, stability: [0.75, 1.25] },
-  monk: { attack: 392, hp: 1452, healing: 734, crit: 0.61, critDamage: 1.25, stability: [0.9, 1.1] },
+  archer: { attack: 480, hp: 1452, crit: 0.72, critDamage: 1.75, stability: [0.8, 1.2] },
+  monk: { attack: 392, hp: 1452, healing: 734, crit: 0.61, critDamage: 1.25, stability: [0.8, 1.2] },
 };
 
 function rng(seed) {

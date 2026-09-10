@@ -13,7 +13,23 @@ from core.rpg_witch_catalog import PROFILE as WITCH_PROFILE
 STAT_NAMES = ('生命力', '力氣', '耐力', '靈巧', '信仰')
 COMBAT_NAMES = ('HP', '攻擊', '防禦', '治療量')
 BASE_SPEED = {'民兵': 50, '裝甲步兵': 45, '騎士': 40, '弓兵': 60, '僧侶': 50}
-STABILITY = {'裝甲步兵': (60, 140), '騎士': (80, 120), '弓兵': (75, 125), '僧侶': (90, 110)}
+# Base damage variance belongs to the equipment source, regardless of profession.
+WEAPON_STABILITY_BY_SOURCE = {
+    'standard': (80, 120),
+    'starter': (80, 120),
+    'golem': (50, 150),
+    'goblin': (60, 140),
+    'bat': (90, 110),
+    'plague': (70, 130),
+    'twin_beast': (60, 140),
+    'whale': (90, 110),
+    'forge': (60, 140),
+    'fungus': (90, 110),
+    'star': (60, 140),
+    'tide': (90, 110),
+    'maze': (80, 120),
+    'noah': (80, 120),
+}
 # Accuracy is an equipment rating.  A weapon's rating follows the content
 # level it is designed for; monsters use the same scale for evasion.
 WEAPON_ACCURACY_BY_STAGE = (10, 20, 50, 90)
@@ -142,14 +158,14 @@ class InventoryEntry:
 
 ITEMS = {}
 ITEMS['starter:club'] = Item('木棒', '武器', '', 0, (0, 0, 0, 0, 0),
-                              (0, 4, 6, 0), (80, 120), sell_price=0, transferable=False)
+                              (0, 4, 6, 0), WEAPON_STABILITY_BY_SOURCE['starter'], sell_price=0, transferable=False)
 for job in JOBS:
     for stage, prefix in enumerate(PREFIXES):
         for slot_index, (slot, names) in enumerate((('武器', WEAPONS), ('套裝', SUITS))):
             key = f'{job}:{stage}:{slot}'
             ITEMS[key] = Item(prefix + names[job], slot, job, stage, (0, 0, 0, 0, 0),
                               SHOP_EQUIPMENT[job][stage][slot_index],
-                              STABILITY[job] if slot == '武器' else (100, 100),
+                              WEAPON_STABILITY_BY_SOURCE['standard'] if slot == '武器' else (100, 100),
                               (0, 500, 1500, 4000)[stage],
                               speed=stage * 5 if slot == '武器' else 0,
                               accuracy=WEAPON_ACCURACY_BY_STAGE[stage] if slot == '武器' else 0,
@@ -168,13 +184,13 @@ for index, name in enumerate(('魔物心核', '裂牙指環', '岩鱗徽章', '�
 
 # Golem-exclusive equipment: regular-stage requirements, no shop price or supplies.
 ITEMS['golem:hammer'] = Item('鐵核重鎚', '武器', '裝甲步兵', 1, (0, 0, 0, 0, 0),
-                            (41, 50, 9, 0), (50, 150), accuracy=20)
+                            (41, 50, 9, 0), WEAPON_STABILITY_BY_SOURCE['golem'], accuracy=20)
 ITEMS['golem:sword_shield'] = Item('鐵核劍盾', '武器', '騎士', 1, (0, 0, 0, 0, 0),
-                                  (71, 41, 17, 0), (70, 130), accuracy=20)
+                                  (71, 41, 17, 0), WEAPON_STABILITY_BY_SOURCE['golem'], accuracy=20)
 ITEMS['golem:bow'] = Item('鐵弦重弓', '武器', '弓兵', 1, (0, 0, 0, 0, 0),
-                         (0, 36, 0, 0), (65, 135), accuracy=20)
+                         (0, 36, 0, 0), WEAPON_STABILITY_BY_SOURCE['golem'], accuracy=20)
 ITEMS['golem:staff'] = Item('鐵核祈禱杖', '武器', '僧侶', 1, (0, 0, 0, 0, 0),
-                           (0, 41, 0, 38), (85, 115), accuracy=20)
+                           (0, 41, 0, 38), WEAPON_STABILITY_BY_SOURCE['golem'], accuracy=20)
 
 
 for job, key, name, bonuses in (
@@ -195,7 +211,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '掠奪者權杖', (0, 47, 0, 26)),
 ):
     ITEMS[f'goblin:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                                 bonuses, (60, 140), required_level=20, speed=7, accuracy=20)
+                                 bonuses, WEAPON_STABILITY_BY_SOURCE['goblin'], required_level=20, speed=7, accuracy=20)
 
 
 ITEMS['fox:pendant'] = Item('月影墜飾', '飾品', '', 1, (0, 0, 0, 0, 0),
@@ -207,7 +223,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '血翼權杖', (0, 34, 0, 32)),
 ):
     ITEMS[f'bat:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0),
-                              bonuses, STABILITY[job], required_level=20, speed=7,
+                              bonuses, WEAPON_STABILITY_BY_SOURCE['bat'], required_level=20, speed=7,
                               accuracy=20, lifesteal=3)
 
 
@@ -231,7 +247,7 @@ for job, key, name, bonuses in (
     ('僧侶', 'staff', '瘟心權杖', (0, 53, 0, 48)),
 ):
     ITEMS[f'plague:{key}'] = Item(name, '武器', job, 1, (0, 0, 0, 0, 0), bonuses,
-                                 STABILITY[job], required_level=30,
+                                 WEAPON_STABILITY_BY_SOURCE['plague'], required_level=30,
                                  speed=8, accuracy=30,
                                  vulnerable_chance=5, vulnerable_percent=10)
 
@@ -244,7 +260,7 @@ for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
     ('弓兵', 'archer', '蒼焰長弓', (0, 59, 0, 0), '炎翎獵裝', (239, 18, 51, 0)),
 ):
     ITEMS[f'twin_beast:{key}:weapon'] = Item(
-        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
+        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, WEAPON_STABILITY_BY_SOURCE['twin_beast'],
         required_level=40, speed=9, accuracy=40)
     ITEMS[f'twin_beast:{key}:suit'] = Item(
         suit_name, '套裝', job, 2, (0, 0, 0, 0, 0), suit_combat, required_level=40)
@@ -254,7 +270,7 @@ for job, key, weapon_name, weapon_combat, suit_name, suit_combat in (
     ('僧侶', 'monk', '潮鳴權杖', (0, 62, 0, 65), '深海僧袍', (239, 0, 51, 52)),
 ):
     ITEMS[f'whale:{key}:weapon'] = Item(
-        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, STABILITY[job],
+        weapon_name, '武器', job, 2, (0, 0, 0, 0, 0), weapon_combat, WEAPON_STABILITY_BY_SOURCE['whale'],
         required_level=40, speed=9, accuracy=40)
     ITEMS[f'whale:{key}:suit'] = Item(
         suit_name, '套裝', job, 2, (0, 0, 0, 0, 0), suit_combat, required_level=40)
@@ -281,42 +297,42 @@ SET_BONUSES = {
 
 for key, item in {
     'forge:infantry:weapon': Item('熔脈重斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
-                                  (96, 119, 20, 0), STABILITY['裝甲步兵'], required_level=50,
+                                  (96, 119, 20, 0), WEAPON_STABILITY_BY_SOURCE['forge'], required_level=50,
                                   speed=11, accuracy=60, set_id='molten_vein'),
     'forge:infantry:suit': Item('熔脈戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
                                 (383, 20, 81, 0), required_level=50, set_id='molten_vein'),
     'forge:knight:weapon': Item('爐心劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
-                                (178, 95, 41, 0), STABILITY['騎士'], required_level=50,
+                                (178, 95, 41, 0), WEAPON_STABILITY_BY_SOURCE['forge'], required_level=50,
                                 speed=11, accuracy=60, set_id='furnace_heart'),
     'forge:knight:suit': Item('爐心重鎧', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
                               (428, 0, 98, 0), required_level=50, set_id='furnace_heart'),
     'fungus:archer:weapon': Item('孢影長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
-                                 (0, 90, 0, 0), STABILITY['弓兵'], required_level=50,
+                                 (0, 90, 0, 0), WEAPON_STABILITY_BY_SOURCE['fungus'], required_level=50,
                                  speed=11, accuracy=60, set_id='spore_shadow'),
     'fungus:archer:suit': Item('孢影獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
                                (351, 26, 63, 0), required_level=50, set_id='spore_shadow'),
     'fungus:monk:weapon': Item('霧祈權杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
-                               (0, 95, 0, 99), STABILITY['僧侶'], required_level=50,
+                               (0, 95, 0, 99), WEAPON_STABILITY_BY_SOURCE['fungus'], required_level=50,
                                speed=11, accuracy=60, set_id='mist_prayer'),
     'fungus:monk:suit': Item('霧祈僧袍', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
                              (351, 0, 63, 78), required_level=50, set_id='mist_prayer'),
     'star:infantry:weapon': Item('星鑄戰斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
-                                 (121, 151, 25, 0), STABILITY['裝甲步兵'], required_level=60,
+                                 (121, 151, 25, 0), WEAPON_STABILITY_BY_SOURCE['star'], required_level=60,
                                  speed=12, accuracy=60, set_id='starforged'),
     'star:infantry:suit': Item('星鑄戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
                                (484, 26, 101, 0), required_level=60, set_id='starforged'),
     'star:archer:weapon': Item('逐星長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
-                               (0, 114, 0, 0), STABILITY['弓兵'], required_level=60,
+                               (0, 114, 0, 0), WEAPON_STABILITY_BY_SOURCE['star'], required_level=60,
                                speed=12, accuracy=60, set_id='star_chaser'),
     'star:archer:suit': Item('逐星獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
                              (437, 33, 76, 0), required_level=60, set_id='star_chaser'),
     'tide:knight:weapon': Item('逆潮劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
-                               (227, 120, 52, 0), STABILITY['騎士'], required_level=60,
+                               (227, 120, 52, 0), WEAPON_STABILITY_BY_SOURCE['tide'], required_level=60,
                                speed=12, accuracy=60, set_id='reverse_tide'),
     'tide:knight:suit': Item('逆潮重鎧', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
                              (545, 0, 125, 0), required_level=60, set_id='reverse_tide'),
     'tide:monk:weapon': Item('潮祀權杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
-                             (0, 120, 0, 126), STABILITY['僧侶'], required_level=60,
+                             (0, 120, 0, 126), WEAPON_STABILITY_BY_SOURCE['tide'], required_level=60,
                              speed=12, accuracy=60, set_id='tide_rite'),
     'tide:monk:suit': Item('潮祀僧袍', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
                            (437, 0, 76, 101), required_level=60, set_id='tide_rite'),
@@ -330,7 +346,7 @@ ELITE_CRYSTAL_SLOTS = ('outline', 'color', 'source')
 for key, item in {
     'maze:infantry:weapon': Item(
         '未竟戰繪・斷彩戰斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
-        (137, 171, 28, 0), STABILITY['裝甲步兵'], required_level=60,
+        (137, 171, 28, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
         speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:infantry:suit': Item(
         '未竟戰繪・重彩戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
@@ -338,7 +354,7 @@ for key, item in {
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:knight:weapon': Item(
         '未竟守望・界框劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
-        (257, 136, 59, 0), STABILITY['騎士'], required_level=60,
+        (257, 136, 59, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
         speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:knight:suit': Item(
         '未竟守望・定框重甲', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
@@ -346,7 +362,7 @@ for key, item in {
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:archer:weapon': Item(
         '未竟追彩・流彩長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
-        (0, 129, 0, 0), STABILITY['弓兵'], required_level=60,
+        (0, 129, 0, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
         speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:archer:suit': Item(
         '未竟追彩・風描獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
@@ -354,7 +370,7 @@ for key, item in {
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:monk:weapon': Item(
         '未竟聖像・調色聖杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
-        (0, 136, 0, 142), STABILITY['僧侶'], required_level=60,
+        (0, 136, 0, 142), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
         speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:monk:suit': Item(
         '未竟聖像・祈彩法衣', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
@@ -442,7 +458,7 @@ for job, slug, weapon_name, weapon_combat, suit_name, suit_combat in (
     for slot, name, combat in (('武器', weapon_name, weapon_combat), ('套裝', suit_name, suit_combat)):
         base_key = f'noah:{slug}:{"weapon" if slot == "武器" else "suit"}'
         base = Item(name, slot, job, 2, (0, 0, 0, 0, 0), combat,
-                    STABILITY[job] if slot == '武器' else (100, 100),
+                    WEAPON_STABILITY_BY_SOURCE['noah'] if slot == '武器' else (100, 100),
                     required_level=45, socket_base=base_key,
                     accuracy=45 if slot == '武器' else 0,
                     description='可在漢娜的裁縫所使用噴漆染色。')
