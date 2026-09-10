@@ -262,6 +262,7 @@ class TotalRaidStore:
     def __init__(self, store):
         self.db = store.db
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_total_raids (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, category_id INTEGER NOT NULL,
                 channel_id INTEGER NOT NULL UNIQUE, status TEXT NOT NULL, data TEXT NOT NULL)''')
@@ -272,6 +273,22 @@ class TotalRaidStore:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_announcements (
                 channel_id INTEGER PRIMARY KEY, day TEXT NOT NULL, message_id INTEGER NOT NULL)''')
             self.db.execute('CREATE TABLE IF NOT EXISTS rpg_witch_rewards (room_id TEXT PRIMARY KEY)')
+            has_daily_rewards = self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rpg_witch_daily_rewards'").fetchone()
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_daily_rewards (
+                user_id INTEGER NOT NULL, day TEXT NOT NULL, room_id TEXT NOT NULL,
+                PRIMARY KEY(user_id,day))''')
+            if not has_daily_rewards:
+                for raw, in self.db.execute('''SELECT raids.data FROM rpg_total_raids AS raids
+                    JOIN rpg_witch_rewards AS rewards ON rewards.room_id=raids.id''').fetchall():
+                    previous = json.loads(raw)
+                    if (previous.get('battle') or {}).get('result') != '勝利':
+                        continue
+                    finished = previous.get('finished_at')
+                    day = (witch_day(finished) if finished is not None
+                           else previous.get('witch_day') or witch_day(previous['created_at']))
+                    self.db.executemany('INSERT OR IGNORE INTO rpg_witch_daily_rewards VALUES (?,?,?)',
+                                        [(uid, day, previous['id']) for uid in previous['members']])
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_channels (
                 guild_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_unpin_queue (
@@ -305,13 +322,27 @@ class TotalRaidStore:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             claimed = self.db.execute('INSERT OR IGNORE INTO rpg_witch_rewards VALUES (?)', (room['id'],))
+            if not claimed.rowcount:
+                saved = self.get(room['id'])
+                if saved and 'reward_text' in saved:
+                    room['reward_text'] = saved['reward_text']
+                return
+            rewarded = []
             if battle.result == '勝利':
                 record_victory(self.db, room['guild_id'], room['members'], battle.ids, room['id'])
-            if claimed.rowcount and battle.result == '勝利':
+                day = witch_day(room.get('finished_at'))
                 for uid in room['members']:
-                    add_owned_item(self.db, room['guild_id'], uid, 'witch:thread', 1)
-            room['reward_text'] = ('每位參戰者獲得 1 個魔女繡線，並解鎖本次三位魔女的刺繡圖樣。'
-                                   if battle.result == '勝利' else '本次未勝，沒有繡線報酬，也不解鎖刺繡。')
+                    daily_claim = self.db.execute('INSERT OR IGNORE INTO rpg_witch_daily_rewards VALUES (?,?,?)',
+                                                  (uid, day, room['id']))
+                    if daily_claim.rowcount:
+                        add_owned_item(self.db, room['guild_id'], uid, 'witch:thread', 1)
+                        rewarded.append(uid)
+                recipients = '、'.join(f'<@{uid}>' for uid in rewarded)
+                room['reward_text'] = ((f'{recipients} 獲得 1 個魔女繡線。' if rewarded else '本次所有參戰者今日皆已領取繡線。')
+                    + ('其餘參戰者今日已領取，不重複發放。' if rewarded and len(rewarded) < len(room['members']) else '')
+                    + '\n繡線每人每天限領一次（台灣時間，以結算日計算）；全員解鎖本次三位魔女的刺繡圖樣。')
+            else:
+                room['reward_text'] = '本次未勝，沒有繡線報酬，也不解鎖刺繡。'
             room['public_pending'] = True
             self.db.execute('UPDATE rpg_total_raids SET status=?,data=? WHERE id=?',
                 (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
@@ -1311,7 +1342,8 @@ class TotalRaidService:
         embed = discord.Embed(title=f'魔女試煉｜{day}', color=0x8B5CF6,
             description='今日出現：\n' + '\n'.join(f'• {PROFILE[k][1]}' for k in ids) +
             '\n\n點擊開房，最多六人。每日台灣時間 00:00 更新；舊公告按鈕也會開啟當日組合。'
-            '\n所有玩家免費入場；勝利每人獲得 1 個不可交易的魔女繡線。')
+            '\n所有玩家免費入場；每日首次勝利獲得 1 個不可交易的魔女繡線。'
+            '\n每人跨房間、跨伺服器每日限領一次，以結算時的台灣日期計算；可重複挑戰。')
         for key in ids:
             embed.add_field(name=PROFILE[key][1], value='\n'.join(
                 f'{label}：{ability}' for label, ability in zip(('一般', '一次魔女化', '二次魔女化'), SPELL_DESCRIPTIONS[key]))
@@ -1319,10 +1351,44 @@ class TotalRaidService:
         embed.set_footer(text='每位魔女同伴首次倒下使魔女化加深一階；每階傷害與治療 +10%，最多二階。')
         return embed
 
+    def witch_announcement_overwrites(self, guild, existing=None):
+        overwrites = {target: discord.PermissionOverwrite.from_pair(*overwrite.pair())
+                      for target, overwrite in (existing or {}).items()}
+        locked = dict(send_messages=False, create_public_threads=False,
+                      create_private_threads=False, send_messages_in_threads=False)
+        for target, overwrite in overwrites.items():
+            if target != guild.me:
+                overwrite.update(**locked)
+        everyone = overwrites.setdefault(guild.default_role, discord.PermissionOverwrite())
+        everyone.update(**locked)
+        bot = overwrites.setdefault(guild.me, discord.PermissionOverwrite())
+        bot.update(view_channel=True, send_messages=True, read_message_history=True,
+                   embed_links=True, manage_channels=True, manage_messages=True,
+                   **({'pin_messages': True} if 'pin_messages' in discord.Permissions.VALID_FLAGS else {}))
+        return overwrites
+
+    async def lock_witch_announcement(self, channel):
+        current = channel.overwrites
+        desired = self.witch_announcement_overwrites(channel.guild, current)
+        if desired != current:
+            await channel.edit(overwrites=desired, reason='鎖定魔女試煉公告頻道發言權限')
+
     async def witch_announcement_channels(self):
         if self.witch_channel_ids:
-            return [channel for cid in sorted(self.witch_channel_ids)
-                    if isinstance(channel := self.bot.get_channel(cid), discord.TextChannel)]
+            channels = []
+            for cid in sorted(self.witch_channel_ids):
+                channel = self.bot.get_channel(cid)
+                if not isinstance(channel, discord.TextChannel):
+                    continue
+                if time.time() < self.witch_channel_retry_at.get(('channel', cid), 0):
+                    continue
+                try:
+                    await self.lock_witch_announcement(channel)
+                    channels.append(channel)
+                except discord.HTTPException:
+                    self.witch_channel_retry_at[('channel', cid)] = time.time() + 300
+                    logger.exception('Cannot lock witch announcement channel: %s', cid)
+            return channels
         # Only create in guilds with an explicitly configured raid category.
         categories = {}
         for cid in sorted(self.category_ids):
@@ -1349,14 +1415,12 @@ class TotalRaidService:
                         guild = category.guild
                         channel = await category.create_text_channel(
                             name='魔女試煉', topic='每日 00:00 公布三位魔女；點擊公告開啟最多六人的魔女試煉。',
-                            overwrites={
+                            overwrites=self.witch_announcement_overwrites(guild, {
                                 guild.default_role: discord.PermissionOverwrite(
-                                    view_channel=True, send_messages=False, read_message_history=True),
-                                guild.me: discord.PermissionOverwrite(
-                                    view_channel=True, send_messages=True, read_message_history=True,
-                                    embed_links=True, manage_channels=True, manage_messages=True,
-                                    **({'pin_messages': True} if 'pin_messages' in discord.Permissions.VALID_FLAGS else {})),
-                            }, reason='建立每日魔女試煉公告頻道')
+                                    view_channel=True, read_message_history=True),
+                            }), reason='建立每日魔女試煉公告頻道')
+                    else:
+                        await self.lock_witch_announcement(channel)
                     with self.repo.db:
                         self.repo.db.execute('''INSERT INTO rpg_witch_channels VALUES (?,?)
                             ON CONFLICT(guild_id) DO UPDATE SET channel_id=excluded.channel_id''',

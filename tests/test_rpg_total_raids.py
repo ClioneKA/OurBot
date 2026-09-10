@@ -34,6 +34,8 @@ class FakeChannel:
         self.mention = f'<#{channel_id}>'
         self.message = SimpleNamespace(id=999, edit=AsyncMock(), pin=AsyncMock(), unpin=AsyncMock())
         self.send = AsyncMock(return_value=self.message)
+        self.overwrites = {}
+        self.edit = AsyncMock()
 
     def get_partial_message(self, _message_id):
         return self.message

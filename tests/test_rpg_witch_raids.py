@@ -17,6 +17,68 @@ from types import SimpleNamespace
 
 
 class WitchRoomTests(TotalRaidRoomTests):
+    def reward_room(self, channel_id, members, finished_at, result='勝利', guild_id=1):
+        room = self.service.repo.create(guild_id, 50, channel_id, members[0], WITCH_BOSS, channel_id)
+        room.update(status='completed', members=members, finished_at=finished_at,
+                    witch_day='2026-09-09', battle={'result': result})
+        self.service.repo.save(room)
+        return room, SimpleNamespace(result=result, ids=['anan', 'noah', 'meruru'])
+
+    async def test_daily_reward_across_rooms_restart_guilds_and_midnight(self):
+        before = datetime(2026, 9, 9, 15, 59, 59, tzinfo=timezone.utc).timestamp()
+        first, battle = self.reward_room(101, [1], before)
+        self.service.repo.finish_witch(first, battle)
+        original_text = first['reward_text']
+        self.service.repo.finish_witch(first, battle)
+        self.assertEqual(first['reward_text'], original_text)
+        self.service.repo = TotalRaidStore(self.store)
+        second, battle = self.reward_room(102, [1, 2], before)
+        self.service.repo.finish_witch(second, battle)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 1)
+        self.assertEqual(self.characters.available_quantity(1, 2, 'witch:thread'), 1)
+        self.assertIn('<@2>', second['reward_text'])
+        self.assertNotIn('<@1>', second['reward_text'])
+        other_guild, battle = self.reward_room(103, [1], before, guild_id=2)
+        self.service.repo.finish_witch(other_guild, battle)
+        self.assertEqual(self.characters.available_quantity(2, 1, 'witch:thread'), 0)
+        next_day, battle = self.reward_room(104, [1], before + 1)
+        self.service.repo.finish_witch(next_day, battle)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 2)
+
+    async def test_loss_does_not_consume_daily_reward_and_failed_grant_rolls_back(self):
+        now = time.time()
+        lost, battle = self.reward_room(101, [1], now, result='敗北')
+        self.service.repo.finish_witch(lost, battle)
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rpg_witch_daily_rewards').fetchone()[0], 0)
+        won, battle = self.reward_room(102, [1, 2], now)
+        real_add = add_owned_item
+        def fail_second(db, guild, uid, item, quantity):
+            if uid == 2:
+                raise RuntimeError('grant failed')
+            return real_add(db, guild, uid, item, quantity)
+        with patch('core.rpg_total_raids.add_owned_item', side_effect=fail_second):
+            with self.assertRaisesRegex(RuntimeError, 'grant failed'):
+                self.service.repo.finish_witch(won, battle)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 0)
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rpg_witch_daily_rewards').fetchone()[0], 0)
+        self.service.repo.finish_witch(won, battle)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 1)
+        self.assertEqual(self.characters.available_quantity(1, 2, 'witch:thread'), 1)
+
+    async def test_existing_paid_rooms_backfill_daily_claims(self):
+        now = time.time()
+        paid, _ = self.reward_room(101, [1], now)
+        lost, _ = self.reward_room(102, [2], now, result='敗北')
+        with self.store.db:
+            self.store.db.executemany('INSERT INTO rpg_witch_rewards VALUES (?)', [(paid['id'],), (lost['id'],)])
+            add_owned_item(self.store.db, 1, 1, 'witch:thread', 1)
+            self.store.db.execute('DROP TABLE rpg_witch_daily_rewards')
+        self.service.repo = TotalRaidStore(self.store)
+        again, battle = self.reward_room(103, [1, 2], now)
+        self.service.repo.finish_witch(again, battle)
+        self.assertEqual(self.characters.available_quantity(1, 1, 'witch:thread'), 1)
+        self.assertEqual(self.characters.available_quantity(1, 2, 'witch:thread'), 1)
+
     def announcement_fixture(self, existing=False):
         guild = SimpleNamespace(id=1, default_role=object(), me=object())
         channel = FakeChannel(80, guild)
@@ -51,6 +113,39 @@ class WitchRoomTests(TotalRaidRoomTests):
             explicit = FakeChannel(90, channel.guild)
             self.bot.channels[90] = explicit
             self.assertEqual(await self.service.witch_announcement_channels(), [explicit])
+        category.create_text_channel.assert_not_awaited()
+        channel.edit.assert_awaited_once()
+        explicit.edit.assert_awaited_once()
+
+    async def test_announcement_lock_preserves_visibility_and_blocks_role_overrides(self):
+        category, channel = self.announcement_fixture(existing=True)
+        role = object()
+        channel.overwrites = {
+            channel.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            role: discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                              send_messages_in_threads=True),
+        }
+        await self.service.lock_witch_announcement(channel)
+        desired = channel.edit.call_args.kwargs['overwrites']
+        self.assertFalse(desired[channel.guild.default_role].view_channel)
+        self.assertTrue(desired[role].view_channel)
+        for target in (channel.guild.default_role, role):
+            for permission in ('send_messages', 'create_public_threads',
+                               'create_private_threads', 'send_messages_in_threads'):
+                self.assertIs(getattr(desired[target], permission), False)
+        self.assertTrue(desired[channel.guild.me].send_messages)
+        self.assertTrue(channel.overwrites[role].send_messages)
+        channel.overwrites = desired
+        await self.service.lock_witch_announcement(channel)
+        channel.edit.assert_awaited_once()
+
+    async def test_existing_channel_lock_failure_backs_off(self):
+        category, channel = self.announcement_fixture(existing=True)
+        channel.edit.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'no permission')
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), patch('core.rpg_total_raids.logger.exception'):
+            self.assertEqual(await self.service.witch_announcement_channels(), [])
+            self.assertEqual(await self.service.witch_announcement_channels(), [])
+        channel.edit.assert_awaited_once()
         category.create_text_channel.assert_not_awaited()
 
     async def test_cache_miss_fetches_before_recreating_deleted_channel(self):
@@ -105,7 +200,8 @@ class WitchRoomTests(TotalRaidRoomTests):
 
     async def setup_witch_room(self):
         host = HashableMember(1, '房主')
-        guild = SimpleNamespace(id=1, get_member=lambda uid: host if uid == 1 else None)
+        guild = SimpleNamespace(id=1, default_role=object(), me=object(),
+                                get_member=lambda uid: host if uid == 1 else None)
         channel = FakeChannel(70, guild)
         channel.delete = AsyncMock()
         self.bot.channels[70] = channel
