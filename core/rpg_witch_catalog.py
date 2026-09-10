@@ -1,4 +1,4 @@
-"""Fixed witch profiles: four-player HP, independent of player level."""
+"""Raw witch profiles; encounter level and party scaling are applied at creation."""
 PROFILES = (('ema', '櫻羽艾瑪', 13165, 1420, 220, 56, 105, 8, 10, 'execute'),
  ('hiro', '二階堂希羅', 10177, 1276, 280, 62, 110, 12, 12, 'rewind'),
  ('anan', '夏目安安', 10177, 1275, 145, 43, 105, 5, 5, 'control'),

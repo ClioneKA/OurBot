@@ -14,3 +14,7 @@ local_designs/
 docs/balance/cooldown-comparison.json
 docs/balance/cooldown-comparison.md
 docs/balance/cooldown-summary.md
+
+# Local witch simulation data and reports.
+docs/witch-*.json
+docs/witch-*.md

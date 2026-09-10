@@ -6,12 +6,13 @@ from itertools import combinations
 from core.rpg_battle import Rule, Skill
 from core.rpg_total_battle import ACTION_ATTACK, ACTION_SKILL, TotalRaidError, dump_total_battle, load_total_battle
 from core.rpg_witch_battle import witch_battle_from_participants, ACTION_DEFEND, STATE_FIELDS, WITCH_RHYTHMS
-from core.rpg_witch_catalog import IDS
+from core.rpg_witch_catalog import IDS, PROFILE
+from core.rpg_witch_scaling import witch_stat_scales
 from dataclasses import asdict
 
 
 class WitchBattleTests(unittest.TestCase):
-    def make(self, phase=0, ids=('anan', 'noah', 'meruru'), seed=44):
+    def make(self, phase=0, ids=('anan', 'noah', 'meruru'), seed=44, levels=None):
         jobs = ('裝甲步兵', '裝甲步兵', '騎士', '弓兵', '弓兵', '僧侶')
         participants = [dict(id=i, name=f'玩家{i}', state=dict(
             job=job, level=50, stage=2, total=(100, 100, 100, 100, 100), speed=50,
@@ -20,9 +21,60 @@ class WitchBattleTests(unittest.TestCase):
             equipped={'武器': 'starter:club'}),
             rules=[asdict(Rule(slot, slot, True, 'always', 'lowest', skill_id=slot))
                    for slot in (1, 2, 3)]) for i, job in enumerate(jobs, 1)]
+        if levels is not None:
+            participants = participants[:len(levels)]
+            for participant, level in zip(participants, levels):
+                participant['state']['level'] = level
         b = witch_battle_from_participants(participants, ids, seed=seed)
         b.dead_once.update(('noah', 'meruru')[:phase])
         return b
+
+    def test_party_average_scales_witches_and_retains_party_size(self):
+        for levels in ([1], [25] * 4, [50] * 4, [100] * 6, [10, 21, 70]):
+            with self.subTest(levels=levels):
+                b = self.make(levels=levels)
+                average = sum(levels) / len(levels)
+                scales = witch_stat_scales(average, len(levels))
+                self.assertEqual(b.mechanics['witch_average_level'], average)
+                self.assertEqual(b.mechanics['witch_party_size'], len(levels))
+                for witch in b.witches():
+                    _, _, hp, atk, defense, speed, accuracy, evasion, critical, _ = PROFILE[witch.job]
+                    self.assertEqual(witch.stats['HP'], max(1, round(hp * scales['HP'])))
+                    self.assertEqual(witch.hp, witch.stats['HP'])
+                    self.assertEqual(witch.stats['攻擊'], max(1, round(atk * scales['攻擊'])))
+                    self.assertEqual(witch.stats['防禦'], max(1, round(defense * scales['防禦'])))
+                    self.assertEqual((witch.speed, witch.stats['命中率'], witch.stats['閃避率'], witch.stats['暴擊率']),
+                                     (speed, accuracy, evasion, critical))
+
+    def test_scaled_difficulty_survives_casualty_and_reload(self):
+        b = self.make(levels=[10, 30, 35])
+        original = [dict(w.stats) for w in b.witches()]
+        b.living(0)[0].hp = 0
+        restored = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        self.assertEqual(restored.mechanics['witch_average_level'], 25)
+        self.assertEqual(restored.mechanics['witch_party_size'], 3)
+        self.assertEqual(restored.mechanics['witch_stat_scales'], b.mechanics['witch_stat_scales'])
+        self.assertEqual([w.stats for w in restored.witches()], original)
+
+    def test_mixed_levels_use_the_average_of_starting_participants(self):
+        balanced = self.make(levels=[50] * 4)
+        mixed = self.make(levels=[10, 30, 50, 110])
+        self.assertEqual([w.stats for w in balanced.witches()], [w.stats for w in mixed.witches()])
+
+    def test_legacy_save_keeps_original_enemy_stats(self):
+        b = self.make()
+        for key in ('witch_party_size', 'witch_scaling_version', 'witch_stat_scales'):
+            b.mechanics.pop(key)
+        for w in b.witches():
+            w.stats['HP'], w.stats['攻擊'], w.stats['防禦'] = PROFILE[w.job][2:5]
+            w.hp = w.stats['HP'] // 2
+        original = [(dict(w.stats), w.hp) for w in b.witches()]
+        restored = load_total_battle(json.loads(json.dumps(dump_total_battle(b))))
+        self.assertEqual([(w.stats, w.hp) for w in restored.witches()], original)
+
+    def test_empty_party_is_rejected(self):
+        with self.assertRaises(TotalRaidError):
+            witch_battle_from_participants([], ('anan', 'noah', 'meruru'))
 
     def test_confirm_edit_timeout_and_takeover(self):
         b = self.make()

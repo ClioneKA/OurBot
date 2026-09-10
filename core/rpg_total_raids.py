@@ -1359,6 +1359,7 @@ class TotalRaidService:
         if room['boss'] == WITCH_BOSS:
             embed.title = f'魔女試煉｜{room["witch_day"]} #{room["number"]}'
             embed.description = ('、'.join(PROFILE[k][1] for k in room['witch_ids']) +
+                '\n難度依開戰時隊伍平均等級與人數決定；人數增加會提高魔女血量與部分攻擊力。'
                 '\n由房主開始，所有玩家免費入場。每日首次勝利取得 1 個魔女繡線。\n每回合 120 秒，全員確認可提早結算；連續三回合逾時轉自動戰鬥，可隨時接回手動。'
                 '\n自動戰鬥依技能欄順序使用已啟用且冷卻完成的技能，優先選血量比例最低的合法目標；無可用技能則普攻。')
         embed.add_field(name='房主', value=f'<@{room["host_id"]}>')
@@ -1375,6 +1376,7 @@ class TotalRaidService:
             description='今日出現：\n' + '\n'.join(f'• {PROFILE[k][1]}' for k in ids) +
             '\n\n點擊開房，最多六人。每日台灣時間 00:00 更新；舊公告按鈕也會開啟當日組合。'
             '\n所有玩家免費入場；每日首次勝利獲得 1 個不可交易的魔女繡線。'
+            '\n難度依開戰時隊伍平均等級與人數決定；人數增加會提高魔女血量與部分攻擊力。'
             '\n每人跨房間、跨伺服器每日限領一次，以結算時的台灣日期計算；可重複挑戰。')
         for key in ids:
             embed.add_field(name=PROFILE[key][1], value='\n'.join(
@@ -1604,6 +1606,10 @@ class TotalRaidService:
         embed = discord.Embed(
             title=f'{"魔女試煉" if room["boss"] == WITCH_BOSS else room["boss"]} #{room["number"]}｜{status}', color=0xDC2626,
         )
+        if isinstance(battle, WitchRaidBattle) and 'witch_average_level' in battle.mechanics:
+            embed.description = f'開戰時隊伍平均等級：Lv.{battle.mechanics["witch_average_level"]:g}'
+            if 'witch_party_size' in battle.mechanics:
+                embed.description += f'｜參戰 {battle.mechanics["witch_party_size"]} 人'
         enemy_lines = []
         for fighter in (item for item in battle.fighters if item.team == 1 and
                         (not isinstance(battle, WitchRaidBattle) or item.job in battle.ids or item.hp > 0)):

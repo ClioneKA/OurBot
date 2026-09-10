@@ -6,6 +6,7 @@ from core.rpg_battle import ALLY_EFFECTS, FIXED_TARGETS, Fighter, dump_battle, l
 from core.rpg_total_battle import ActionChoice, EnemyIntent, TotalRaidBattle, TotalRaidError, ACTION_ATTACK, ACTION_SKILL
 from core.rpg_witch_catalog import IDS, PROFILE
 from core.rpg_witch_mechanics import WitchBattleV9, SUPPORT
+from core.rpg_witch_scaling import SCALING_VERSION, witch_stat_scales
 
 ACTION_DEFEND = 'defend'
 STATE_FIELDS = '''ids order pending next_cast link_next active_link reactions reacted stun_next objects
@@ -346,15 +347,24 @@ class WitchRaidBattle(WitchBattleV9):
 
 
 def witch_battle_from_participants(participants, ids, seed=None):
+    if not participants:
+        raise TotalRaidError('隊伍中沒有可參戰的玩家。')
+    average_level = sum(p['state']['level'] for p in participants) / len(participants)
+    scales = witch_stat_scales(average_level, len(participants))
     snapshot = raid_battle(participants, {'kind': '總力戰參戰資料', 'name': '總力戰參戰資料', 'strength': 1.0}, seed)
     players = [p for p in snapshot.fighters if p.team == 0]
     enemies = []
     for key in ids:
         _, name, hp, atk, defense, speed, accuracy, evasion, critical, _ = PROFILE[key]
-        enemies.append(Fighter(name, 1, key, {'HP': round(hp * (.4 + .15 * len(players))),
-            '攻擊': atk, '防禦': defense, '治療量': 0, '命中率': accuracy, '閃避率': evasion,
+        enemies.append(Fighter(name, 1, key, {'HP': max(1, round(hp * scales['HP'])),
+            '攻擊': max(1, round(atk * scales['攻擊'])), '防禦': max(1, round(defense * scales['防禦'])),
+            '治療量': 0, '命中率': accuracy, '閃避率': evasion,
             '暴擊率': critical}, speed, [], is_boss=True))
     battle = WitchRaidBattle(players + enemies, ids, seed)
+    battle.mechanics['witch_average_level'] = average_level
+    battle.mechanics['witch_party_size'] = len(participants)
+    battle.mechanics['witch_scaling_version'] = SCALING_VERSION
+    battle.mechanics['witch_stat_scales'] = scales
     battle.log.extend(snapshot.log)
     return battle
 

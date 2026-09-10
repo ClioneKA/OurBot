@@ -184,6 +184,9 @@ class WitchRoomTests(TotalRaidRoomTests):
             room = self.service.repo.get(room['id'])
             self.assertEqual(load_total_battle(room['battle']).round, 1)
             # Simulate a persisted result whose Discord delivery was interrupted.
+            # Level scaling allows this player to survive the opening round.
+            room['status'] = 'completed'
+            room['battle']['result'] = '敗北'
             room['public_pending'] = True
             self.service.repo.save(room)
             await self.service.cleanup_witch_rooms(room['created_at']+1)
