@@ -1678,7 +1678,10 @@ class TotalRaidService:
             name = label if index == 1 else f'{label}（{index}）'
             embed.add_field(name=name, value=chunk, inline=False)
         if not battle.result:
-            embed.add_field(name='行動期限', value=f'<t:{int(room["round_deadline"])}:R>', inline=False)
+            if isinstance(battle, WitchRaidBattle) and battle.ready_to_resolve():
+                embed.add_field(name='回合推進', value='全員已就緒，約 5 秒內自動結算下一回合。', inline=False)
+            else:
+                embed.add_field(name='行動期限', value=f'<t:{int(room["round_deadline"])}:R>', inline=False)
             embed.set_footer(text='點擊下方按鈕開啟私人面板；✅ 僅表示已完成選擇，不公開實際行動。')
         else:
             embed.set_footer(text='測試版不發放獎勵；頻道目前保留供檢查戰報。')
@@ -1705,14 +1708,18 @@ class TotalRaidService:
                 room['status'] = 'cancelled'
                 self.repo.save(room)
                 continue
-            if room['status'] != 'running' or now < room.get('round_deadline', now + 1):
+            if room['status'] != 'running':
                 continue
             async with self.lock(room['id']):
                 room = self.repo.get(room['id'])
-                if not room or room['status'] != 'running' or now < room.get('round_deadline', now + 1):
+                if not room or room['status'] != 'running':
                     continue
                 try:
-                    await self._resolve(room, load_total_battle(room['battle']), timeout=True)
+                    battle = load_total_battle(room['battle'])
+                    ready = isinstance(battle, WitchRaidBattle) and battle.ready_to_resolve()
+                    if not ready and now < room.get('round_deadline', now + 1):
+                        continue
+                    await self._resolve(room, battle, timeout=not ready)
                 except discord.NotFound:
                     room['status'] = 'cancelled'
                     self.repo.save(room)

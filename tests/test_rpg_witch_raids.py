@@ -319,6 +319,38 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertEqual(b.round, 1)
         self.assertIn(1, b.auto_players)
 
+    async def test_all_auto_advances_each_tick_until_manual_takeover_after_restart(self):
+        room, _, _ = await self.setup_witch_room()
+        b = battle_fixtures.WitchBattleTests().make()
+        for actor in b.living(0):
+            actor.hp = actor.stats['HP'] = 1000000
+            b.enable_auto(actor.user_id)
+        room.update(status='running', battle=dump_total_battle(b), members=list(range(1, 7)),
+                    round_deadline=time.time() + 120)
+        self.service.repo.save(room)
+        # Read persisted auto mode just as the background loop does after a restart.
+        self.service = TotalRaidService(self.cog)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), \
+                patch.object(self.service, 'announce_witches', new=AsyncMock()), \
+                patch.object(self.service, 'cleanup_witch_rooms', new=AsyncMock()):
+            for expected_round in (1, 2):
+                await self.service.tick()
+                saved = self.service.repo.get(room['id'])
+                b = load_total_battle(saved['battle'])
+                self.assertEqual(b.round, expected_round)
+                self.assertGreater(saved['round_deadline'], time.time())
+                self.assertTrue(all(value == 0 for value in b.timeout_streak.values()))
+            await self.service.takeover_action(room['id'], 1, expected_round=3)
+            await self.service.tick()
+            b = load_total_battle(self.service.repo.get(room['id'])['battle'])
+            self.assertEqual(b.round, 2)
+            self.assertEqual(b.waiting_player_ids(), {1})
+            # Once the manual player confirms, the mixed group also advances.
+            await self.service.submit_action(room['id'], 1, 'defend', None, None, expected_round=3)
+            await self.service.confirm_action(room['id'], 1, expected_round=3)
+            b = load_total_battle(self.service.repo.get(room['id'])['battle'])
+            self.assertEqual(b.round, 3)
+
     async def test_private_panel_keeps_each_players_draft_and_validates_round_and_target(self):
         room, host, channel = await self.setup_witch_room()
         b = battle_fixtures.WitchBattleTests().make()
