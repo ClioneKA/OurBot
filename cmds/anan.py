@@ -1,6 +1,8 @@
 import asyncio
 import io
 import os
+import time
+import logging
 from collections import defaultdict
 import discord
 from discord import app_commands
@@ -9,6 +11,7 @@ from discord.ext import commands
 from core.classes import Cog_Extension
 from core.gen_image import generate_image
 from core.tts import get_cached_sound
+from core.settings import get_settings
 from datetime import datetime
 
 FFMPEG_PATH = os.getenv("FFMPEG_PATH")
@@ -19,6 +22,42 @@ class Anan(Cog_Extension):
     def __init__(self, bot):
         super().__init__(bot)
         self.voice_locks = defaultdict(asyncio.Lock)
+        self.connection_locks = defaultdict(asyncio.Lock)
+        self.invitation_attempts = {}
+
+    def invitation_channel(self, message):
+        if not get_settings().ai.media.voice_invitations_enabled or message.guild is None:
+            return None
+        if not isinstance(message.author, discord.Member):
+            return None
+        state = message.author.voice
+        channel = state.channel if state else None
+        if not isinstance(channel, discord.VoiceChannel) or channel == message.guild.afk_channel:
+            return None
+        if message.guild.voice_client is not None or message.guild.me is None:
+            return None
+        permissions = channel.permissions_for(message.guild.me)
+        if not permissions.view_channel or not permissions.connect:
+            return None
+        if channel.user_limit and len(channel.members) >= channel.user_limit:
+            return None
+        cooldown = get_settings().ai.media.voice_invitation_cooldown_seconds
+        if time.monotonic() - self.invitation_attempts.get(message.guild.id, float('-inf')) < cooldown:
+            return None
+        return channel
+
+    async def accept_voice_invitation(self, message, channel_id):
+        async with self.connection_locks[message.guild.id]:
+            channel = self.invitation_channel(message)
+            if channel is None or channel.id != channel_id:
+                return "吾輩本來想過去，但現在沒辦法加入你的語音頻道，待會再邀吾輩吧。"
+            self.invitation_attempts[message.guild.id] = time.monotonic()
+            try:
+                await channel.connect(timeout=20, reconnect=False, self_deaf=True)
+            except (discord.DiscordException, asyncio.TimeoutError, OSError):
+                logging.getLogger(__name__).exception("受邀加入語音頻道失敗")
+                return "吾輩想過去，但語音連線失敗了……待會再試吧。"
+        return None
 
     async def _require_administrator(
         self, interaction: discord.Interaction
@@ -40,19 +79,23 @@ class Anan(Cog_Extension):
         """connect bot to vc"""
         if not await self._require_administrator(interaction):
             return
+        await interaction.response.defer()
+        async with self.connection_locks[interaction.guild_id]:
+            await self._connect_manually(interaction)
+
+    async def _connect_manually(self, interaction):
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
         if interaction.user.voice is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "你沒有在任何語音頻道內", delete_after=5
             )
             return
         elif voice is None:
-            await interaction.response.defer()
             vc = interaction.user.voice.channel
             await vc.connect()
             await interaction.followup.send("來了", delete_after=5)
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "吾輩已經在語音頻道裡了", delete_after=5
             )
 
@@ -62,17 +105,23 @@ class Anan(Cog_Extension):
         """disconnect bot from vc"""
         if not await self._require_administrator(interaction):
             return
+        await interaction.response.defer()
+        async with self.connection_locks[interaction.guild_id]:
+            await self._leave_manually(interaction)
+
+    async def _leave_manually(self, interaction):
         voice = discord.utils.get(self.bot.voice_clients, guild=interaction.guild)
         if voice is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "吾輩沒有在任何語音頻道內", delete_after=5
             )
         else:
+            self.invitation_attempts[interaction.guild.id] = time.monotonic()
             picture = discord.File(
                 "images/ananout.png",
                 filename="安安出去.jpg",
             )
-            await interaction.response.send_message(file=picture, delete_after=5)
+            await interaction.followup.send(file=picture, delete_after=5)
             await voice.disconnect()
 
     @app_commands.command(name="安安傳話筒", description="請安安幫你說不想直接說的話")

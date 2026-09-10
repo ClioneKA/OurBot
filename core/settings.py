@@ -70,6 +70,8 @@ class MemorySettings:
 
 @dataclass(frozen=True)
 class MediaSettings:
+    voice_invitations_enabled: bool = field(default=True, metadata={})
+    voice_invitation_cooldown_seconds: int = field(default=300, metadata={'minimum': 1, 'maximum': 86400})
     image_replies_enabled: bool = field(default=True, metadata={})
     voice_replies_enabled: bool = field(default=True, metadata={})
     direct_only: bool = field(default=True, metadata={})

@@ -35,7 +35,7 @@ summary_enabled = true
 summary_interval = 10
 # 單次最多整理的聊天片段。
 summary_batch_size = 200
-summary_max_output_tokens = 2000
+summary_max_output_tokens = 4000
 # 留空時沿用 ai.model。
 summary_model = ""
 # 好感度每天最多自動變動幾次；範圍固定為 -100 到 100。
@@ -46,6 +46,9 @@ guild_memory_limit = 30
 guild_memory_prompt_limit = 20
 
 [ai.media]
+# 直接邀請安安時，讓她自行決定是否加入邀請者的語音頻道。
+voice_invitations_enabled = true
+voice_invitation_cooldown_seconds = 300
 # 人格回覆媒體。預設只有直接提及／回覆時能使用，隨機插話只傳文字。
 image_replies_enabled = true
 voice_replies_enabled = true

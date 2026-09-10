@@ -29,6 +29,8 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.ai.memory.list_for_user.return_value = []
         self.ai.memory.get_impression.return_value = None
         self.ai.memory.list_guild_memories.return_value = []
+        self.ai.memory.list_personal_memories.return_value = []
+        self.ai.memory.relevant_personal_memories.return_value = []
         self.ai.direct_reply_chance = 1.0
         self.ai.reply_chance = 1.0
         self.ai.client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(
@@ -264,7 +266,9 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.ai.memory.list_guild_memories.return_value = []
         self.ai.memory.get_impression.return_value = None
         self.ai.client.responses.create.return_value = SimpleNamespace(output_text=(
-            '{"participants":[{"key":"p1","impression":"吾輩不討厭他。"}],'
+            '{"participants":[{"key":"p1","impression":"吾輩不討厭他。",'
+            '"memories":[{"id":0,"action":"upsert","category":"recent",'
+            '"content":"今天邀吾輩看電影","basis":"explicit","importance":3,"evidence_ids":[7]}]}],'
             '"guild_memories":[]}'
         ))
 
@@ -274,6 +278,56 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(self.ai.persona, instructions)
         self.assertIn("不得寫成 GPT", instructions)
         self.assertIn("內向、戒備、敏感", instructions)
+        saved = self.ai.memory.complete_impression_summary.call_args.kwargs
+        self.assertEqual(saved['personal_candidates'][2][0]['evidence_ids'], [7])
+        self.assertEqual(saved['observations'][0].id, 7)
+
+    async def test_voice_invitation_acceptance_and_failure_feedback(self):
+        anan = SimpleNamespace(
+            invitation_channel=Mock(return_value=SimpleNamespace(id=50)),
+            accept_voice_invitation=AsyncMock(return_value=None),
+        )
+        self.ai.bot.get_cog = Mock(return_value=anan)
+        self.ai.client.responses.create.return_value = SimpleNamespace(output_text=(
+            '{"text":"好，吾輩過去。","output":"text","join_voice":true}'
+        ))
+        message = self.message(content='安安，上線陪我吧', mentioned=True)
+        reply = await self.ai._generate_reply(message, message.content, 'direct')
+        anan.accept_voice_invitation.assert_awaited_once_with(message, 50)
+        self.assertEqual(reply.text, '好，吾輩過去。')
+        anan.accept_voice_invitation.return_value = '語音連線失敗'
+        reply = await self.ai._generate_reply(message, message.content, 'direct')
+        self.assertEqual(reply.text, '語音連線失敗')
+        self.assertEqual(self.ai.histories[10][-1]['content'], '語音連線失敗')
+
+    async def test_voice_invitation_refusal_ambient_and_unavailable_do_not_join(self):
+        anan = SimpleNamespace(
+            invitation_channel=Mock(return_value=SimpleNamespace(id=50)),
+            accept_voice_invitation=AsyncMock(),
+        )
+        self.ai.bot.get_cog = Mock(return_value=anan)
+        self.ai.client.responses.create.return_value = SimpleNamespace(output_text=(
+            '{"text":"今天先不要。","output":"text","join_voice":false}'
+        ))
+        message = self.message()
+        await self.ai._generate_reply(message, message.content, 'direct')
+        self.ai.client.responses.create.return_value = SimpleNamespace(output_text=(
+            '{"text":"好。","output":"text","join_voice":true}'
+        ))
+        await self.ai._generate_reply(message, message.content, 'ambient')
+        anan.invitation_channel.return_value = None
+        await self.ai._generate_reply(message, message.content, 'direct')
+        anan.accept_voice_invitation.assert_not_awaited()
+
+    async def test_personal_memories_are_included_in_reply_context(self):
+        self.ai.memory.relevant_personal_memories.return_value = [
+            {'content': '不喝咖啡', 'basis': 'explicit', 'category': 'preference'}
+        ]
+        message = self.message(content='要喝什麼')
+        await self.ai._generate_reply(message, message.content, 'direct')
+        instructions = self.ai.client.responses.create.call_args.kwargs['instructions']
+        self.assertIn('不喝咖啡', instructions)
+        self.ai.memory.relevant_personal_memories.assert_called_once_with(1, 2, '要喝什麼')
 
 
 if __name__ == "__main__":

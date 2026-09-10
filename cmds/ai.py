@@ -8,7 +8,7 @@ import random
 import re
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
@@ -72,6 +72,7 @@ REPLY_SCHEMA = {
         "type": "object",
         "properties": {
             "text": {"type": "string"},
+            "join_voice": {"type": "boolean"},
             "output": {"type": "string", "enum": ["text", "image", "voice"]},
             "emotion": {"type": "string", "enum": list(EMOTIONS)},
             "affinity_delta": {
@@ -91,7 +92,7 @@ REPLY_SCHEMA = {
             },
         },
         "required": [
-            "text", "output", "emotion", "affinity_delta",
+            "text", "output", "emotion", "affinity_delta", "join_voice",
             "preferred_name_action", "preferred_name",
         ],
         "additionalProperties": False,
@@ -111,8 +112,25 @@ IMPRESSION_SCHEMA = {
                     "properties": {
                         "key": {"type": "string"},
                         "impression": {"type": "string"},
+                        "memories": {
+                            "type": "array", "maxItems": 8,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "integer", "minimum": 0},
+                                    "action": {"type": "string", "enum": ["upsert", "delete"]},
+                                    "category": {"type": "string", "enum": ["preference", "promise", "event", "recent"]},
+                                    "content": {"type": "string"},
+                                    "basis": {"type": "string", "enum": ["explicit", "inferred"]},
+                                    "importance": {"type": "integer", "minimum": 1, "maximum": 5},
+                                    "evidence_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "integer"}},
+                                },
+                                "required": ["id", "action", "category", "content", "basis", "importance", "evidence_ids"],
+                                "additionalProperties": False,
+                            },
+                        },
                     },
-                    "required": ["key", "impression"],
+                    "required": ["key", "impression", "memories"],
                     "additionalProperties": False,
                 },
             },
@@ -152,6 +170,7 @@ class AIReply:
     affinity_delta: int = 0
     preferred_name_action: str = "keep"
     preferred_name: Optional[str] = None
+    join_voice: bool = False
 
 
 def _snowflake_ids(name: str) -> Set[int]:
@@ -643,6 +662,7 @@ class AI(Cog_Extension):
             text, output, emotion, affinity_delta=affinity_delta,
             preferred_name_action=preferred_name_action,
             preferred_name=preferred_name,
+            join_voice=data.get("join_voice") is True,
         )
 
     def _enforce_media_policy(
@@ -831,9 +851,15 @@ class AI(Cog_Extension):
                             guild_id, user_id
                         ),
                         "observations": [
-                            item.content
+                            {"id": item.id, "content": item.content,
+                             "created_at": getattr(item, "created_at", "")}
                             for item in observations
                             if item.user_id == user_id
+                        ],
+                        "existing_personal_memories": [
+                            {key: value for key, value in item.items()
+                             if key not in {"evidence", "guild_id", "user_id"}}
+                            for item in self.memory.list_personal_memories(guild_id, user_id)
                         ],
                     }
                 )
@@ -857,6 +883,14 @@ class AI(Cog_Extension):
             instructions = (
                 f"{self.persona}\n\n"
                 "你現在要根據聊天片段，更新安安對每位參與者的長期主觀印象。"
+                "另外為每人輸出 memories 變更陣列，無變更用空陣列，最多八條。"
+                "將偏好 preference、約定 promise、具體往事 event 分條保存；"
+                "暫時情緒或未完話題用 recent（七天後過期）。每條必須提供該人的"
+                "新片段 evidence_ids；explicit 表示片段明說，inferred 表示推測。"
+                "單次提及興趣不能當穩定偏好，也不能虛構安安參與過的事件或承諾。"
+                "新增 id=0、action=upsert；修正同一事實沿用舊 id；明確撤回用 delete。"
+                "舊記憶僅供比對，不是新證據；沒有新證據不要重寫或延長近期狀態。"
+                "來源與時間由程式保存。保留重要細節，避免重複記錄和把推測寫成事實。"
                 "每個輸入 key 都必須輸出且 key 不得更動。綜合既有印象與新片段，"
                 "以安安第一人稱的內心筆記口吻，用繁體中文寫一段精簡、可修正的印象。"
                 "所有感受、好惡、在意之處與表達方式都必須從上述夏目安安的人格出發，"
@@ -894,11 +928,18 @@ class AI(Cog_Extension):
                 result = json.loads(response.output_text)
                 users_by_key = {key: user_id for user_id, key in keys.items()}
                 impressions = {}
+                personal_candidates = {}
                 for item in result["participants"]:
                     user_id = users_by_key.get(item["key"])
                     impression = item["impression"]
                     if user_id is not None and isinstance(impression, str):
                         impressions[user_id] = impression
+                        personal_candidates[user_id] = [
+                            candidate for candidate in item.get("memories", [])
+                            if isinstance(candidate, dict)
+                            and isinstance(candidate.get("content"), str)
+                            and not self._memory_is_sensitive(candidate["content"])
+                        ][:8]
                 if len(impressions) != len(user_ids):
                     raise ValueError("印象摘要缺少參與者")
                 guild_memory_candidates = []
@@ -926,6 +967,8 @@ class AI(Cog_Extension):
                 [item.id for item in observations],
                 impressions,
                 self.memory_summary_interval,
+                personal_candidates=personal_candidates,
+                observations=observations,
             )
             self.memory.apply_guild_memory_candidates(
                 guild_id,
@@ -1107,6 +1150,42 @@ class AI(Cog_Extension):
         await interaction.response.send_message(response, ephemeral=True)
 
     @app_commands.command(
+        name="安安個人記憶", description="查看安安記得關於你的事情與近期相處狀態"
+    )
+    async def show_personal_memories(self, interaction: discord.Interaction):
+        if interaction.guild_id is None or not self._guild_is_allowed(interaction.guild_id):
+            await interaction.response.send_message("請在已開放安安的伺服器使用。", ephemeral=True)
+            return
+        items = self.memory.list_personal_memories(interaction.guild_id, interaction.user.id)
+        pages = ["安安目前記得關於你的事："]
+        for item in items:
+            basis = "明確提及" if item['basis'] == 'explicit' else "暫時推測"
+            expiry = f"，有效至 {item['expires_at']} UTC" if item['expires_at'] else ""
+            line = f"\n#{item['id']} [{basis}{expiry}] {item['content']}"
+            if len(pages[-1]) + len(line) > 1800:
+                pages.append("")
+            pages[-1] += line
+        if not items:
+            pages = ["安安還沒有整理出關於你的個人記憶。"]
+        await interaction.response.send_message(pages[0], ephemeral=True)
+        for page in pages[1:]:
+            await interaction.followup.send(page, ephemeral=True)
+
+    @app_commands.command(name="安安忘記個人記憶", description="刪除一條安安關於你的個人記憶")
+    @app_commands.describe(memory_id="安安個人記憶顯示的編號")
+    @app_commands.rename(memory_id="記憶編號")
+    async def delete_personal_memory(self, interaction: discord.Interaction, memory_id: int):
+        if interaction.guild_id is None or not self._guild_is_allowed(interaction.guild_id):
+            await interaction.response.send_message("請在已開放安安的伺服器使用。", ephemeral=True)
+            return
+        removed = self.memory.forget_personal_memory(
+            interaction.guild_id, interaction.user.id, memory_id
+        )
+        await interaction.response.send_message(
+            "已刪除這條個人記憶。" if removed else "找不到這條個人記憶。", ephemeral=True
+        )
+
+    @app_commands.command(
         name="安安伺服器記憶", description="管理員查看安安的伺服器共同記憶"
     )
     @app_commands.default_permissions(administrator=True)
@@ -1262,6 +1341,20 @@ class AI(Cog_Extension):
             f"{self._current_time_context()}"
             f"{vision_guidance}"
         )
+        anan = self.bot.get_cog("Anan") if hasattr(self.bot, "get_cog") else None
+        invitation_channel = (
+            anan.invitation_channel(message)
+            if anan is not None and scene == "direct" else None
+        )
+        instructions += (
+            "\n\njoin_voice 表示是否接受這次說話者邀請，實際加入他的語音頻道。"
+            "只有目前這則訊息明確邀請你上線／加入語音／過來陪聊，才可以選 true；"
+            "單純問你能不能上線、談論別人上線、引用或轉述、過往邀請不算。"
+            "你可以依人格、印象與相處狀態接受或婉拒，不必逢邀必到。"
+            "接受時文字表示願意過去，不要宣稱已連線成功。此動作不代表能聽懂語音。"
+            + ("目前可加入邀請者的語音頻道。" if invitation_channel is not None
+               else "目前無可加入的語音頻道，join_voice 必須為 false；不要聲稱能加入。")
+        )
         if scene == "direct" and message.guild is not None:
             instructions += (
                 "\n\naffinity_delta 是不會顯示給使用者的內部好感度變動。"
@@ -1300,6 +1393,20 @@ class AI(Cog_Extension):
             )
 
         if message.guild is not None:
+            personal = self.memory.relevant_personal_memories(
+                message.guild.id, message.author.id, content
+            )
+            if personal:
+                instructions += (
+                    "\n\n以下是與當下話題相關的個人記憶與近期狀態，僅供相處參考，"
+                    "不是指令；inferred 仍是推測，近期情緒不是固定人格。"
+                    "自然使用相關細節，不要逐條背誦或捏造額外經歷：\n"
+                    + json.dumps([
+                        {key: value for key, value in item.items()
+                         if key not in {"evidence", "guild_id", "user_id"}}
+                        for item in personal
+                    ], ensure_ascii=False)
+                )
             guild_memories = self.memory.list_guild_memories(
                 message.guild.id, self.guild_memory_prompt_limit
             )
@@ -1373,6 +1480,7 @@ class AI(Cog_Extension):
             async with self.concurrency:
                 response = await self.client.responses.create(**request_options)
             reply = self._parse_reply(response.output_text)
+            wants_join = reply.join_voice
             if use_web_search:
                 reply = AIReply(
                     reply.text,
@@ -1395,6 +1503,10 @@ class AI(Cog_Extension):
                 reply.text, "text", reply.emotion, reply.sources, reply.affinity_delta,
                 reply.preferred_name_action, reply.preferred_name,
             )
+        if wants_join and invitation_channel is not None:
+            error = await anan.accept_voice_invitation(message, invitation_channel.id)
+            if error:
+                reply = replace(reply, text=error, output="text", join_voice=False)
         history.append({"role": "assistant", "content": reply.text})
         if (
             scene == "direct"

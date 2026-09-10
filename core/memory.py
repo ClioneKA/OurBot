@@ -1,4 +1,5 @@
 import re
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ class ImpressionObservation:
     id: int
     user_id: int
     content: str
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,22 @@ class MemoryStore:
                     reply_count INTEGER NOT NULL DEFAULT 0
                 );
 
+                CREATE TABLE IF NOT EXISTS personal_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    basis TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    importance INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT,
+                    UNIQUE(guild_id, user_id, content)
+                );
+                CREATE INDEX IF NOT EXISTS idx_personal_memories_owner
+                ON personal_memories(guild_id, user_id);
+
                 CREATE TABLE IF NOT EXISTS guild_memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER NOT NULL,
@@ -160,6 +178,107 @@ class MemoryStore:
                 ON guild_memories(guild_id, importance DESC, updated_at DESC);
                 """
             )
+
+    def list_personal_memories(self, guild_id: int, user_id: int) -> List[dict]:
+        with self.lock, self._connection() as connection:
+            rows = connection.execute(
+                """SELECT * FROM personal_memories WHERE guild_id = ? AND user_id = ?
+                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                ORDER BY importance DESC, updated_at DESC, id DESC LIMIT 100""",
+                (guild_id, user_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def relevant_personal_memories(self, guild_id: int, user_id: int,
+                                   query: str, limit: int = 6) -> List[dict]:
+        def terms(text):
+            text = text.lower()
+            return set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2}", text)) | {
+                text[i:i + 2] for i in range(len(text) - 1)
+                if all('\u4e00' <= c <= '\u9fff' for c in text[i:i + 2])
+            }
+        query_terms = terms(query)
+        items = self.list_personal_memories(guild_id, user_id)
+        items.sort(key=lambda item: (
+            len(query_terms & terms(item['content'])),
+            item['category'] == 'recent', item['importance'], item['updated_at'], item['id']
+        ), reverse=True)
+        return items[:max(1, min(limit, 20))]
+
+    def forget_personal_memory(self, guild_id: int, user_id: int, memory_id: int) -> bool:
+        with self.lock, self._connection() as connection:
+            return connection.execute(
+                "DELETE FROM personal_memories WHERE guild_id = ? AND user_id = ? AND id = ?",
+                (guild_id, user_id, memory_id),
+            ).rowcount > 0
+
+    def _apply_personal_candidates(self, connection, guild_id, user_id, candidates,
+                                   observations):
+        evidence_by_id = {item.id: item.content for item in observations
+                          if item.user_id == user_id}
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            evidence_ids = item.get('evidence_ids', [])
+            if (not isinstance(evidence_ids, list) or not 1 <= len(evidence_ids) <= 4
+                    or any(type(i) is not int or i not in evidence_by_id for i in evidence_ids)):
+                continue
+            memory_id = item.get('id', 0)
+            if type(memory_id) is not int or memory_id < 0:
+                continue
+            if memory_id and not connection.execute(
+                "SELECT id FROM personal_memories WHERE id = ? AND guild_id = ? AND user_id = ?",
+                (memory_id, guild_id, user_id),
+            ).fetchone():
+                continue
+            if item.get('action') == 'delete':
+                connection.execute(
+                    "DELETE FROM personal_memories WHERE id = ? AND guild_id = ? AND user_id = ?",
+                    (memory_id, guild_id, user_id),
+                )
+                continue
+            category, basis = item.get('category'), item.get('basis')
+            if (item.get('action') != 'upsert'
+                    or category not in {'preference', 'promise', 'event', 'recent'}
+                    or basis not in {'explicit', 'inferred'}):
+                continue
+            content = item.get('content')
+            importance = item.get('importance')
+            if not isinstance(content, str) or type(importance) is not int:
+                continue
+            content = ' '.join(content.split())[:300]
+            if not content:
+                continue
+            times = {item.id: getattr(item, 'created_at', '') for item in observations}
+            evidence = json.dumps([{'observation_id': i, 'content': evidence_by_id[i],
+                                    'created_at': times.get(i, '')}
+                                   for i in dict.fromkeys(evidence_ids)], ensure_ascii=False)
+            expires = "+7 days" if category == 'recent' else None
+            values = (category, content, basis, evidence, max(1, min(importance, 5)), expires)
+            if memory_id:
+                connection.execute(
+                    """UPDATE OR IGNORE personal_memories SET category=?, content=?, basis=?,
+                    evidence=?, importance=?, expires_at=datetime('now', ?),
+                    updated_at=CURRENT_TIMESTAMP WHERE id=? AND guild_id=? AND user_id=?""",
+                    (*values, memory_id, guild_id, user_id),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO personal_memories
+                    (category, content, basis, evidence, importance, expires_at, guild_id, user_id)
+                    VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?, ?)
+                    ON CONFLICT(guild_id, user_id, content) DO UPDATE SET
+                    category=excluded.category, basis=excluded.basis, evidence=excluded.evidence,
+                    importance=excluded.importance, expires_at=excluded.expires_at,
+                    updated_at=CURRENT_TIMESTAMP""", (*values, guild_id, user_id),
+                )
+        connection.execute(
+            """DELETE FROM personal_memories WHERE guild_id=? AND user_id=? AND
+            (expires_at <= CURRENT_TIMESTAMP OR id NOT IN
+            (SELECT id FROM personal_memories WHERE guild_id=? AND user_id=?
+            ORDER BY importance DESC, updated_at DESC, id DESC LIMIT ?))""",
+            (guild_id, user_id, guild_id, user_id, self.max_per_user),
+        )
 
     def list_guild_memories(
         self, guild_id: int, limit: int = 30
@@ -347,7 +466,7 @@ class MemoryStore:
         with self.lock, self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT id, user_id, content FROM impression_observations
+                SELECT id, user_id, content, created_at FROM impression_observations
                 WHERE guild_id = ? ORDER BY id ASC LIMIT ?
                 """,
                 (guild_id, max(1, min(limit, 1000))),
@@ -360,10 +479,16 @@ class MemoryStore:
         observation_ids: List[int],
         impressions: Dict[int, str],
         reply_interval: int,
+        personal_candidates: Optional[Dict[int, list]] = None,
+        observations: Optional[List[ImpressionObservation]] = None,
     ) -> None:
         """原子化保存印象、移除已處理片段，並扣除一個摘要週期。"""
         reply_interval = max(1, reply_interval)
         with self.lock, self._connection() as connection:
+            for user_id, candidates in (personal_candidates or {}).items():
+                self._apply_personal_candidates(
+                    connection, guild_id, user_id, candidates, observations or []
+                )
             for user_id, impression in impressions.items():
                 impression = " ".join(impression.strip().split())[:500]
                 if not impression:
