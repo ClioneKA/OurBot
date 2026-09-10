@@ -20,6 +20,47 @@ from tests.test_rpg_painted_maze_battle import participant
 
 
 class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
+    async def test_host_can_force_start_without_readiness(self):
+        room = self.repo.get(self.room['id'])
+        view = self.service.room_view(room)
+        self.assertFalse(view.advance.disabled)
+        self.assertEqual(view.advance.label, '房主強制開始')
+        with self.assertRaisesRegex(PaintedMazeError, '全隊'):
+            await self.service.advance(room['id'], SimpleNamespace(id=2))
+        with self.assertRaisesRegex(PaintedMazeError, '全隊'):
+            self.repo.start_battle(room['id'], 2, {}, deadline=time.time() + 2)
+        started = await self.service.advance(room['id'], SimpleNamespace(id=1), expected_index=0)
+        self.assertTrue(started['battle'])
+
+    async def test_last_contract_vote_immediately_refreshes_next_phase(self):
+        room = self.repo.record_boss_victory(self.room['id'], 1)
+        view = ContractVoteView(self.service, room)
+        selected = room['contract_vote']['candidates'][0]
+        for uid in (1, 2):
+            interaction = SimpleNamespace(user=SimpleNamespace(id=uid),
+                response=SimpleNamespace(defer=AsyncMock()), followup=SimpleNamespace(send=AsyncMock()))
+            view.choice._values = [selected]
+            await view.choice.callback(interaction)
+            if uid == 1:
+                self.assertEqual(self.repo.get(room['id'])['status'], 'contract')
+        saved = self.repo.get(room['id'])
+        self.assertEqual(saved['status'], 'running')
+        self.assertEqual(saved['contracts'], [selected])
+        self.assertLess(saved['last_contract_vote']['resolved_at'], saved['last_contract_vote']['deadline'])
+        self.assertEqual(self.service._refresh.call_args.args[0]['status'], 'running')
+
+    async def test_party_crystals_are_labelled_as_socketed_separately_from_loot(self):
+        room = self.repo.get(self.room['id'])
+        room['requires_entry'] = True
+        room['stage'] = 2
+        room['participants'][0]['state']['crystal_effects'] = [{}, {}]
+        embed = self.service.room_embed(room)
+        party = next(field.value for field in embed.fields if field.name == '隊伍狀態')
+        self.assertIn('鑲嵌結晶 ×2', party)
+        self.assertIn('鑲嵌結晶 ×0', party)
+        loot = next(field.value for field in embed.fields if field.name == '每人累積掉落（離場時發放）')
+        self.assertIn('結晶 ×2', loot)
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -350,8 +391,7 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(room['rest_ready'], [])
         self.repo.rest_participant(room['id'], 1, expected_index=3)
         with self.assertRaisesRegex(PaintedMazeError, '全隊'):
-            await self.service.advance(room['id'], SimpleNamespace(id=1))
-        self.ready_all()
+            await self.service.advance(room['id'], SimpleNamespace(id=2))
         started = await self.service.advance(room['id'], SimpleNamespace(id=1))
         self.assertTrue(started['battle'])
         self.assertTrue(started['final_entered'])

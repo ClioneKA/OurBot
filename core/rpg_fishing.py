@@ -32,23 +32,26 @@ DURATIONS = {
     'long': ('8 小時', 8 * 60 * 60, 20),
 }
 
+# XP targets farming's base hourly yield at each plot unlock (200/1200/3600/8000),
+# using six catches per two hours and the 6% chance of 1.5x rare-fish XP.
+# Rod bonuses and farming mastery are excluded from this unlock-level baseline.
 SPOTS = {
-    'pond': FishingSpot('中庭許願池', 1, 100, (
+    'pond': FishingSpot('中庭許願池', 1, 65, (
         ('fishing:pond:common', 52), ('fishing:pond:rare', 6),
         ('fishing:pond:weed', 18), ('fishing:pond:coin', 15),
         ('fishing:pond:rod', 3), ('fishing:pond:line', 3),
         ('fishing:pond:hook', 3)), 'fishing:pond:rare'),
-    'lake': FishingSpot('魔女島湖泊', 20, 300, (
+    'lake': FishingSpot('魔女島湖泊', 20, 390, (
         ('fishing:lake:common', 50), ('fishing:lake:rare', 6),
         ('fishing:lake:weed', 20), ('fishing:lake:coin', 15),
         ('fishing:lake:rod', 3), ('fishing:lake:line', 3),
         ('fishing:lake:hook', 3)), 'fishing:lake:rare'),
-    'waterway': FishingSpot('監獄地下水路', 40, 600, (
+    'waterway': FishingSpot('監獄地下水路', 40, 1165, (
         ('fishing:waterway:common', 48), ('fishing:waterway:rare', 6),
         ('fishing:waterway:weed', 22), ('fishing:waterway:coin', 15),
         ('fishing:waterway:rod', 3), ('fishing:waterway:line', 3),
         ('fishing:waterway:hook', 3)), 'fishing:waterway:rare'),
-    'bay': FishingSpot('魔女島海灣', 60, 1000, (
+    'bay': FishingSpot('魔女島海灣', 60, 2590, (
         ('fishing:bay:common', 48), ('fishing:bay:rare', 6),
         ('fishing:bay:weed', 22), ('fishing:bay:coin', 15),
         ('fishing:bay:rod', 3), ('fishing:bay:line', 3),

@@ -500,7 +500,7 @@ class PaintedMazeStore:
             vote = room.get('contract_vote') if room else None
             if not room or room['status'] != 'contract' or not vote:
                 raise PaintedMazeError('目前沒有待結算的色彩契約。')
-            if now < vote['deadline']:
+            if now < vote['deadline'] and not all(str(uid) in vote['votes'] for uid in room['members']):
                 raise PaintedMazeError('色彩契約投票尚未截止。')
             counts = {candidate: 0 for candidate in vote['candidates']}
             for choice in vote['votes'].values():
@@ -535,7 +535,7 @@ class PaintedMazeStore:
                 if room.get('final_vote', {}).get('result') != 'enter':
                     raise PaintedMazeError('必須先由全隊投票決定進入尾王。')
                 room['final_entered'] = True
-            if set(room.get('rest_ready', ())) != set(room['members']):
+            if actor_id != room['host_id'] and set(room.get('rest_ready', ())) != set(room['members']):
                 raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
             room.update(battle=battle, battle_deadline=deadline)
             self._save(room)
@@ -645,7 +645,8 @@ class PaintedMazeStore:
         now = time.time() if now is None else now
         due = [room['id'] for room in self.active()
                if room['status'] == 'contract'
-               and room.get('contract_vote', {}).get('deadline', now + 1) <= now]
+               and (room.get('contract_vote', {}).get('deadline', now + 1) <= now
+                    or all(str(uid) in room['contract_vote']['votes'] for uid in room['members']))]
         return [self.resolve_contract(room_id, now=now) for room_id in due]
 
     @staticmethod

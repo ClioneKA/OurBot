@@ -75,7 +75,7 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_fishing.time.time', return_value=1900), \
              patch('core.rpg_fishing_view.time.time', return_value=1900):
             await self.view.handle(self.interaction, 'claim')
-        self.assertEqual(self.fishing.state(1, 1)['xp'], 200)
+        self.assertEqual(self.fishing.state(1, 1)['xp'], 130)
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
         self.assertIn('共捕獲 2 次', embed.fields[-1].value)
         await self.view.handle(self.interaction, 'notify')

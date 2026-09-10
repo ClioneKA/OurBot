@@ -81,8 +81,8 @@ class MazeProgressView(discord.ui.View):
         self.service, self.room_id = service, room_id
         room = service.repo.get(room_id)
         self.index = room['boss_index']
-        self.advance.label = '開始尾王戰鬥' if final else '開始本場戰鬥'
-        self.advance.disabled = set(room.get('rest_ready', [])) != set(room['members'])
+        all_ready = set(room.get('rest_ready', [])) == set(room['members'])
+        self.advance.label = ('開始尾王戰鬥' if final else '開始本場戰鬥') if all_ready else '房主強制開始'
 
     @discord.ui.button(label='調整技能', style=discord.ButtonStyle.primary,
                        custom_id='painted_maze:rest:skills')
@@ -134,16 +134,23 @@ class ContractVoteView(discord.ui.View):
     @discord.ui.select(placeholder='選擇要投票的色彩契約', min_values=1, max_values=1,
                        custom_id='painted_maze:contract:vote')
     async def choice(self, interaction, select):
+        await interaction.response.defer(ephemeral=True)
         try:
-            room = self.service.repo.cast_contract_vote(
-                self.room_id, interaction.user.id, select.values[0])
+            async with self.service.lock(self.room_id):
+                room = self.service.repo.cast_contract_vote(
+                    self.room_id, interaction.user.id, select.values[0])
+                count = len(room['contract_vote']['votes'])
+                complete = all(str(uid) in room['contract_vote']['votes'] for uid in room['members'])
+                if complete:
+                    room = self.service.repo.resolve_contract(self.room_id)
+                await self.service._refresh(room)
         except CharacterError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
         name = COLOR_CONTRACTS[select.values[0]]['name']
-        await interaction.response.send_message(
-            f'已投給【{name}】；截止前可重新選擇。'
-            f'（目前 {len(room["contract_vote"]["votes"])} 人已投票）', ephemeral=True)
+        await interaction.followup.send(
+            f'已投給【{name}】；' + ('全員已投票，契約已結算。' if complete else
+            f'全員投完或截止前可重新選擇。（目前 {count} 人已投票）'), ephemeral=True)
 
 
 class PaintedMazeService:
@@ -298,7 +305,7 @@ class PaintedMazeService:
             if room['status'] != 'running' or room.get('battle'):
                 raise PaintedMazeError('目前不能推進繪境迷宮。')
             self.repo.rest_participant(room_id, member.id, expected_index=expected_index)
-            if set(room.get('rest_ready', [])) != set(room['members']):
+            if member.id != room['host_id'] and set(room.get('rest_ready', [])) != set(room['members']):
                 raise PaintedMazeError('請等待全隊在休息點確認準備完成。')
             if room['boss_index'] == len(room['paintings']):
                 battle = build_final_battle(room)
@@ -500,7 +507,7 @@ class PaintedMazeService:
             hp, maximum = state.get('hp', 0), state.get('max_hp', 0)
             party_lines.append(
                 f'{"💀" if hp <= 0 else "🟢"} <@{user_id}>：{hp:,}/{maximum:,} HP'
-                f'｜{len(crystals)} 顆結晶')
+                f'｜鑲嵌結晶 ×{len(crystals)}')
         if party_lines:
             embed.add_field(name='隊伍狀態', value='\n'.join(party_lines)[:1024], inline=False)
         if not room.get('requires_entry', True):
@@ -532,14 +539,14 @@ class PaintedMazeService:
             for offset in range(0, len(lines), 3):
                 embed.add_field(name=f'第 {vote["round"]} 次契約投票（{offset // 3 + 1}）',
                                 value='\n\n'.join(lines[offset:offset + 3]), inline=False)
-            embed.add_field(name='截止', value=f'<t:{int(vote["deadline"])}:R>')
+            embed.add_field(name='截止', value=f'<t:{int(vote["deadline"])}:R>；全員投票後立即結算。')
         elif room['status'] == 'running':
             embed.add_field(name='怪物特性', value=encounter_traits(room), inline=False)
             if not room.get('final_vote') or room['final_vote'].get('result') == 'enter':
                 ready = set(room.get('rest_ready', []))
                 embed.add_field(name='戰前休息點', value=(
                     '可調整主動／被動技能與自動施放規則；職業、裝備及攜帶效果固定。\n'
-                    '全隊確認準備後才能繼續，修改技能會取消自己的準備狀態。'), inline=False)
+                    '房主可直接強制開始；其他隊員需等全隊準備完成。修改技能會取消自己的準備狀態。'), inline=False)
                 embed.add_field(name=f'準備狀態 {len(ready)}/{len(room["members"])}', value='\n'.join(
                     f'{"✅" if uid in ready else "⏳"} <@{uid}>' for uid in room['members']), inline=False)
             if room['boss_index'] < len(room['paintings']):

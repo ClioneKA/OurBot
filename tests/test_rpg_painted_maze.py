@@ -162,10 +162,10 @@ class PaintedMazeStoreTests(unittest.TestCase):
         self.repo.cast_contract_vote(room['id'], 1, first, now=150)
         changed = self.repo.cast_contract_vote(room['id'], 1, second, now=160)
         self.assertEqual(changed['contract_vote']['votes'], {'1': second})
-        self.repo.cast_contract_vote(room['id'], 2, second, now=170)
         with self.assertRaisesRegex(PaintedMazeError, '尚未截止'):
-            self.repo.resolve_contract(room['id'], now=199)
-        resolved = self.repo.resolve_contract(room['id'], now=200)
+            self.repo.resolve_contract(room['id'], now=169)
+        self.repo.cast_contract_vote(room['id'], 2, second, now=170)
+        resolved = self.repo.resolve_contract(room['id'], now=170)
         self.assertEqual((resolved['status'], resolved['contracts']), ('running', [second]))
         self.assertIsNone(resolved['contract_vote'])
         self.assertEqual(resolved['last_contract_vote']['result'], second)

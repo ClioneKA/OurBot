@@ -61,11 +61,11 @@ class FishingTests(unittest.TestCase):
             self.fishing.claim(1, 1, now=1899)
         self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
         result = self.fishing.claim(1, 1, now=1900)
-        self.assertEqual((result['catches'], result['xp']), (2, 200))
+        self.assertEqual((result['catches'], result['xp']), (2, 130))
         self.assertEqual(result['items'], {'fishing:pond:common': 2})
         replay = self.fishing.claim(1, 1, now=1901)
         self.assertTrue(replay['replayed'])
-        self.assertEqual(self.fishing.state(1, 1)['xp'], 200)
+        self.assertEqual(self.fishing.state(1, 1)['xp'], 130)
         self.assertEqual(self.characters.inventory_counts(1, 1)['fishing:pond:common'], 2)
 
     def test_rare_xp_rod_bonus_and_magic_weight(self):
@@ -80,7 +80,7 @@ class FishingTests(unittest.TestCase):
         self.assertTrue(result['bonus'])
         self.assertEqual(result['catches'], 3)
         self.assertEqual(result['items']['fishing:pond:rare'], 2)
-        self.assertEqual(result['xp'], 400)
+        self.assertEqual(result['xp'], 259)
         picked = _weighted_pick(SPOTS['lake'].loot, SPOTS['lake'].rare_item, 1.1,
                                 SequenceRandom([0.54]))
         self.assertEqual(picked, 'fishing:lake:rare')
@@ -112,7 +112,7 @@ class FishingTests(unittest.TestCase):
             reloaded = Fishing(other, SequenceRandom([0.9] + [0.0] * 6))
             self.assertEqual(reloaded.state(1, 1)['session']['ready_at'], 7210)
             result = reloaded.claim(1, 1, now=7210)
-            self.assertEqual((result['catches'], result['xp']), (6, 1800))
+            self.assertEqual((result['catches'], result['xp']), (6, 2340))
         finally:
             other.close()
 
@@ -125,7 +125,7 @@ class FishingTests(unittest.TestCase):
         self.assertEqual((started['spot'].name, started['base_catches']), ('監獄地下水路', 2))
         self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
         result = self.fishing.claim(1, 1, now=1800)
-        self.assertEqual((result['items'], result['xp']), ({'fishing:waterway:common': 2}, 1200))
+        self.assertEqual((result['items'], result['xp']), ({'fishing:waterway:common': 2}, 2330))
 
     def test_level_mastery_adds_items_without_xp_and_uses_dispatch_snapshot(self):
         self.fishing.state(1, 1)
@@ -142,7 +142,7 @@ class FishingTests(unittest.TestCase):
         result = self.fishing.claim(1, 1, now=1800)
         self.assertEqual((result['catches'], result['mastery_percent'], result['mastery_bonus']), (2, 30, 1))
         self.assertEqual(result['items'], {'fishing:pond:common': 3})
-        self.assertEqual(result['xp'], 200)
+        self.assertEqual(result['xp'], 130)
 
     def test_crafting_is_atomic_and_uses_one_of_each_part(self):
         self.fishing.state(1, 1)
@@ -184,7 +184,7 @@ class FishingTests(unittest.TestCase):
         result = self.fishing.claim(1, 1, now=1800)
         self.assertTrue(result['bonus'])
         self.assertFalse(result['bonus_catch'])
-        self.assertEqual((result['catches'], result['xp']), (2, 200))
+        self.assertEqual((result['catches'], result['xp']), (2, 130))
         self.assertEqual(result['big_fish']['name'], '百年池王鯉')
         self.assertEqual(result['big_fish']['weight_g'], 6000)
         record = self.fishing.records(1, 1)[0]
@@ -214,7 +214,7 @@ class FishingTests(unittest.TestCase):
         self.assertEqual(started['spot'].name, '魔女島海灣')
         self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
         result = self.fishing.claim(1, 1, now=1800)
-        self.assertEqual((result['items'], result['xp']), ({'fishing:bay:common': 2}, 2000))
+        self.assertEqual((result['items'], result['xp']), ({'fishing:bay:common': 2}, 5180))
 
     def test_exact_sale_prices_transfer_and_notifications(self):
         self.grant('fishing:pond:coin', 'fishing:pond:common')
