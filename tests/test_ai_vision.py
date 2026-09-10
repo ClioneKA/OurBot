@@ -329,6 +329,18 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('不喝咖啡', instructions)
         self.ai.memory.relevant_personal_memories.assert_called_once_with(1, 2, '要喝什麼')
 
+    async def test_stored_affinity_changes_cooperation_guidance_for_invitation(self):
+        message = self.message(content='上線陪我吧', mentioned=True)
+        for score, expected in [(-80, '配合意願很低'), (0, '配合意願普通'), (90, '配合意願最高')]:
+            with self.subTest(score=score):
+                self.ai.memory.get_affinity.return_value = score
+                await self.ai._generate_reply(message, message.content, 'direct')
+                instructions = self.ai.client.responses.create.call_args.kwargs['instructions']
+                self.assertIn(expected, instructions)
+                self.assertIn('這個意願也適用於 join_voice', instructions)
+                self.assertIn('目前無可加入的語音頻道，join_voice 必須為 false', instructions)
+                self.assertNotIn('好感度只能影響語氣', instructions)
+
 
 if __name__ == "__main__":
     unittest.main()

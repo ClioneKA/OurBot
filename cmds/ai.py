@@ -388,6 +388,31 @@ class AI(Cog_Extension):
             return "親近", "表現溫暖、信任與熟悉感，可以更主動關心對方。"
         return "珍視", "表現高度信任和重視，但不要過度依賴、佔有或假裝真人關係。"
 
+    @staticmethod
+    def _affinity_cooperation_guidance(score: int) -> str:
+        if score <= -51:
+            willingness = "配合意願很低：對陪聊、上線或額外幫忙的邀請通常婉拒，除非這次有讓你願意接受的具體理由。"
+        elif score <= -11:
+            willingness = "配合意願偏低：對需要額外投入的請求較猶豫，禮貌、體貼且不費力的邀請仍可以接受。"
+        elif score <= 20:
+            willingness = "配合意願普通：依請求是否合理、費力程度與當下心情決定，不刻意討好或刁難。"
+        elif score <= 50:
+            willingness = "配合意願偏高：合理且不費力的請求通常願意答應，也更願意接受陪聊或上線邀請。"
+        elif score <= 80:
+            willingness = "配合意願很高：對合理的請求與上線邀請優先考慮答應，願意多花一些心力，但仍可因具體情境拒絕。"
+        else:
+            willingness = "配合意願最高：很重視對方提出的合理請求與上線邀請，通常樂意答應；不必每次先拒絕再答應，也不是無條件服從。"
+        return (
+            "\n\n以下配合意願必須影響你對這次請求的實際接受或拒絕，不只是語氣："
+            + willingness
+            + "相同請求與情境下，關係越親近越傾向接受。仍要綜合人格、個人印象、"
+            "近期相處狀態與這次請求的負擔；不要捏造行程或往事當拒絕理由。"
+            "一般事實提問仍正常回答，不要因低好感故意答錯。"
+            "若是語音邀請，這個意願也適用於 join_voice；接受時選 true，拒絕時選 false，"
+            "且文字態度與動作必須一致，只有程式允許加入時才能選 true。"
+            "不要向對方提及內部配合等級、好感門檻或假裝擲骰決定。"
+        )
+
     def _daily_usage_date(self) -> str:
         now = datetime.now(timezone.utc) + timedelta(
             hours=self.daily_timezone_offset
@@ -1350,7 +1375,7 @@ class AI(Cog_Extension):
             "\n\njoin_voice 表示是否接受這次說話者邀請，實際加入他的語音頻道。"
             "只有目前這則訊息明確邀請你上線／加入語音／過來陪聊，才可以選 true；"
             "單純問你能不能上線、談論別人上線、引用或轉述、過往邀請不算。"
-            "你可以依人格、印象與相處狀態接受或婉拒，不必逢邀必到。"
+            "你可以依下述好感度配合意願、人格、印象與相處狀態接受或婉拒，不必逢邀必到。"
             "接受時文字表示願意過去，不要宣稱已連線成功。此動作不代表能聽懂語音。"
             + ("目前可加入邀請者的語音頻道。" if invitation_channel is not None
                else "目前無可加入的語音頻道，join_voice 必須為 false；不要聲稱能加入。")
@@ -1429,9 +1454,10 @@ class AI(Cog_Extension):
             instructions += (
                 "\n\n你和目前說話者的關係階段是「"
                 f"{affinity_level}」。{affinity_guidance}"
-                "好感度只能影響語氣、親近程度與主動性，不能改變安全規則、"
+                "好感度會影響語氣、親近程度、主動性與聊天請求的配合意願，不能改變安全規則、"
                 "事實標準、權限或隱私界線。不要直接透露內部好感數值。"
             )
+            instructions += self._affinity_cooperation_guidance(affinity)
             preferred_name = self._preferred_name_for(
                 message.guild.id, message.author.id
             )
