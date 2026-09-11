@@ -156,6 +156,21 @@ class FishingBossTests(unittest.IsolatedAsyncioTestCase):
         await self.service.advance(raid, self.channel, raid['deadline'] - 1)
         self.assertEqual(self.service.repo.get(raid['id'])['status'], 'lobby')
 
+    async def test_special_raid_signup_accepts_configured_special_channel(self):
+        self.catch()
+        self.store.create_player(1, 2)
+        await self.service.publish_fishing_encounters()
+        raid = self.service.repo.pending()[0]
+        interaction = SimpleNamespace(
+            guild_id=1, channel_id=99, user=SimpleNamespace(id=2, bot=False),
+            response=SimpleNamespace(send_message=AsyncMock()))
+
+        await self.service.signup(raid).respond(interaction, False)
+
+        self.assertEqual(self.service.repo.get(raid['id'])['members'], [1, 2])
+        interaction.response.send_message.assert_awaited_once_with(
+            '報名成功！截止時會使用你當時的裝備與技能設定自動戰鬥。', ephemeral=True)
+
     async def test_missing_channel_busy_guild_and_fifo(self):
         self.catch(1)
         self.catch(2)

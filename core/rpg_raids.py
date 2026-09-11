@@ -69,12 +69,12 @@ class RaidSignup(discord.ui.View):
         try:
             if not self.service.cog.store.has_player(interaction.guild_id, interaction.user.id):
                 raise CharacterError('請先接受邀請函，正式成為冒險者。')
-            settings = self.service.settings_for_channel(interaction.channel_id)
-            if not settings.enabled or interaction.channel_id not in self.service.all_channels:
-                raise CharacterError('本頻道的討伐活動已停用。')
             raid = self.service.repo.get(self.raid_id)
             if not raid or interaction.channel_id != raid['channel_id']:
                 raise CharacterError('無效的討伐頻道。')
+            settings = self.service.settings_for_channel(interaction.channel_id)
+            if not settings.enabled or interaction.channel_id not in self.service.channels_for_raid(raid):
+                raise CharacterError('本頻道的討伐活動已停用。')
             raid = self.service.repo.join(self.raid_id, interaction.guild_id, interaction.user.id,
                                           time.time(), settings.max_participants, leave=leave)
             text = '已退出討伐。' if leave else '報名成功！截止時會使用你當時的裝備與技能設定自動戰鬥。'
@@ -194,6 +194,15 @@ class RaidService:
         if channel in self.high_channels:
             return self.high_settings
         return self.mid_settings if channel in self.mid_channels else self.settings
+
+    def channels_for_raid(self, raid):
+        if raid.get('source') == 'fishing':
+            return self.special_channels
+        if raid.get('pool') == 'high':
+            return self.high_channels
+        if raid.get('pool') in ('mid', 'special'):
+            return self.mid_channels
+        return self.channels
 
     async def imagine(self, kind=None):
         kind = kind or random.choices(REGULAR_KINDS, weights=(20, 20, 5, 11, 11, 11, 11, 11), k=1)[0]
@@ -477,9 +486,7 @@ class RaidService:
         message = channel.get_partial_message(raid['message_id'])
         settings = self.settings_for_channel(raid['channel_id'])
         if raid['status'] == 'lobby':
-            expected_channels = (self.special_channels if raid.get('source') == 'fishing' else
-                                 self.high_channels if raid.get('pool') == 'high' else
-                                 self.mid_channels if raid.get('pool') in ('mid', 'special') else self.channels)
+            expected_channels = self.channels_for_raid(raid)
             if raid['channel_id'] not in expected_channels or not settings.enabled:
                 raid.update(status='cancelled', reason='討伐活動已停用。')
                 self.repo.save(raid)
