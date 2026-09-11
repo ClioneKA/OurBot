@@ -37,8 +37,10 @@ COMBOS = list(combinations(IDS, 3))
 
 
 def equipment(job, level):
-    if level >= 60:
+    if level >= 70:
         return tuple(f'maze:{JOB_KEYS[job]}:{slot}' for slot in ('weapon', 'suit'))
+    if level >= 60:
+        return SETS[6][job]
     if level >= 50:
         return SETS[5][job]
     if level >= 45:

@@ -32,7 +32,7 @@ T50_EQUIPMENT = {
     '弓兵': ('fungus:archer:weapon', 'fungus:archer:suit'),
     '僧侶': ('fungus:monk:weapon', 'fungus:monk:suit'),
 }
-T60_MAZE_EQUIPMENT = {
+T70_MAZE_EQUIPMENT = {
     job: (f'maze:{slug}:weapon', f'maze:{slug}:suit')
     for job, slug in zip(JOBS, ('infantry', 'knight', 'archer', 'monk'))
 }
@@ -97,7 +97,7 @@ def build_participants(level, count, gear='raid', *, accessories=False):
     store = RPGStore(Path(directory.name) / 'maze-balance.db')
     characters = Characters(store, RPGSettings())
     equipment = (T50_EQUIPMENT if level < 60 else
-                 T60_MAZE_EQUIPMENT if gear == 'maze' else T60_RAID_EQUIPMENT)
+                 T70_MAZE_EQUIPMENT if gear == 'maze' and level >= 70 else T60_RAID_EQUIPMENT)
     participants = []
     try:
         for index in range(count):
@@ -293,7 +293,7 @@ def main():
     parser.add_argument('--quick', action='store_true',
                         help='Only run Lv.50/60, 1/8 players and three representative contracts.')
     parser.add_argument('--gear', choices=('raid', 'maze'), default='raid',
-                        help='Use current T60 raid gear (default) or cleared Painted Maze gear.')
+                        help='Use current T60 raid gear (default) or T70 cleared Painted Maze gear when eligible.')
     parser.add_argument('--benchmark', action='store_true', help='Benchmark Lv.60, 4/8 players with actual contract offers.')
     parser.add_argument('--independent', action='store_true', help='Benchmark eight players at full HP for each encounter.')
     parser.add_argument('--compare-contracts', action='store_true', help='Controlled comparison of all 18 third contracts.')

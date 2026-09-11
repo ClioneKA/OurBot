@@ -107,7 +107,7 @@ class CrystalStoreTests(unittest.TestCase):
         self.assertEqual(self.rpg.gold(1, 2), price)
         self.assertIsNone(self.crystals.get(second.instance_id))
 
-    def test_t60_elite_names_stats_and_three_typed_slots(self):
+    def test_t70_elite_names_stats_and_three_typed_slots(self):
         expected = {
             'maze:infantry:weapon': '未竟戰繪・斷彩戰斧',
             'maze:infantry:suit': '未竟戰繪・重彩戰甲',
@@ -121,7 +121,7 @@ class CrystalStoreTests(unittest.TestCase):
         for item_id, name in expected.items():
             item = ITEMS[item_id]
             self.assertEqual((item.name, item.required_level, item.crystal_slots),
-                             (name, 60, ELITE_CRYSTAL_SLOTS))
+                             (name, 70, ELITE_CRYSTAL_SLOTS))
             self.assertFalse(item.set_id)
         combined = {
             job: tuple(a + b for a, b in zip(
@@ -129,14 +129,14 @@ class CrystalStoreTests(unittest.TestCase):
             for job in ('infantry', 'knight', 'archer', 'monk')
         }
         self.assertEqual(combined, {
-            'infantry': (684, 200, 142, 0),
-            'knight': (873, 136, 200, 0),
-            'archer': (494, 166, 86, 0),
-            'monk': (494, 136, 86, 256),
+            'infantry': (788, 231, 164, 0),
+            'knight': (1012, 156, 231, 0),
+            'archer': (564, 193, 97, 0),
+            'monk': (564, 156, 97, 298),
         })
         jobs = dict(infantry='裝甲步兵', knight='騎士', archer='弓兵', monk='僧侶')
         for slug, job in jobs.items():
-            base_stats = tuple(10 + 18 + 50 * weight + 4 * weight for weight in GROWTH[job])
+            base_stats = tuple(10 + 18 + 60 * weight + 4 * weight for weight in GROWTH[job])
             naked = combat_from_stats(base_stats, job)
             equipped = combined[slug]
             for stat, bonus in zip(COMBAT_NAMES, equipped):
@@ -145,7 +145,7 @@ class CrystalStoreTests(unittest.TestCase):
                     self.assertLessEqual(bonus / naked[stat], .355)
 
     def test_equipping_duplicate_unique_source_effect_is_rejected_before_commit(self):
-        self.rpg.award_voice([(1, 3, level_floor(60))])
+        self.rpg.award_voice([(1, 3, level_floor(70))])
         self.characters.change_job(1, 3, '弓兵')
         weapon_id = self.characters.grant_item(1, 3, 'maze:archer:weapon')[0]
         suit_id = self.characters.grant_item(1, 3, 'maze:archer:suit')[0]
@@ -174,7 +174,7 @@ class CrystalStoreTests(unittest.TestCase):
         now = self.resolve_vote(now)
         now = self.finish_stage(3, now)
         sources = self.crystals.seal_stage(self.room['id'], 3, now=now)
-        self.rpg.award_voice([(1, 1, level_floor(60))])
+        self.rpg.award_voice([(1, 1, level_floor(70))])
         self.characters.change_job(1, 1, '弓兵')
         equipment_id = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
 

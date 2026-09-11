@@ -14,7 +14,7 @@ ITEM_ACTIONS = {
     'noah:unfinished': ('展開未完成的魔女畫作', '建立城崎諾亞路線的 1～8 人繪境迷宮房間'),
     'painting:balloon': ('展開《氣球》的畫作', '建立繪畫之影路線的 1～8 人繪境迷宮房間'),
 }
-ITEM_ACTIONS.update({box_id: (f'開啟{ITEMS[box_id].name}', '選擇本職 T60 菁英武器或套裝')
+ITEM_ACTIONS.update({box_id: (f'開啟{ITEMS[box_id].name}', '選擇本職 T70 菁英武器或套裝')
                      for box_id in MAZE_CHOICE_BOXES})
 
 

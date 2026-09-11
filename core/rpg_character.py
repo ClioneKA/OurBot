@@ -339,42 +339,42 @@ for key, item in {
 }.items():
     ITEMS[key] = item
 
-# T60 Painted Witch elite equipment.  The combined naked weapon + suit budget
-# is approximately 35% of the relevant Lv.60 combat values.  Its long-term
+# T70 Painted Witch elite equipment.  The combined naked weapon + suit budget
+# is approximately 35% of the relevant Lv.70 combat values.  Its long-term
 # identity comes from three typed crystal sockets rather than a fixed set bonus.
 ELITE_CRYSTAL_SLOTS = ('outline', 'color', 'source')
 for key, item in {
     'maze:infantry:weapon': Item(
         '未竟戰繪・斷彩戰斧', '武器', '裝甲步兵', 2, (0, 0, 0, 0, 0),
-        (137, 171, 28, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
-        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+        (158, 198, 32, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=70,
+        speed=14, accuracy=70, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:infantry:suit': Item(
         '未竟戰繪・重彩戰甲', '套裝', '裝甲步兵', 2, (0, 0, 0, 0, 0),
-        (547, 29, 114, 0), required_level=60, sell_price=8000,
+        (630, 33, 132, 0), required_level=70, sell_price=8000,
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:knight:weapon': Item(
         '未竟守望・界框劍盾', '武器', '騎士', 2, (0, 0, 0, 0, 0),
-        (257, 136, 59, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
-        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+        (298, 156, 68, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=70,
+        speed=14, accuracy=70, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:knight:suit': Item(
         '未竟守望・定框重甲', '套裝', '騎士', 2, (0, 0, 0, 0, 0),
-        (616, 0, 141, 0), required_level=60, sell_price=8000,
+        (714, 0, 163, 0), required_level=70, sell_price=8000,
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:archer:weapon': Item(
         '未竟追彩・流彩長弓', '武器', '弓兵', 2, (0, 0, 0, 0, 0),
-        (0, 129, 0, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
-        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+        (0, 150, 0, 0), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=70,
+        speed=14, accuracy=70, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:archer:suit': Item(
         '未竟追彩・風描獵裝', '套裝', '弓兵', 2, (0, 0, 0, 0, 0),
-        (494, 37, 86, 0), required_level=60, sell_price=8000,
+        (564, 43, 97, 0), required_level=70, sell_price=8000,
         crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:monk:weapon': Item(
         '未竟聖像・調色聖杖', '武器', '僧侶', 2, (0, 0, 0, 0, 0),
-        (0, 136, 0, 142), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=60,
-        speed=13, accuracy=65, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
+        (0, 156, 0, 165), WEAPON_STABILITY_BY_SOURCE['maze'], required_level=70,
+        speed=14, accuracy=70, sell_price=8000, crystal_slots=ELITE_CRYSTAL_SLOTS),
     'maze:monk:suit': Item(
         '未竟聖像・祈彩法衣', '套裝', '僧侶', 2, (0, 0, 0, 0, 0),
-        (494, 0, 86, 114), required_level=60, sell_price=8000,
+        (564, 0, 97, 133), required_level=70, sell_price=8000,
         crystal_slots=ELITE_CRYSTAL_SLOTS),
 }.items():
     ITEMS[key] = item
@@ -390,7 +390,7 @@ for box_id, choices in MAZE_CHOICE_BOXES.items():
     ITEMS[box_id] = Item(
         f'繪畫魔女・{job}菁英裝備自選箱', '', '', 0, (0, 0, 0, 0, 0),
         category='製作材料', transferable=False,
-        description=f'可從背包使用，選擇一件 {job} T60 菁英武器或套裝。')
+        description=f'可從背包使用，選擇一件 {job} T70 菁英武器或套裝。')
 
 ITEMS['cycle:emblem'] = Item(
     '循環徽記', '飾品', '', 2, (3, 3, 3, 3, 3), required_level=60,
