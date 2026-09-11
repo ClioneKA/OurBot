@@ -1617,6 +1617,27 @@ class Characters:
                 results.append((item, amount))
         return results
 
+    def loadout_equipment_ids(self, guild, user):
+        """Return equipment protected by every saved combat loadout."""
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                               "AND name='rpg_loadouts'").fetchone():
+            return set()
+        protected = set()
+        for (raw,) in self.db.execute('SELECT data FROM rpg_loadouts '
+                                      'WHERE guild_id=? AND user_id=?', (guild, user)):
+            try:
+                data = json.loads(raw)
+                if data is None:
+                    continue
+                equipment = data['equipment']
+                if not isinstance(equipment, dict) or any(
+                        type(value) is not int for value in equipment.values()):
+                    raise ValueError
+            except (TypeError, ValueError, KeyError):
+                raise CharacterError('出戰配置資料無效，請修復或清空後再一併販售。')
+            protected.update(equipment.values())
+        return protected
+
     def sell_equipment_batch(self, guild, user, references, max_tier, expected_gold):
         """Sell exactly the previewed instances, atomically rechecking eligibility."""
         references = list(references)
@@ -1624,6 +1645,10 @@ class Characters:
             raise CharacterError('沒有可一併販售的裝備，請重新選擇。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
+            protected = {f'instance:{instance_id}'
+                         for instance_id in self.loadout_equipment_ids(guild, user)}
+            if protected.intersection(references):
+                raise CharacterError('裝備已保存在出戰配置中，請重新選擇販售範圍。')
             total = 0
             for key in references:
                 if not isinstance(key, str) or not key.startswith('instance:'):

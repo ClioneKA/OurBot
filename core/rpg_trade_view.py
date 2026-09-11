@@ -150,6 +150,7 @@ class TradeView(discord.ui.View):
             embed.add_field(name='持有金幣', value=str(self.cog.store.gold(self.guild_id, self.owner.id)))
             embed.description += '\n填寫數量超過可售量時，會自動賣出最大可售量。'
             embed.description += '\n一併販售會從整個背包篩選指定 T 等級以下（含）的未穿戴裝備，不受分類或頁數限制。'
+            embed.description += '\n已保存在任何出戰配置（Preset）中的裝備不會一併販售。'
             if self.bulk_preview:
                 tier, references, gold = self.bulk_preview
                 embed.add_field(name='一併販售預覽',
@@ -203,8 +204,15 @@ class TradeView(discord.ui.View):
             self.revision += 1
             if action == 'bulk_tier' and self.mode == 'sell' and str(value) in {str(t) for t in BULK_TIERS}:
                 tier = int(value)
+                try:
+                    protected = self.cog.characters.loadout_equipment_ids(self.guild_id, self.owner.id)
+                except CharacterError as exc:
+                    self.rebuild()
+                    await interaction.response.edit_message(embed=self.embed(str(exc)), view=self)
+                    return
                 entries = [entry for entry in self.entries.values()
                            if entry.instance_id is not None and entry.instance_id not in self.equipped_ids
+                           and entry.instance_id not in protected
                            and equipment_tier(entry.item) is not None and equipment_tier(entry.item) <= tier
                            and item_sellable(entry.item)]
                 self.selected, self.selected_keys = None, []

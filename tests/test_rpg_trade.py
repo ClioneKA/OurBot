@@ -13,6 +13,49 @@ from core.settings import RPGSettings
 
 
 class TradeTests(unittest.IsolatedAsyncioTestCase):
+    def save_equipment_preset(self, reference, slot=1):
+        from core.rpg import level_floor
+        from core.rpg_battle import Tactics
+        from core.rpg_loadouts import Loadouts
+        self.store.award_voice([(1, 1, level_floor(50))])
+        self.characters.change_job(1, 1, '騎士')
+        loadouts = Loadouts(self.store, self.characters, Tactics(self.store))
+        self.characters.equip(1, 1, reference)
+        loadouts.save(1, 1, slot)
+        self.characters.unequip(1, 1, '飾品1')
+        return loadouts
+
+    async def test_bulk_sale_preserves_preset_instance_but_sells_duplicates(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        references = [key for key, entry in view.entries.items() if entry.item_id == 'raid:0']
+        loadouts = self.save_equipment_preset(references[0], 3)
+        loadouts.rename(1, 1, 2, '空配置')
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        self.assertNotIn(references[0], view.bulk_preview[1])
+        self.assertTrue(set(references[1:]).issubset(view.bulk_preview[1]))
+        expected_gold = view.bulk_preview[2]
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertIsNotNone(self.characters.get_instance(1, 1, int(references[0].split(':')[1])))
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 1)
+        self.assertEqual(self.store.gold(1, 1), expected_gold)
+        loadouts.clear(1, 1, 3)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        self.assertEqual(view.bulk_preview[1], references[:1])
+
+    async def test_bulk_sale_rechecks_preset_saved_after_preview(self):
+        view = TradeView(self.cog, self.interaction, 'sell')
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'bulk_tier', '20')
+        tier, references, gold = view.bulk_preview
+        self.save_equipment_preset(references[-1])
+        with self.assertRaisesRegex(CharacterError, '出戰配置'):
+            self.characters.sell_equipment_batch(1, 1, references, tier, gold)
+        await view.handle(self.interaction, 'bulk_confirm')
+        self.assertEqual(self.characters.inventory_counts(1, 1)['raid:0'], 3)
+        self.assertEqual(self.store.gold(1, 1), 0)
+        self.assertIn('出戰配置', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+
     async def test_sell_modal_clamps_to_current_stock_and_reports_actual_sale(self):
         self.characters.grant_item(1, 1, 'fishing:pond:common', 7)
         view = TradeView(self.cog, self.interaction, 'sell')
