@@ -8,6 +8,10 @@ from core.rpg import MAX_LEVEL, level_floor, level_for
 from core.rpg_character import CharacterError
 
 
+STAR_FIBER_ID = 'life:farming:star_fiber'
+STAR_FIBER_CHANCES = {60: 0.03, 65: 0.06, 70: 0.12}
+
+
 @dataclass(frozen=True)
 class Plant:
     name: str
@@ -66,9 +70,10 @@ def growth_text(seconds):
 
 
 class Farming:
-    def __init__(self, store, rng=None):
+    def __init__(self, store, rng=None, material_rng=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
+        self.material_rng = material_rng or random.Random()
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -177,9 +182,16 @@ class Farming:
                 (guild, user, crop.item_id, quantity))
             self.db.execute('UPDATE rpg_farming_players SET xp=xp+? WHERE guild_id=? AND user_id=?',
                             (gained_xp, guild, user))
+            material_count = int(planted_level >= 60 and crop.level >= 60
+                                 and self.material_rng.random() < STAR_FIBER_CHANCES[crop.level])
+            if material_count:
+                self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+                    VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
+                    DO UPDATE SET quantity=quantity+1''', (guild, user, STAR_FIBER_ID))
             result = dict(location_id=location_id, plant_id=plant_id, quantity=quantity,
                           base_yield=crop.base_yield, level_bonus=guaranteed + int(lucky),
-                          lucky=lucky, xp=gained_xp, old_level=level_for(old_xp),
+                          lucky=lucky, accessory_material=material_count,
+                          xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
             self.db.execute('''UPDATE rpg_farming_sessions SET status='harvested',result=?
                 WHERE guild_id=? AND user_id=? AND location_id=?''',

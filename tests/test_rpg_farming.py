@@ -88,6 +88,14 @@ class FarmingTests(unittest.TestCase):
         result = self.farming.harvest(1, 1, 'courtyard', now=7600)
         self.assertEqual((result['level_bonus'], result['quantity']), (3, 5))
 
+    def test_level_sixty_crop_can_grant_bound_star_fiber(self):
+        self.set_level(60)
+        self.farming.material_rng = FixedRandom(0.0)
+        self.farming.plant(1, 1, 'ruins', 'star_bean', now=0)
+        result = self.farming.harvest(1, 1, 'ruins', now=3600)
+        self.assertEqual(result['accessory_material'], 1)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['life:farming:star_fiber'], 1)
+
     def test_cancel_selected_plot_discards_all_progress_and_rewards(self):
         self.set_level(20)
         self.farming.plant(1, 1, 'courtyard', 'potato', now=0)

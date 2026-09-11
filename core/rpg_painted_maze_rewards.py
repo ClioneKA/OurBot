@@ -40,6 +40,74 @@ class PaintedMazeRewardStore:
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 xp INTEGER NOT NULL, gold INTEGER NOT NULL, created_at INTEGER NOT NULL,
                 PRIMARY KEY(room_id,checkpoint,user_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_painted_maze_accessories (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                shadow_room_id TEXT, noah_room_id TEXT, instance_id INTEGER,
+                upgraded INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id))''')
+
+    def seal_route_accessory(self, room_id, *, now=None):
+        """Grant Half-shadow on a Shadow clear and upgrade it after both routes."""
+        now = int(time.time() if now is None else now)
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute(
+                'SELECT data FROM rpg_painted_maze_rooms WHERE id=?', (room_id,)).fetchone()
+            if not row:
+                raise CharacterError('找不到繪境迷宮房間。')
+            room = json.loads(row[0])
+            if not room.get('requires_entry', True):
+                return []
+            if room.get('status') != 'completed' or room.get('route') not in ('shadow', 'noah'):
+                raise CharacterError('尚未完成繪境迷宮，不能封存路線飾品。')
+            results = []
+            for participant in room['participants']:
+                user_id = participant['id']
+                saved = self.db.execute('''SELECT shadow_room_id,noah_room_id,instance_id,upgraded
+                    FROM rpg_painted_maze_accessories WHERE guild_id=? AND user_id=?''',
+                    (room['guild_id'], user_id)).fetchone()
+                shadow_room, noah_room, instance_id, upgraded = saved or (None, None, None, 0)
+                if room['route'] == 'shadow' and shadow_room is None:
+                    shadow_room = room_id
+                if room['route'] == 'noah' and noah_room is None:
+                    noah_room = room_id
+
+                # Existing Noah clears predate this reward table; preserve that progress.
+                if noah_room is None:
+                    legacy = self.db.execute('''SELECT first_room_id FROM rpg_painted_maze_noah_clears
+                        WHERE guild_id=? AND user_id=?''', (room['guild_id'], user_id)).fetchone()
+                    noah_room = legacy[0] if legacy else None
+                # Shadow clears were historically recorded only through their three
+                # bonus crystals.  Use that durable source marker to backfill players
+                # who completed the route before this accessory table existed.
+                if shadow_room is None:
+                    legacy = self.db.execute('''SELECT source_room_id FROM rpg_crystal_instances
+                        WHERE guild_id=? AND source_user_id=?
+                        AND source_painting_id='painting_shadow' AND source_stage=4
+                        ORDER BY instance_id LIMIT 1''', (room['guild_id'], user_id)).fetchone()
+                    shadow_room = legacy[0] if legacy else None
+                target = ('maze:shadow:radiance' if shadow_room and noah_room
+                          else 'maze:shadow:emblem' if shadow_room else None)
+                if target:
+                    instance = (self.db.execute('''SELECT item_id FROM rpg_equipment_instances
+                        WHERE instance_id=? AND guild_id=? AND user_id=?''',
+                        (instance_id, room['guild_id'], user_id)).fetchone() if instance_id else None)
+                    if instance:
+                        if instance[0] != target:
+                            self.db.execute('UPDATE rpg_equipment_instances SET item_id=? WHERE instance_id=?',
+                                            (target, instance_id))
+                    else:
+                        instance_id = add_owned_item(self.db, room['guild_id'], user_id, target)[0]
+                    upgraded = int(target == 'maze:shadow:radiance')
+                self.db.execute('''INSERT INTO rpg_painted_maze_accessories
+                    VALUES (?,?,?,?,?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET
+                    shadow_room_id=excluded.shadow_room_id,noah_room_id=excluded.noah_room_id,
+                    instance_id=excluded.instance_id,upgraded=excluded.upgraded,
+                    updated_at=excluded.updated_at''',
+                    (room['guild_id'], user_id, shadow_room, noah_room, instance_id, upgraded, now))
+                results.append(dict(user_id=user_id, item_id=target,
+                                    instance_id=instance_id, upgraded=bool(upgraded)))
+            return results
 
     def seal_currency(self, room_id, checkpoint, *, now=None):
         if checkpoint not in CHECKPOINT_REWARDS:

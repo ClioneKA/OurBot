@@ -396,6 +396,51 @@ ITEMS['cycle:emblem'] = Item(
     '循環徽記', '飾品', '', 2, (3, 3, 3, 3, 3), required_level=60,
     embroidery_slots=1, first_skill_cooldown_reduction=1)
 
+# Deterministic long-term accessories made or upgraded in Hanna's tailor shop.
+ITEMS['life:fishing:glimmer'] = Item(
+    '浮光墜飾', '飾品', '', 2, (3, 3, 3, 6, 6), required_level=60,
+    embroidery_slots=2, transferable=False,
+    description='釣魚 Lv.60 後可在漢娜的裁縫所製作。')
+ITEMS['life:farming:star_knot'] = Item(
+    '星穗花結', '飾品', '', 2, (6, 6, 3, 3, 3), required_level=60,
+    embroidery_slots=2, transferable=False,
+    description='農耕 Lv.60 後可在漢娜的裁縫所製作。')
+ITEMS['life:fishing:glimmer_pearl'] = Item(
+    '浮光珍珠', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    sell_price=100, transferable=False,
+    description='釣魚 Lv.60 後於魔女島海灣收竿時可能額外取得。')
+ITEMS['life:farming:star_fiber'] = Item(
+    '星穗纖維', '', '', 0, (0, 0, 0, 0, 0), category='製作材料',
+    sell_price=100, transferable=False,
+    description='農耕 Lv.60 後收成高階作物時可能額外取得。')
+
+for key, name, level, stats, slots in (
+    ('hanna:brooch:0', '手製淑女胸針', 10, (1, 1, 1, 1, 1), 1),
+    ('hanna:brooch:1', '名門淑女胸針', 20, (2, 2, 2, 2, 2), 2),
+    ('hanna:brooch:2', '貴族胸針', 50, (4, 4, 4, 4, 4), 3),
+    ('hanna:brooch:3', '漢娜的胸針', 90, (7, 7, 7, 7, 7), 4),
+):
+    ITEMS[key] = Item(name, '飾品', '', min(3, slots - 1), stats,
+                      required_level=level, embroidery_slots=slots, transferable=False,
+                      description='隨漢娜好感度里程碑持續升級。')
+
+ITEMS['maze:shadow:emblem'] = Item(
+    '半影徽記', '飾品', '', 2, (5, 5, 5, 5, 5), required_level=60,
+    embroidery_slots=2, transferable=False,
+    description='首次通關繪畫之影路線的證明。')
+ITEMS['maze:shadow:radiance'] = Item(
+    '極彩光輪', '飾品', '', 2, (10, 10, 10, 10, 10), required_level=60,
+    embroidery_slots=3, transferable=False,
+    description='通關繪畫之影與城崎諾亞兩條路線後，由半影徽記升級。')
+
+LIFESTYLE_ACCESSORY_RECIPES = {
+    'fishing': ('life:fishing:glimmer', 'life:fishing:glimmer_pearl', 10),
+    'farming': ('life:farming:star_knot', 'life:farming:star_fiber', 10),
+}
+LIFESTYLE_ACCESSORY_PRICE = 5_000
+HANNA_BROOCH_THRESHOLDS = (25, 50, 75, 100)
+HANNA_BROOCH_ITEMS = tuple(f'hanna:brooch:{index}' for index in range(4))
+
 for key, name, description in (
     ('paint:red', '紅色噴漆罐', '擊敗深淵鐘龍時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
     ('paint:yellow', '黃色噴漆罐', '擊敗王城傀儡師時由全隊抽選一人取得，諾亞也可能掉落；可組成套組，或用於諾亞裝備染色。'),
@@ -855,6 +900,14 @@ class Characters:
                 affix_id TEXT NOT NULL, effect_key TEXT NOT NULL, rolled_value INTEGER NOT NULL,
                 PRIMARY KEY(instance_id,affix_index),
                 FOREIGN KEY(instance_id) REFERENCES rpg_equipment_instances(instance_id) ON DELETE CASCADE)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_lifestyle_accessory_claims (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, skill TEXT NOT NULL,
+                instance_id INTEGER NOT NULL, claimed_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id,skill))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_hanna_brooches (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                tier INTEGER NOT NULL, instance_id INTEGER NOT NULL, upgraded_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_schema_migrations (
                 name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)''')
             self._migrate_equipment_storage()
@@ -1519,7 +1572,7 @@ class Characters:
             'SELECT witch_id FROM rpg_witch_unlocks WHERE guild_id=? AND user_id=?', (guild, user))}
         return {key for key, witch in REQUIREMENTS.items() if witch in defeated}
 
-    def embroider_accessory(self, guild, user, item_id, embroidery_id):
+    def embroider_accessory(self, guild, user, item_id, embroidery_id, slot_index=0):
         embroidery = EMBROIDERIES.get(embroidery_id)
         if embroidery is None:
             raise CharacterError('請選擇有效的刺繡圖樣。')
@@ -1529,14 +1582,19 @@ class Characters:
             item = ITEMS.get(instance.item_id) if instance else None
             if not item or item.slot != '飾品' or item.embroidery_slots < 1:
                 raise CharacterError('這件飾品沒有刺繡格。')
+            if not 0 <= slot_index < item.embroidery_slots:
+                raise CharacterError('這件飾品沒有這個刺繡格。')
             affix_id = f'embroidery:{embroidery_id}'
-            current = next((affix for affix in instance.affixes if affix[0] == 0), None)
+            current = next((affix for affix in instance.affixes if affix[0] == slot_index), None)
             if current and current[1] == affix_id:
                 raise CharacterError(f'這件飾品已經具有{embroidery[0]}。')
             if embroidery_id.startswith('witch_'):
                 if embroidery_id not in self.unlocked_witch_embroideries(guild, user):
                     name = WITCH_PROFILE[REQUIREMENTS[embroidery_id]][1]
                     raise CharacterError(f'尚未解鎖{embroidery[0]}；請先通關包含{name}的魔女試煉。')
+                if any(affix[0] != slot_index and affix[1].startswith('embroidery:witch_')
+                       for affix in instance.affixes):
+                    raise CharacterError('每件飾品最多只能有一個魔女刺繡。')
                 paid_thread = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-3
                     WHERE guild_id=? AND user_id=? AND item_id='witch:thread' AND quantity>=3''', (guild, user))
                 if not paid_thread.rowcount:
@@ -1552,9 +1610,94 @@ class Characters:
                 (instance_id,affix_index,affix_id,effect_key,rolled_value)
                 VALUES (?,?,?,?,?) ON CONFLICT(instance_id,affix_index) DO UPDATE SET
                 affix_id=excluded.affix_id,effect_key=excluded.effect_key,rolled_value=excluded.rolled_value''',
-                (instance.instance_id, 0, affix_id, embroidery[1], embroidery[2]))
+                (instance.instance_id, slot_index, affix_id, embroidery[1], embroidery[2]))
             updated = self._instance(guild, user, instance.instance_id)
         return updated.token if isinstance(item_id, int) or str(item_id).startswith('instance:') else self.instance_item_id(updated)
+
+    def lifestyle_accessory_status(self, guild, user):
+        counts = self.inventory_counts(guild, user)
+        result = {}
+        for skill, (item_id, material_id, needed) in LIFESTYLE_ACCESSORY_RECIPES.items():
+            table = f'rpg_{skill}_players'
+            exists = self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            row = (self.db.execute(f'SELECT xp FROM {table} WHERE guild_id=? AND user_id=?',
+                                   (guild, user)).fetchone() if exists else None)
+            level = level_for(row[0]) if row else 1
+            claimed = self.db.execute('''SELECT instance_id FROM rpg_lifestyle_accessory_claims
+                WHERE guild_id=? AND user_id=? AND skill=?''', (guild, user, skill)).fetchone()
+            result[skill] = dict(item_id=item_id, material_id=material_id, needed=needed,
+                                 owned=bool(claimed), level=level,
+                                 materials=counts.get(material_id, 0),
+                                 price=LIFESTYLE_ACCESSORY_PRICE)
+        return result
+
+    def craft_lifestyle_accessory(self, guild, user, skill):
+        if skill not in LIFESTYLE_ACCESSORY_RECIPES:
+            raise CharacterError('無效的生活飾品配方。')
+        item_id, material_id, needed = LIFESTYLE_ACCESSORY_RECIPES[skill]
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            status = self.lifestyle_accessory_status(guild, user)[skill]
+            if status['owned']:
+                raise CharacterError('這件生活飾品已經製作過了。')
+            if status['level'] < 60:
+                label = '釣魚' if skill == 'fishing' else '農耕'
+                raise CharacterError(f'{label} Lv.60 才能製作這件飾品。')
+            consumed = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
+                WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=?''',
+                (needed, guild, user, material_id, needed))
+            if not consumed.rowcount:
+                raise CharacterError(f'{ITEMS[material_id].name}不足，需要 {needed} 份。')
+            paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
+                WHERE guild_id=? AND user_id=? AND gold>=?''',
+                (LIFESTYLE_ACCESSORY_PRICE, guild, user, LIFESTYLE_ACCESSORY_PRICE))
+            if not paid.rowcount:
+                raise CharacterError(f'金幣不足，製作需要 {LIFESTYLE_ACCESSORY_PRICE:,} 金幣。')
+            self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
+                            'AND item_id=? AND quantity<=0', (guild, user, material_id))
+            instance_id = self._insert_instance(guild, user, item_id)
+            self.db.execute('INSERT INTO rpg_lifestyle_accessory_claims VALUES (?,?,?,?,?)',
+                            (guild, user, skill, instance_id, int(time.time())))
+        return self._instance(guild, user, instance_id)
+
+    def hanna_brooch_status(self, guild, user):
+        from core.rpg_affinity import hanna_affinity
+        score = hanna_affinity(self.db, guild, user)
+        eligible = max([-1] + [index for index, threshold in enumerate(HANNA_BROOCH_THRESHOLDS)
+                              if score >= threshold])
+        row = self.db.execute('''SELECT tier,instance_id FROM rpg_hanna_brooches
+            WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
+        return dict(score=score, eligible_tier=eligible,
+                    tier=row[0] if row else -1, instance_id=row[1] if row else None)
+
+    def upgrade_hanna_brooch(self, guild, user):
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            status = self.hanna_brooch_status(guild, user)
+            target = status['eligible_tier']
+            if target < 0:
+                raise CharacterError('漢娜好感度達到 25 後才能領取胸針。')
+            if status['tier'] >= target:
+                raise CharacterError('目前沒有可領取的漢娜胸針升級。')
+            item_id = HANNA_BROOCH_ITEMS[target]
+            instance = (self._instance(guild, user, status['instance_id'])
+                        if status['instance_id'] is not None else None)
+            now = int(time.time())
+            if instance:
+                self.db.execute('UPDATE rpg_equipment_instances SET item_id=? WHERE instance_id=?',
+                                (item_id, instance.instance_id))
+                instance_id = instance.instance_id
+                self.db.execute('''UPDATE rpg_hanna_brooches
+                    SET tier=?,upgraded_at=? WHERE guild_id=? AND user_id=?''',
+                    (target, now, guild, user))
+            else:
+                instance_id = self._insert_instance(guild, user, item_id)
+                self.db.execute('''INSERT INTO rpg_hanna_brooches VALUES (?,?,?,?,?)
+                    ON CONFLICT(guild_id,user_id) DO UPDATE SET tier=excluded.tier,
+                    instance_id=excluded.instance_id,upgraded_at=excluded.upgraded_at''',
+                    (guild, user, target, instance_id, now))
+        return self._instance(guild, user, instance_id)
 
     def consume_item(self, guild, user, key, quantity=1):
         if self._is_instance_item(key):

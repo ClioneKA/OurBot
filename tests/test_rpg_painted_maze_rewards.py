@@ -54,7 +54,7 @@ class PaintedMazeRewardTests(unittest.TestCase):
         service = PaintedMazeService(SimpleNamespace(store=self.rpg, bot=None))
         tables = ('players', 'rpg_wallets', 'rpg_inventory', 'rpg_crystal_instances',
                   'rpg_painted_maze_noah_clears', 'rpg_painted_maze_final_rewards',
-                  'rpg_painted_maze_currency_rewards')
+                  'rpg_painted_maze_currency_rewards', 'rpg_painted_maze_accessories')
         before = {table: self.rpg.db.execute(f'SELECT * FROM {table}').fetchall()
                   for table in tables}
         for index, entry in enumerate(('noah:unfinished', 'painting:balloon')):
@@ -135,6 +135,41 @@ class PaintedMazeRewardTests(unittest.TestCase):
         self.assertEqual(len(first), 6)
         self.assertEqual(len(self.crystals.inventory(1, 1)), 3)
         self.assertEqual(len(self.crystals.inventory(1, 2)), 3)
+
+    def test_shadow_first_clear_accessory_upgrades_after_noah_and_keeps_instance(self):
+        shadow = self.completed_room('painting:balloon', 350)
+        first = self.rewards.seal_route_accessory(shadow['id'], now=500)
+        retried = self.rewards.seal_route_accessory(shadow['id'], now=600)
+        self.assertEqual(first, retried)
+        self.assertTrue(all(row['item_id'] == 'maze:shadow:emblem' for row in first))
+        instance_id = first[0]['instance_id']
+
+        noah = self.completed_room('noah:unfinished', 351, now=1000)
+        upgraded = self.rewards.seal_route_accessory(noah['id'], now=1500)
+        self.assertTrue(all(row['item_id'] == 'maze:shadow:radiance' for row in upgraded))
+        self.assertEqual(upgraded[0]['instance_id'], instance_id)
+        self.assertEqual(self.characters.get_instance(1, 1, instance_id).item_id,
+                         'maze:shadow:radiance')
+
+    def test_noah_before_shadow_grants_radiance_directly_and_admin_grants_nothing(self):
+        noah = self.completed_room('noah:unfinished', 360)
+        pending = self.rewards.seal_route_accessory(noah['id'])
+        self.assertTrue(all(row['item_id'] is None for row in pending))
+        shadow = self.completed_room('painting:balloon', 361, now=1000)
+        final = self.rewards.seal_route_accessory(shadow['id'])
+        self.assertTrue(all(row['item_id'] == 'maze:shadow:radiance' for row in final))
+        practice = self.completed_room('painting:balloon', 362, now=2000, require_entry=False)
+        self.assertEqual(self.rewards.seal_route_accessory(practice['id']), [])
+
+    def test_legacy_shadow_clear_is_backfilled_when_noah_route_completes(self):
+        shadow = self.completed_room('painting:balloon', 370)
+        self.crystals.seal_shadow_bonus(shadow['id'])
+        noah = self.completed_room('noah:unfinished', 371, now=1000)
+        result = self.rewards.seal_route_accessory(noah['id'])
+        self.assertTrue(all(row['item_id'] == 'maze:shadow:radiance' for row in result))
+        saved = self.rpg.db.execute('''SELECT shadow_room_id,noah_room_id,upgraded
+            FROM rpg_painted_maze_accessories WHERE guild_id=1 AND user_id=1''').fetchone()
+        self.assertEqual(saved, (shadow['id'], noah['id'], 1))
 
     def test_final_settlement_is_idempotent(self):
         room = self.completed_room('painting:balloon', 401)

@@ -407,6 +407,7 @@ class PaintedMazeService:
                 self.rewards.seal_currency(room_id, checkpoint)
             elif kind == 'final':
                 self.rewards.seal_currency(room_id, checkpoint)
+                self.rewards.seal_route_accessory(room_id)
                 if room['route'] == 'noah':
                     self.rewards.seal_noah_clear(room_id)
                 else:
@@ -579,10 +580,17 @@ class PaintedMazeService:
             embed.add_field(name='結果', value=room.get('end_reason', room['status']), inline=False)
             if room.get('archive_at'):
                 embed.add_field(name='討論串關閉時間', value=f'<t:{int(room["archive_at"])}:R>', inline=False)
-            if room['status'] == 'completed' and room['route'] == 'noah':
-                embed.add_field(name='菁英裝備', value=(
-                    '首次通關者會取得本職菁英裝備自選箱，可從背包使用；'
-                    '已有通關紀錄者已隨機發放。'), inline=False)
+            if room['status'] == 'completed':
+                if room['route'] == 'noah':
+                    embed.add_field(name='菁英裝備', value=(
+                        '首次通關者會取得本職菁英裝備自選箱，可從背包使用；'
+                        '已有通關紀錄者已隨機發放。'), inline=False)
+                    embed.add_field(name='路線飾品', value=(
+                        '已有繪畫之影通關紀錄者，半影徽記已升級為極彩光輪。'), inline=False)
+                else:
+                    embed.add_field(name='路線飾品', value=(
+                        '首次通關取得半影徽記；若已通關城崎諾亞路線，'
+                        '會直接取得極彩光輪。'), inline=False)
         embed.set_footer(text='探索期限為 24 小時；結束後討論串再保留 24 小時供聊天，之後鎖定並封存，隊員仍可查看。')
         return embed
 

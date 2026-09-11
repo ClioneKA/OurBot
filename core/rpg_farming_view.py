@@ -5,7 +5,7 @@ import time
 import discord
 
 from core.rpg import MAX_LEVEL
-from core.rpg_character import CharacterError
+from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_farming import LOCATION_LEVELS, LOCATIONS, PLANTS, farming_progress, growth_text
 from core.rpg_menu import add_help, navigate
@@ -135,6 +135,8 @@ class FarmingView(discord.ui.View):
                     plant = PLANTS[result['plant_id']]
                     notice = (f'收成 {plant.name} ×{result["quantity"]}（基礎 {result["base_yield"]}'
                               f'、等級加成 {result["level_bonus"]}），獲得 {result["xp"]:,} 農耕 XP。')
+                    if result.get('accessory_material'):
+                        notice += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
                     for location_id, required_level in LOCATION_LEVELS.items():
                         if required_level > 1 and result['old_level'] < required_level <= result['new_level']:
                             notice += f'\n解鎖新農地：{LOCATIONS[location_id]}！'

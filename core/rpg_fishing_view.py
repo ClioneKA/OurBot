@@ -158,6 +158,8 @@ class FishingView(discord.ui.View):
         if result.get('mastery_bonus', 0):
             header += f'\n熟練產量發動：額外獲得 {result["mastery_bonus"]} 份物品！'
         text = header + '\n' + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。'
+        if result.get('accessory_material'):
+            text += f'\n額外獲得 {ITEMS["life:fishing:glimmer_pearl"].name} ×{result["accessory_material"]}！'
         for spot in SPOTS.values():
             if spot.level > 1 and result['old_level'] < spot.level <= result['new_level']:
                 text += f'\n解鎖新釣場：{spot.name}！'

@@ -11,6 +11,10 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_fishing_bosses import BOSS_CHANCE_PER_CATCH, FISHING_BOSSES
 
 
+GLIMMER_PEARL_ID = 'life:fishing:glimmer_pearl'
+GLIMMER_PEARL_CHANCE_PER_BASE_CATCH = 0.05
+
+
 @dataclass(frozen=True)
 class FishingSpot:
     name: str
@@ -123,10 +127,11 @@ def _big_fish_weight(spot_id, duration_id, rod_id, rng):
 
 
 class Fishing:
-    def __init__(self, store, rng=None, boss_rng=None):
+    def __init__(self, store, rng=None, boss_rng=None, material_rng=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
         self.boss_rng = boss_rng or random.Random()
+        self.material_rng = material_rng or random.Random()
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_encounters (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -317,11 +322,22 @@ class Fishing:
                 self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
                     VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
                     DO UPDATE SET quantity=quantity+excluded.quantity''', (guild, user, key, count))
+            material_count = 0
+            if spot_id == 'bay' and level_snapshot >= 60:
+                material_count = sum(
+                    self.material_rng.random() < GLIMMER_PEARL_CHANCE_PER_BASE_CATCH
+                    for _ in range(base_catches))
+                if material_count:
+                    self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
+                        VALUES (?,?,?,?) ON CONFLICT(guild_id,user_id,item_id)
+                        DO UPDATE SET quantity=quantity+excluded.quantity''',
+                        (guild, user, GLIMMER_PEARL_ID, material_count))
             self.db.execute('UPDATE rpg_fishing_players SET xp=xp+? WHERE guild_id=? AND user_id=?',
                             (gained_xp, guild, user))
             result = dict(spot_id=spot_id, items=dict(items), catches=catches, bonus=bonus,
                           bonus_catch=bonus_catch, big_fish=big_fish,
                           mastery_percent=mastery_percent, mastery_bonus=mastery_bonus,
+                          accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
             # Separate RNG keeps encounter rolls independent of fish/rod quality.

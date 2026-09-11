@@ -216,6 +216,18 @@ class FishingTests(unittest.TestCase):
         result = self.fishing.claim(1, 1, now=1800)
         self.assertEqual((result['items'], result['xp']), ({'fishing:bay:common': 2}, 5180))
 
+    def test_level_sixty_bay_can_grant_bound_glimmer_pearls_from_base_catches(self):
+        self.fishing.state(1, 1)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(60),))
+        self.fishing.material_rng = SequenceRandom([0.0, 0.0])
+        self.fishing.start(1, 1, 'bay', 'short', now=0)
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertEqual(result['accessory_material'], 2)
+        self.assertEqual(self.characters.inventory_counts(1, 1)['life:fishing:glimmer_pearl'], 2)
+        self.assertFalse(ITEMS['life:fishing:glimmer_pearl'].transferable)
+
     def test_exact_sale_prices_transfer_and_notifications(self):
         self.grant('fishing:pond:coin', 'fishing:pond:common')
         self.assertEqual(item_sell_price(ITEMS['fishing:pond:coin']), 100)

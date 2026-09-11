@@ -61,6 +61,9 @@ class FishingNotificationView(_NotificationView):
             lines = [f'{ITEMS[key].name} ×{count}' for key, count in result['items'].items()]
             description = (f'已從 **{SPOTS[result["spot_id"]].name}** 收竿，共捕獲 {result["catches"]} 次。\n'
                            + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。')
+            if result.get('accessory_material'):
+                description += (f'\n額外獲得 {ITEMS["life:fishing:glimmer_pearl"].name} '
+                                f'×{result["accessory_material"]}！')
             if result.get('mastery_bonus'):
                 description += f'\n熟練產量額外取得 {result["mastery_bonus"]} 份物品。'
             if result.get('big_fish'):
@@ -120,6 +123,8 @@ class FarmingNotificationView(_NotificationView):
             plant = PLANTS[result['plant_id']]
             description = (f'已從 **{LOCATIONS[result["location_id"]]}** 收成 **{plant.name} ×{result["quantity"]}**，'
                            f'獲得 {result["xp"]:,} 農耕 XP。')
+            if result.get('accessory_material'):
+                description += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
             if restart:
                 description += (f'\n\n已在 **{restart["location"]}** 再次種下 **{restart["plant"].name}**，'
                                 f'<t:{int(restart["ready_at"])}:R>成熟。')

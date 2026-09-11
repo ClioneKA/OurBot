@@ -147,6 +147,55 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(restitched.stats[3], ITEMS['raid:0'].stats[3] + 2)
         self.assertEqual(self.store.gold(1, 1), 2000 - EMBROIDERY_PRICE * 2)
 
+    def test_multiple_embroidery_slots_allow_basic_duplicates_but_one_witch_pattern(self):
+        self.level(60)
+        self.characters.change_job(1, 1, '弓兵')
+        accessory_id = self.characters.grant_item(1, 1, 'life:fishing:glimmer')[0]
+        token = f'instance:{accessory_id}'
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,5000)')
+            self.store.db.execute("INSERT INTO rpg_witch_unlocks VALUES (1,1,'hiro','test')")
+            self.store.db.execute("INSERT INTO rpg_witch_unlocks VALUES (1,1,'hanna','test')")
+        self.characters.embroider_accessory(1, 1, token, 'heart', 0)
+        self.characters.embroider_accessory(1, 1, token, 'heart', 1)
+        resolved = self.characters.resolved_item(self.characters.get_instance(1, 1, token))
+        self.assertEqual(resolved.stats[0], ITEMS['life:fishing:glimmer'].stats[0] + 4)
+        self.characters.grant_item(1, 1, 'witch:thread', 6)
+        self.characters.embroider_accessory(1, 1, token, 'witch_dawn', 0)
+        with self.assertRaisesRegex(CharacterError, '最多只能有一個'):
+            self.characters.embroider_accessory(1, 1, token, 'witch_feather', 1)
+
+    def test_lifestyle_accessory_crafting_and_hanna_brooch_upgrade_are_atomic(self):
+        from core.rpg_fishing import Fishing
+        Fishing(self.store).state(1, 1)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(60),))
+            self.store.db.execute("INSERT INTO rpg_inventory VALUES (1,1,'life:fishing:glimmer_pearl',10)")
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,5000)')
+        crafted = self.characters.craft_lifestyle_accessory(1, 1, 'fishing')
+        self.assertEqual(crafted.item_id, 'life:fishing:glimmer')
+        self.assertEqual(self.store.gold(1, 1), 0)
+        with self.assertRaises(CharacterError):
+            self.characters.craft_lifestyle_accessory(1, 1, 'fishing')
+
+        with self.store.db:
+            self.store.db.execute('INSERT OR REPLACE INTO rpg_hanna_affinity VALUES (1,1,25)')
+        brooch = self.characters.upgrade_hanna_brooch(1, 1)
+        self.assertEqual(brooch.item_id, 'hanna:brooch:0')
+        self.characters.set_affixes(1, 1, brooch.token, (('embroidery:heart', 'stat:0', 2),))
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_hanna_affinity SET score=100 WHERE guild_id=1 AND user_id=1')
+        upgraded = self.characters.upgrade_hanna_brooch(1, 1)
+        self.assertEqual((upgraded.instance_id, upgraded.item_id, len(upgraded.affixes)),
+                         (brooch.instance_id, 'hanna:brooch:3', 1))
+
+    def test_lifestyle_accessory_materials_sell_for_gold_but_cannot_be_given(self):
+        for item_id in ('life:fishing:glimmer_pearl', 'life:farming:star_fiber'):
+            self.assertEqual(item_sell_price(ITEMS[item_id]), 100)
+            self.assertTrue(item_sellable(ITEMS[item_id]))
+            self.assertFalse(ITEMS[item_id].transferable)
+
     def test_tailor_does_not_consume_or_modify_items_when_gold_is_insufficient(self):
         self.level(45)
         self.characters.change_job(1, 1, '弓兵')
