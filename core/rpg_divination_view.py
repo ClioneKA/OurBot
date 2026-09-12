@@ -34,6 +34,11 @@ class DivinationView(discord.ui.View):
             summon.callback = summon_callback
             self.add_item(summon)
         add_help(self, 1, 'life', 'divination')
+        back = discord.ui.Button(label='返回移動', row=1)
+        async def back_callback(interaction):
+            await self.handle(interaction, 'travel')
+        back.callback = back_callback
+        self.add_item(back)
         add_back(self, 1)
         refresh = discord.ui.Button(label='重新整理', row=1)
         close = discord.ui.Button(label='關閉', row=1)
@@ -81,8 +86,8 @@ class DivinationView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('占卜室已關閉，請從 /冒險 重新進入。', ephemeral=True)
                 return
-            if action == 'home':
-                await navigate(self, interaction, 'home')
+            if action in ('home', 'travel'):
+                await navigate(self, interaction, action)
                 return
             if action == 'close':
                 self.closed = True

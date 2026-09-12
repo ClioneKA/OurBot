@@ -184,3 +184,9 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(room.stop)
         self.assertIn('瑪格的占卜室', room.embed().title)
         self.assertIn('300 金幣', room.embed().description)
+        labels = [child.label for child in room.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('返回移動', labels)
+        await room.handle(self.interaction, 'travel')
+        travel = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(travel.stop)
+        self.assertIn('移動', travel.embed().title)

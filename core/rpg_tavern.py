@@ -447,6 +447,7 @@ class TavernView(discord.ui.View):
                          discord.ButtonStyle.success)
             self.children[-1].disabled = quest['claimed']
         add_help(self, 3, 'life', 'tavern')
+        self._button('返回移動', 'travel', 3)
         add_back(self, 3)
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)
@@ -512,9 +513,9 @@ class TavernView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('酒館面板已關閉，請使用 /酒館 重新進入。', ephemeral=True)
                 return
-            if action == 'home':
+            if action in ('home', 'travel'):
                 from core.rpg_menu import navigate
-                await navigate(self, interaction, 'home')
+                await navigate(self, interaction, action)
                 return
             if action == 'close':
                 self.closed = True
