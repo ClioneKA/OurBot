@@ -6,7 +6,7 @@ import unittest
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import Tactics, rule_skill
 from core.rpg_character import CharacterError, Characters
-from core.rpg_loadouts import Loadouts
+from core.rpg_loadouts import Loadouts, equipment_slot_key
 from core.settings import RPGSettings
 
 
@@ -120,3 +120,11 @@ class LoadoutStorageTests(unittest.TestCase):
         self.assertNotIn('provisions', profile['data'])
         self.loadouts.clear(1, 1, 3)
         self.assertIsNone(self.loadouts.get(1, 1, 3)['data'])
+
+    def test_saved_equipment_uses_canonical_slot_order(self):
+        self.characters.change_job(1, 1, '僧侶')
+        charm_id = self.characters.grant_item(1, 1, 'puppet:twin_charm')[0]
+        self.characters.equip(1, 1, charm_id, 2)
+        profile = self.loadouts.save(1, 1, 1)
+        slots = list(profile['data']['equipment'])
+        self.assertEqual(slots, sorted(slots, key=equipment_slot_key))

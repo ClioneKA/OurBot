@@ -9,6 +9,14 @@ from core.rpg_character import CharacterError, JOBS, item_level, stage_for
 
 
 FREE_LOADOUT_SLOTS = 3
+EQUIPMENT_SLOT_ORDER = ('武器', '套裝', '飾品1', '飾品2', '飾品3', '飾品4', '飾品5')
+
+
+def equipment_slot_key(slot):
+    try:
+        return EQUIPMENT_SLOT_ORDER.index(slot)
+    except ValueError:
+        return len(EQUIPMENT_SLOT_ORDER)
 
 
 class Loadouts:
@@ -63,7 +71,10 @@ class Loadouts:
                 raise CharacterError('民兵不能保存出戰配置，請先在 Lv.10 完成轉職。')
             rules = sorted(self.tactics.rules(guild, user, state['job']), key=lambda rule: rule.slot)
             passive = self.tactics.passive(guild, user, state['job'])
-            data = dict(job=state['job'], equipment=state['equipped_instances'],
+            equipment = {equip_slot: state['equipped_instances'][equip_slot]
+                         for equip_slot in state['slots']
+                         if equip_slot in state['equipped_instances']}
+            data = dict(job=state['job'], equipment=equipment,
                         rules=[asdict(rule) for rule in rules],
                         basic_target=self.tactics.basic_target(guild, user, state['job']),
                         passive_id=passive.id if passive else None)
@@ -107,7 +118,7 @@ class Loadouts:
         validated_equipment = {}
         accessory_ids = set()
         instance_ids = set()
-        for slot, raw_id in equipment.items():
+        for slot, raw_id in sorted(equipment.items(), key=lambda entry: equipment_slot_key(entry[0])):
             if type(raw_id) is not int or raw_id in instance_ids:
                 raise CharacterError('配置中的裝備資料無效。')
             instance_ids.add(raw_id)

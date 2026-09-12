@@ -6,6 +6,7 @@ import discord
 from core.rpg_battle import Rule, TARGETS, FIXED_TARGETS, condition_text, passive_description, rule_skill
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
+from core.rpg_loadouts import equipment_slot_key
 from core.rpg_menu import add_back, navigate
 
 
@@ -69,7 +70,8 @@ class LoadoutView(discord.ui.View):
             description = '尚未保存。請先調整職業、裝備與技能，再按「保存目前配置」。'
         else:
             equipment = []
-            for slot, instance_id in data.get('equipment', {}).items():
+            for slot, instance_id in sorted(
+                    data.get('equipment', {}).items(), key=lambda entry: equipment_slot_key(entry[0])):
                 instance = self.cog.characters.get_instance(self.guild_id, self.owner.id, instance_id)
                 name = self.cog.characters.resolved_item(instance).name if instance else '物品已遺失'
                 equipment.append(f'{slot}：{name} #{instance_id}')
@@ -134,8 +136,9 @@ class LoadoutView(discord.ui.View):
                     profile = self.current()
                     state = self.cog.loadouts.apply(self.guild_id, self.owner.id, self.slot)
                     notice = f'已套用「{profile["name"]}」。'
-                    missing_slots = [slot for slot in profile['data']['equipment']
-                                     if slot not in state['equipped_instances']]
+                    missing_slots = sorted(
+                        (slot for slot in profile['data']['equipment']
+                         if slot not in state['equipped_instances']), key=equipment_slot_key)
                     if missing_slots:
                         notice += f'已略過遺失的裝備：{"、".join(missing_slots)}，對應欄位留空。'
                 elif action == 'rename_value':

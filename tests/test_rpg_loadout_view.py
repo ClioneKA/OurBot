@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from types import SimpleNamespace
 from weakref import WeakSet
 import tempfile
@@ -78,6 +79,26 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('武器', state['equipped_instances'])
         self.assertEqual(state['equipped_instances'], {
             slot: value for slot, value in saved['data']['equipment'].items() if slot != '武器'})
+
+    async def test_equipment_is_displayed_in_slot_order(self):
+        charm_id = self.cog.characters.grant_item(1, 1, 'puppet:twin_charm')[0]
+        self.cog.characters.equip(1, 1, charm_id, 2)
+        await self.view.handle(self.interaction, 'save')
+        profile = self.view.current()
+        equipment = profile['data']['equipment']
+        profile['data']['equipment'] = {
+            '飾品2': equipment['飾品2'],
+            '套裝': equipment['套裝'],
+            '武器': equipment['武器'],
+        }
+        with self.store.db:
+            self.store.db.execute(
+                'UPDATE rpg_loadouts SET data=? WHERE guild_id=1 AND user_id=1 AND slot=1',
+                (json.dumps(profile['data'], ensure_ascii=False),))
+
+        description = self.view.embed().description
+        self.assertLess(description.index('武器：'), description.index('套裝：'))
+        self.assertLess(description.index('套裝：'), description.index('飾品2：'))
 
     async def test_main_menu_navigates_to_loadouts(self):
         menu = AdventureView(self.cog, self.interaction)
