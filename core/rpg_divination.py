@@ -4,6 +4,7 @@ import random
 import time
 
 from core.rpg_character import CharacterError
+from core.rpg import record_gold
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ class Divinations:
                 WHERE guild_id=? AND user_id=? AND gold>=?''', (cost, guild, user, cost))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，這次占卜需要 {cost:,} 金幣。')
+            record_gold(self.db, guild, user, -cost, 'divination')
             keys = tuple(CARDS)
             card = self.rng.choices(keys, weights=[CARDS[key].weight for key in keys], k=1)[0]
             self.db.execute('''INSERT INTO rpg_divinations

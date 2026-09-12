@@ -637,6 +637,59 @@ class RPG(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.command(name='經濟統計', description='管理員查看近期金幣產出、消耗與餘額分布')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.rename(days='天數')
+    async def economy_statistics(self, interaction: discord.Interaction,
+                                 days: app_commands.Range[int, 1, 365] = 30):
+        if interaction.guild_id is None or not interaction.permissions.administrator:
+            await interaction.response.send_message('只有伺服器管理員可以查看經濟統計。', ephemeral=True)
+            return
+        report = self.store.economy_report(interaction.guild_id, time.time() - days * 86400)
+        balances, flow = report['balances'], report['flow']
+        source_names = {
+            'raid_reward': '討伐獎勵', 'maze_reward': '繪境迷宮',
+            'expedition_reward': '遠征獎勵', 'item_sale': '物品賣出',
+            'crystal_sale': '結晶賣出', 'shop_purchase': '商店購買',
+            'tailor_dye': '裁縫所染色', 'tailor_embroidery': '裁縫所刺繡',
+            'lifestyle_craft': '生活飾品製作', 'crystal_removal': '結晶拆除',
+            'divination': '占卜', 'slot_expansion': '配方格擴充',
+            'tavern_drink': '酒館請客', 'tavern_refund': '請客退款',
+            'bounty': '懸賞討伐', 'bounty_refund': '懸賞退款',
+        }
+        median = balances['median']
+        median_text = f'{median:,.1f}' if median % 1 else f'{int(median):,}'
+        embed = discord.Embed(
+            title=f'安安大冒險｜最近 {days} 天經濟統計', color=0xD4A017,
+            description=(f'產出 **{flow["produced"]:,}**（日均 {flow["produced"] / days:,.1f}）｜'
+                         f'消耗 **{flow["spent"]:,}**（日均 {flow["spent"] / days:,.1f}）\n'
+                         f'退款 **{flow["refunded"]:,}**｜'
+                         f'淨變動 **{flow["produced"] + flow["refunded"] - flow["spent"]:+,}** 金幣\n'
+                         f'{flow["entries"]:,} 筆變動｜{flow["users"]:,} 位冒險者'))
+        embed.add_field(
+            name='目前餘額分布',
+            value=(f'{balances["players"]:,} 位冒險者｜總額 {balances["total"]:,}\n'
+                   f'平均 {balances["average"]:,.1f}｜中位數 {median_text}｜'
+                   f'最高 {balances["maximum"]:,}｜零餘額 {balances["zero"]:,} 人'),
+            inline=False)
+        lines = []
+        for source, produced, spent, entries in report['sources']:
+            parts = []
+            if produced:
+                parts.append(f'+{produced:,}')
+            if spent:
+                parts.append(f'-{spent:,}')
+            lines.append(f'{source_names.get(source, source)}：{" ／ ".join(parts)}｜{entries:,} 筆')
+        embed.add_field(name='分類流水', value='\n'.join(lines)[:1024] or '這段期間尚無新版金幣流水。', inline=False)
+        drop_lines = [f'{item_display_name(ITEMS[item_id]) if item_id in ITEMS else item_id}：{quantity:,}'
+                      for item_id, quantity in report['raid_drops']]
+        embed.add_field(name='討伐物品產出｜前 10 名',
+                        value='\n'.join(drop_lines)[:1024] or '這段期間尚無討伐掉落。', inline=False)
+        embed.set_footer(text='餘額分布含既有角色；產出與消耗僅統計本功能上線後的變動，不回溯推測舊流水。')
+        await interaction.response.send_message(embed=embed, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     def skills_embed(self, guild, user):
         state = self.characters.snapshot(guild, user)
         embed = discord.Embed(title=f'{state["title"]}・自動技能', color=0x8B5CF6,

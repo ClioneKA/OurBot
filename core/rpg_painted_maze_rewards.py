@@ -4,6 +4,7 @@ import random
 import time
 
 from core.rpg_character import ITEMS, MAZE_CHOICE_BOXES, CharacterError, add_owned_item
+from core.rpg import record_gold
 
 
 JOB_KEYS = {
@@ -162,6 +163,8 @@ class PaintedMazeRewardStore:
                 self.db.execute('''INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?)
                     ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold''',
                     (room['guild_id'], user_id, gold))
+                record_gold(self.db, room['guild_id'], user_id, gold, 'maze_reward',
+                            f'{room_id}:{checkpoint}', now)
                 result.append(dict(user_id=user_id, xp=xp, gold=gold))
             return result
 

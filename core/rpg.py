@@ -1,5 +1,7 @@
 """Persistent server-local XP and voice participation accounting."""
 from bisect import bisect_right
+from collections import Counter
+import json
 from math import floor
 from pathlib import Path
 import sqlite3
@@ -8,6 +10,17 @@ from datetime import datetime, timedelta, timezone
 
 
 MAX_LEVEL = 120
+
+
+def record_gold(db, guild_id, user_id, amount, source, reference=None, now=None):
+    """Record one already-applied wallet change inside the caller's transaction."""
+    amount = int(amount)
+    if not amount:
+        return
+    db.execute('''INSERT INTO rpg_gold_ledger
+        (guild_id,user_id,amount,source,reference,created_at) VALUES (?,?,?,?,?,?)''',
+        (guild_id, user_id, amount, source, reference,
+         time.time() if now is None else now))
 
 
 def _experience_thresholds():
@@ -81,6 +94,13 @@ class RPGStore:
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             gold INTEGER NOT NULL DEFAULT 0 CHECK (gold >= 0),
             PRIMARY KEY (guild_id, user_id))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_gold_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL CHECK (amount != 0), source TEXT NOT NULL,
+            reference TEXT, created_at REAL NOT NULL)''')
+        self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_gold_ledger_guild_time
+            ON rpg_gold_ledger(guild_id,created_at)''')
         self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_divinations (
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             day TEXT NOT NULL, draws INTEGER NOT NULL DEFAULT 0,
@@ -105,6 +125,57 @@ class RPGStore:
         row = self.db.execute('SELECT xp FROM players WHERE guild_id=? AND user_id=?',
                               (guild_id, user_id)).fetchone()
         return row[0] if row else 0
+
+    def economy_report(self, guild_id, since):
+        balances = [row[0] for row in self.db.execute('''SELECT COALESCE(w.gold,0)
+            FROM players p LEFT JOIN rpg_wallets w
+            ON w.guild_id=p.guild_id AND w.user_id=p.user_id
+            WHERE p.guild_id=? ORDER BY COALESCE(w.gold,0)''', (guild_id,))]
+        count = len(balances)
+        median = (0 if not count else balances[count // 2] if count % 2 else
+                  (balances[count // 2 - 1] + balances[count // 2]) / 2)
+        flow = self.db.execute('''SELECT
+            COALESCE(SUM(CASE WHEN amount>0 AND source NOT LIKE '%_refund' THEN amount ELSE 0 END),0),
+            COALESCE(SUM(CASE WHEN amount>0 AND source LIKE '%_refund' THEN amount ELSE 0 END),0),
+            COALESCE(-SUM(CASE WHEN amount<0 THEN amount ELSE 0 END),0),
+            COUNT(*), COUNT(DISTINCT user_id)
+            FROM rpg_gold_ledger WHERE guild_id=? AND created_at>=?''',
+            (guild_id, since)).fetchone()
+        sources = self.db.execute('''SELECT source,
+            SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),
+            -SUM(CASE WHEN amount<0 THEN amount ELSE 0 END), COUNT(*)
+            FROM rpg_gold_ledger WHERE guild_id=? AND created_at>=?
+            GROUP BY source ORDER BY SUM(ABS(amount)) DESC,source''',
+            (guild_id, since)).fetchall()
+        drops = Counter()
+        has_raids = all(self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            for table in ('rpg_raids', 'rpg_battle_results'))
+        if has_raids:
+            rows = self.db.execute('''SELECT raids.data FROM rpg_raids raids
+                JOIN rpg_battle_results results ON results.raid_id=raids.id
+                WHERE results.guild_id=? AND results.completed_at>=?''',
+                (guild_id, since)).fetchall()
+            for (raw,) in rows:
+                for reward in json.loads(raw).get('rewards', ()):
+                    for field in ('item', 'fixed_item', 'extra_item', 'food_item'):
+                        if reward.get(field):
+                            drops[reward[field]] += 1
+                    drops.update(reward.get('chance_items') or ())
+                    if reward.get('fishing_item'):
+                        drops[reward['fishing_item']] += reward.get('fishing_quantity', 1)
+                    if reward.get('raid_proofs'):
+                        drops['proof:raid'] += reward['raid_proofs']
+        return dict(
+            balances=dict(players=count, total=sum(balances), median=median,
+                          average=sum(balances) / count if count else 0,
+                          zero=sum(value == 0 for value in balances),
+                          maximum=balances[-1] if balances else 0),
+            flow=dict(produced=flow[0], refunded=flow[1], spent=flow[2],
+                      entries=flow[3], users=flow[4]),
+            sources=sources,
+            raid_drops=drops.most_common(10),
+        )
 
     def has_player(self, guild_id, user_id):
         return self.db.execute('SELECT 1 FROM players WHERE guild_id=? AND user_id=?',

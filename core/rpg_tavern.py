@@ -8,6 +8,7 @@ import uuid
 import discord
 
 from core.rpg_character import CharacterError
+from core.rpg import record_gold
 from core.rpg_commissions import DailyCommissions
 from core.rpg_affinity import hanna_affinity
 from core.rpg_menu import add_help, add_back
@@ -84,6 +85,7 @@ class TavernStore:
                 WHERE guild_id=? AND user_id=? AND gold>=?''', (package.price, guild, host, package.price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，請客需要 {package.price:,} 金幣。')
+            record_gold(self.db, guild, host, -package.price, 'tavern_drink', offer['id'], now)
             self.db.execute('''INSERT INTO rpg_tavern_drinks
                 (id,guild_id,host_id,channel_id,message_id,package_id,capacity,created_at,expires_at,status)
                 VALUES (?,?,?,?,?,?,?,?,?,?)''', tuple(offer.values()))
@@ -110,6 +112,8 @@ class TavernStore:
                 self.db.execute('''INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?)
                     ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold''',
                                 (offer['guild_id'], offer['host_id'], package.price))
+                record_gold(self.db, offer['guild_id'], offer['host_id'], package.price,
+                            'tavern_refund', offer_id)
         return self.offer(offer_id)
 
     def offer(self, offer_id):

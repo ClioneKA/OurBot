@@ -4,7 +4,7 @@ import json
 import math
 import time
 
-from core.rpg import level_for
+from core.rpg import level_for, record_gold
 from core.rpg_fishing_bosses import FISHING_BOSSES, boss_ingredient
 from core.rpg_witch_embroideries import REQUIREMENTS, ensure_unlock_table
 from core.rpg_witch_catalog import PROFILE as WITCH_PROFILE
@@ -1473,6 +1473,7 @@ class Characters:
                                    (item.price, guild_id, user_id, item.price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，需要 {item.price:,} 金幣。')
+            record_gold(self.db, guild_id, user_id, -item.price, 'shop_purchase', item_id)
             self._insert_instance(guild_id, user_id, item_id)
         return item
 
@@ -1556,6 +1557,7 @@ class Characters:
                 WHERE guild_id=? AND user_id=? AND gold>=?''', (price, guild, user, price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，染色需要 {price:,} 金幣。')
+            record_gold(self.db, guild, user, -price, 'tailor_dye', str(instance.instance_id))
             self.db.execute('UPDATE rpg_inventory SET quantity=quantity-1 '
                             'WHERE guild_id=? AND user_id=? AND item_id=?', (guild, user, paint_key))
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
@@ -1606,6 +1608,7 @@ class Characters:
                                    (price, guild, user, price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，刺繡需要 {price:,} 金幣。')
+            record_gold(self.db, guild, user, -price, 'tailor_embroidery', str(instance.instance_id))
             self.db.execute('''INSERT INTO rpg_instance_affixes
                 (instance_id,affix_index,affix_id,effect_key,rolled_value)
                 VALUES (?,?,?,?,?) ON CONFLICT(instance_id,affix_index) DO UPDATE SET
@@ -1654,6 +1657,8 @@ class Characters:
                 (LIFESTYLE_ACCESSORY_PRICE, guild, user, LIFESTYLE_ACCESSORY_PRICE))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，製作需要 {LIFESTYLE_ACCESSORY_PRICE:,} 金幣。')
+            record_gold(self.db, guild, user, -LIFESTYLE_ACCESSORY_PRICE,
+                        'lifestyle_craft', skill)
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
                             'AND item_id=? AND quantity<=0', (guild, user, material_id))
             instance_id = self._insert_instance(guild, user, item_id)
@@ -1857,6 +1862,7 @@ class Characters:
             self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
                             'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold',
                             (guild, user, gold))
+            record_gold(self.db, guild, user, gold, 'item_sale', display_key)
             return gold
         self.db.execute('UPDATE rpg_inventory SET quantity=quantity-? WHERE guild_id=? AND user_id=? AND item_id=?',
                         (quantity, guild, user, key))
@@ -1870,4 +1876,5 @@ class Characters:
         gold = item_sell_price(item) * quantity
         self.db.execute('INSERT INTO rpg_wallets VALUES (?,?,?) '
                         'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold', (guild, user, gold))
+        record_gold(self.db, guild, user, gold, 'item_sale', str(key))
         return gold

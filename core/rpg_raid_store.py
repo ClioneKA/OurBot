@@ -5,7 +5,7 @@ import time
 import uuid
 from decimal import Decimal
 
-from core.rpg import level_for
+from core.rpg import level_for, record_gold
 from core.rpg_character import CharacterError, NOAH_EQUIPMENT, PAINT_ITEMS, add_owned_item
 from core.rpg_monsters import TIER_VICTORY_XP
 from core.rpg_fishing_bosses import boss_ingredient
@@ -199,6 +199,8 @@ class RaidStore:
                                        (payment_gold, guild, payment_user, payment_gold))
                 if not paid.rowcount:
                     raise CharacterError(f'金幣不足，張貼懸賞需要 {payment_gold:,} 金幣。')
+                record_gold(self.db, guild, payment_user, -payment_gold,
+                            'bounty', raid['id'], now)
             balance_version = monster.get('balance_version', 1)
             dynamic = self.difficulty(guild, channel, balance_version) if use_dynamic else 1.0
             if reward_policy is not None:
@@ -236,6 +238,8 @@ class RaidStore:
             self.db.execute('''INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?)
                 ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold''',
                             (raid['guild_id'], payment['user_id'], payment['gold']))
+            record_gold(self.db, raid['guild_id'], payment['user_id'], payment['gold'],
+                        'bounty_refund', raid_id)
             payment['refunded'] = True
             raid['payment'] = payment
             self._save(raid)
@@ -419,6 +423,8 @@ class RaidStore:
                     self.db.execute('INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?) '
                                     'ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=rpg_wallets.gold+excluded.gold',
                                     (raid['guild_id'], p['id'], personal_gold))
+                    record_gold(self.db, raid['guild_id'], p['id'], personal_gold,
+                                'raid_reward', raid['id'])
                 extra_item = None
                 if victory and raid['monster']['kind'] == '城崎諾亞' and rng.random() < 0.02:
                     extra_item = 'noah:unfinished'

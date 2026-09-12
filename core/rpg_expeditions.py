@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 
-from core.rpg import level_for
+from core.rpg import level_for, record_gold
 from core.rpg_character import CharacterError, add_owned_item
 from core.rpg_monsters import TIER_VICTORY_XP
 
@@ -104,6 +104,7 @@ class Expeditions:
                 self.db.execute('''INSERT INTO rpg_wallets VALUES (?,?,?)
                     ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold''',
                     (guild, user, result['gold']))
+                record_gold(self.db, guild, user, result['gold'], 'expedition_reward', session_id, now)
                 add_owned_item(self.db, guild, user, 'proof:raid', result['proofs'])
             result['status'] = 'cancelled' if cancel else 'claimed'
             self.db.execute('UPDATE rpg_expeditions SET status=?,data=? WHERE id=?',

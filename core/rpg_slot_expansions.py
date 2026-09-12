@@ -1,5 +1,7 @@
 """Permanent per-player slot upgrades with atomic, escalating purchases."""
 
+from core.rpg import record_gold
+
 EXPANSIONS = {
     'expansion:loadout': ('出戰配置擴充', '討伐之證', (20, 40, 70, 110, 160)),
     'expansion:recipe': ('料理配方擴充', '金幣', (2000, 4000, 7000, 11000, 16000)),
@@ -48,6 +50,8 @@ class SlotExpansions:
                     WHERE guild_id=? AND user_id=? AND gold>=?''', (price, guild, user, price))
             if not paid.rowcount:
                 raise CharacterError(f'{status["currency"]}不足，需要 {price:,}。')
+            if kind != 'expansion:loadout':
+                record_gold(self.db, guild, user, -price, 'slot_expansion', kind)
             self.db.execute('''INSERT INTO rpg_slot_expansions VALUES (?,?,?,1)
                 ON CONFLICT(guild_id,user_id,kind) DO UPDATE SET purchased=purchased+1''',
                 (guild, user, kind))

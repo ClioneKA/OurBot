@@ -1,10 +1,12 @@
 from pathlib import Path
 from types import SimpleNamespace
+import json
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from core.rpg import MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members, level_for, level_floor
+from core.rpg import (MAX_LEVEL, RPGStore, VoiceTracker, eligible_voice_members,
+                      level_for, level_floor, record_gold)
 from core.settings import SettingsError, load_settings
 
 
@@ -119,6 +121,48 @@ class RPGTests(unittest.TestCase):
                 with self.assertRaises(SettingsError):
                     load_settings(path)
 
+    def test_economy_report_tracks_new_flows_and_existing_balances(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = RPGStore(Path(directory) / 'rpg.db')
+            try:
+                store.create_player(1, 10)
+                store.create_player(1, 20)
+                store.create_player(1, 30)
+                store.create_player(2, 10)
+                with store.db:
+                    store.db.executemany('INSERT INTO rpg_wallets VALUES (?,?,?)',
+                                         [(1, 10, 100), (1, 20, 50), (2, 10, 999)])
+                    record_gold(store.db, 1, 10, 120, 'raid_reward', now=100)
+                    record_gold(store.db, 1, 10, -20, 'divination', now=101)
+                    record_gold(store.db, 1, 20, 50, 'item_sale', now=102)
+                    record_gold(store.db, 2, 10, 999, 'raid_reward', now=103)
+                report = store.economy_report(1, 100)
+                self.assertEqual(report['balances'], dict(
+                    players=3, total=150, median=50, average=50, zero=1, maximum=100))
+                self.assertEqual(report['flow'], dict(
+                    produced=170, refunded=0, spent=20, entries=3, users=2))
+                self.assertEqual(report['sources'], [
+                    ('raid_reward', 120, 0, 1), ('item_sale', 50, 0, 1),
+                    ('divination', 0, 20, 1)])
+                self.assertEqual(report['raid_drops'], [])
+                rewards = [dict(item='raid:0', fixed_item='paint:red',
+                                chance_items=['paint:blue'], food_item='cooking:meat:low',
+                                fishing_item='cooking:boss:pond', fishing_quantity=2,
+                                raid_proofs=3)]
+                with store.db:
+                    store.db.execute('CREATE TABLE rpg_raids (id TEXT PRIMARY KEY,data TEXT)')
+                    store.db.execute('''CREATE TABLE rpg_battle_results
+                        (raid_id TEXT PRIMARY KEY,guild_id INTEGER,completed_at REAL)''')
+                    store.db.execute('INSERT INTO rpg_raids VALUES (?,?)',
+                                     ('raid-1', json.dumps({'rewards': rewards})))
+                    store.db.execute('INSERT INTO rpg_battle_results VALUES (?,?,?)',
+                                     ('raid-1', 1, 103))
+                self.assertEqual(dict(store.economy_report(1, 100)['raid_drops']), {
+                    'proof:raid': 3, 'cooking:boss:pond': 2, 'raid:0': 1,
+                    'paint:red': 1, 'paint:blue': 1, 'cooking:meat:low': 1})
+            finally:
+                store.close()
+
 
 class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_extension_lifecycle_and_message_filters(self):
@@ -134,7 +178,7 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(cog)
                 self.assertEqual({command.name for command in bot.tree.get_commands()},
                                  {'邀請', '冒險', '冒險者', '排行榜', '生成討伐', '開始總力戰',
-                                  '討伐通知', '冒險區域', '戰鬥統計', '酒館',
+                                  '討伐通知', '冒險區域', '戰鬥統計', '經濟統計', '酒館',
                                   '開啟繪境迷宮', '結束繪境迷宮'})
                 invitation_role = SimpleNamespace(mention='<@&99>')
                 cog.invitations.role_for = AsyncMock(return_value=invitation_role)

@@ -5,6 +5,7 @@ import random
 import time
 
 from core.rpg_character import CharacterError, ITEMS
+from core.rpg import record_gold
 
 
 CRYSTAL_TYPES = {
@@ -425,6 +426,7 @@ class CrystalStore:
                 (price, guild_id, user_id, price))
             if not paid.rowcount:
                 raise CharacterError(f'金幣不足，完整拆除需要 {price:,} 金幣。')
+            record_gold(self.db, guild_id, user_id, -price, 'crystal_removal', str(crystal_row[0]))
             self.db.execute('''UPDATE rpg_crystal_instances
                 SET equipment_instance_id=NULL,socket_index=NULL WHERE instance_id=?''', crystal_row)
         return self.get(crystal_row[0])
@@ -441,4 +443,5 @@ class CrystalStore:
             self.db.execute('''INSERT INTO rpg_wallets(guild_id,user_id,gold) VALUES (?,?,?)
                 ON CONFLICT(guild_id,user_id) DO UPDATE SET gold=gold+excluded.gold''',
                 (guild_id, user_id, price))
+            record_gold(self.db, guild_id, user_id, price, 'crystal_sale', str(instance_id))
             return price
