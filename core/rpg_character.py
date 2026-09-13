@@ -1087,6 +1087,24 @@ class Characters:
         instance = self._resolve_instance(guild_id, user_id, reference)
         return self.resolved_item(instance) if instance else ITEMS.get(reference)
 
+    def embroidery_labels(self, guild_id, user_id, reference):
+        """Return every embroidery slot label for one owned equipment instance."""
+        instance = self._resolve_instance(guild_id, user_id, reference)
+        if not instance:
+            return ()
+        slots = ITEMS[instance.item_id].embroidery_slots
+        if not slots:
+            return ()
+        affixes = {index: affix_id for index, affix_id, _, _ in instance.affixes
+                   if affix_id.startswith('embroidery:')}
+        labels = []
+        for index in range(slots):
+            affix_id = affixes.get(index)
+            embroidery_id = affix_id.split(':', 1)[1] if affix_id else None
+            embroidery = EMBROIDERIES.get(embroidery_id)
+            labels.append(embroidery[0] if embroidery else '空')
+        return tuple(labels)
+
     def get_instance(self, guild_id, user_id, reference):
         return self._resolve_instance(guild_id, user_id, reference)
 

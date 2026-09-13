@@ -389,9 +389,14 @@ class RPG(commands.Cog):
         if passive:
             embed.add_field(name='職業被動', value=passive.name, inline=False)
         if showcase:
+            reference = self.characters.showcase_reference(guild_id, member.id)
             item = self.characters.showcase_item(guild_id, member.id)
             detail = item.description or item_text(item)
-            embed.add_field(name='展示品', value=f'**{item.name}**\n{detail}'[:1024], inline=False)
+            embroideries = self.characters.embroidery_labels(guild_id, member.id, reference)
+            embroidery_text = f'\n刺繡：{"｜".join(embroideries)}' if embroideries else ''
+            embed.add_field(name='展示品',
+                            value=f'**{item.name}**\n{detail}{embroidery_text}'[:1024],
+                            inline=False)
         else:
             embed.add_field(name='展示品', value='尚未設定', inline=False)
         fishing_record = self.fishing.display_record(guild_id, member.id)

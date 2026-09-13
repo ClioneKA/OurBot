@@ -283,6 +283,18 @@ class RPGIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 equipment_field = next(field.value for field in panel.embed().fields
                                        if field.name.startswith('裝備欄・'))
                 self.assertEqual('\n'.join(equipment), equipment_field)
+                showcase_id = cog.characters.grant_item(1, 10, 'maze:shadow:radiance')[0]
+                showcase_reference = cog.characters.instance_token(showcase_id)
+                cog.characters.set_affixes(1, 10, showcase_reference, [
+                    ('embroidery:heart', 'stat:0', 2),
+                    ('embroidery:flame', 'stat:1', 2),
+                ])
+                cog.characters.set_showcase(1, 10, showcase_reference)
+                showcase_field = next(field.value for field in cog.adventurer_embed(1, user).fields
+                                      if field.name == '展示品')
+                self.assertIn('**極彩光輪**', showcase_field)
+                self.assertNotIn(f'#{showcase_id}', showcase_field)
+                self.assertIn('刺繡：愛心刺繡｜火焰刺繡｜空', showcase_field)
                 await panel.handle(interaction, 'remove')
                 self.assertEqual(cog.characters.snapshot(1, 10)['total'][0], before)
                 await panel.handle(interaction, 'home')

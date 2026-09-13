@@ -444,6 +444,18 @@ class CharacterTests(unittest.TestCase):
         self.characters.set_showcase(1, 1, None)
         self.assertIsNone(self.characters.showcase(1, 1))
 
+    def test_showcase_embroidery_labels_preserve_slot_order_and_empty_slots(self):
+        instance_id = self.characters.grant_item(1, 1, 'maze:shadow:radiance')[0]
+        reference = self.characters.instance_token(instance_id)
+        self.characters.set_affixes(1, 1, reference, [
+            ('embroidery:heart', 'stat:0', 2),
+            ('embroidery:flame', 'stat:1', 2),
+        ])
+
+        self.assertEqual(self.characters.embroidery_labels(1, 1, reference),
+                         ('愛心刺繡', '火焰刺繡', '空'))
+        self.assertEqual(self.characters.embroidery_labels(1, 1, 'paint:red'), ())
+
     def test_weapons_and_suits_only_grant_direct_stats_and_stability(self):
         self.level(10)
         for job in JOBS:
