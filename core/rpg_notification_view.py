@@ -123,6 +123,10 @@ class FarmingNotificationView(_NotificationView):
             plant = PLANTS[result['plant_id']]
             description = (f'已從 **{LOCATIONS[result["location_id"]]}** 收成 **{plant.name} ×{result["quantity"]}**，'
                            f'獲得 {result["xp"]:,} 農耕 XP。')
+            if result.get('specialization_bonus'):
+                description += f'\n豐收專精額外取得 {result["specialization_bonus"]} 份作物。'
+            if result.get('training_bonus_xp'):
+                description += f'\n研習專精額外取得 {result["training_bonus_xp"]:,} XP。'
             if result.get('accessory_material'):
                 description += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
             if restart:

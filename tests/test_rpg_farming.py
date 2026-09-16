@@ -4,7 +4,7 @@ import unittest
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import CharacterError, Characters
-from core.rpg_farming import Farming, PLANTS
+from core.rpg_farming import Farming, PLANTS, SPECIALIZATIONS
 from core.settings import RPGSettings
 
 
@@ -37,7 +37,9 @@ class FarmingTests(unittest.TestCase):
             ('馬鈴薯', 1), ('晨露藥草', 5), ('小麥', 10), ('魔女番茄', 20),
             ('月鈴草', 25), ('火紅辣椒', 30), ('夜色南瓜', 40),
             ('夢霧草', 45), ('月白米', 50), ('星穗豆', 60),
-            ('霧露菇', 65), ('熔心薑', 70)])
+            ('霧露菇', 65), ('熔心薑', 70), ('潮心蓮藕', 80),
+            ('聖露花', 85), ('逆潮果', 90), ('星環麥', 100),
+            ('夜輝花', 105), ('蝕心椒', 110)])
         with self.assertRaises(CharacterError):
             self.farming.plant(1, 1, 'courtyard', 'dew_herb', now=0)
         with self.assertRaisesRegex(CharacterError, '農耕 Lv.20'):
@@ -95,6 +97,41 @@ class FarmingTests(unittest.TestCase):
         result = self.farming.harvest(1, 1, 'ruins', now=3600)
         self.assertEqual(result['accessory_material'], 1)
         self.assertEqual(self.characters.inventory_counts(1, 1)['life:farming:star_fiber'], 1)
+
+    def test_high_level_crop_xp_rates_and_star_fiber_chances(self):
+        for level, plant_id, seconds, expected_xp in (
+                (80, 'tide_lotus', 3600, 15000),
+                (85, 'sacred_dew_flower', 7200, 30000),
+                (90, 'reverse_tide_fruit', 14400, 60000),
+                (100, 'star_ring_wheat', 3600, 105000),
+                (105, 'nightglow_flower', 7200, 210000),
+                (110, 'eclipse_pepper', 14400, 420000)):
+            self.set_level(level)
+            self.farming.material_rng = FixedRandom(0.0)
+            self.farming.plant(1, 1, 'courtyard', plant_id, now=level * 1000)
+            result = self.farming.harvest(1, 1, 'courtyard',
+                                          now=level * 1000 + seconds)
+            self.assertEqual((result['xp'], result['accessory_material']), (expected_xp, 1))
+
+    def test_specializations_snapshot_rewards_and_active_plot_guard(self):
+        self.set_level(80)
+        self.assertEqual(set(SPECIALIZATIONS), {'abundance', 'study'})
+        self.farming.specialization_rng = FixedRandom(0.99)
+        self.farming.set_specialization(1, 1, 'courtyard', 'abundance')
+        started = self.farming.plant(1, 1, 'courtyard', 'tide_lotus', now=0)
+        self.assertEqual(started['specialization'], 'abundance')
+        with self.assertRaisesRegex(CharacterError, '生長中'):
+            self.farming.set_specialization(1, 1, 'courtyard', 'study')
+        result = self.farming.harvest(1, 1, 'courtyard', now=3600)
+        self.assertEqual((result['quantity'], result['specialization_bonus'], result['xp']),
+                         (3, 1, 15000))
+
+        self.set_level(100)
+        self.farming.set_specialization(1, 1, 'courtyard', 'study')
+        self.farming.plant(1, 1, 'courtyard', 'star_ring_wheat', now=4000)
+        result = self.farming.harvest(1, 1, 'courtyard', now=7600)
+        self.assertEqual((result['quantity'], result['training_bonus_xp'], result['xp']),
+                         (2, 15750, 120750))
 
     def test_cancel_selected_plot_discards_all_progress_and_rewards(self):
         self.set_level(20)

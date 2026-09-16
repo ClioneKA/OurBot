@@ -7,7 +7,8 @@ import discord
 from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_farming import LOCATION_LEVELS, LOCATIONS, PLANTS, farming_progress, growth_text
+from core.rpg_farming import (LOCATION_LEVELS, LOCATIONS, PLANTS, SPECIALIZATIONS,
+                              SPECIALIZATION_LEVEL, farming_progress, growth_text)
 from core.rpg_menu import add_help, navigate
 
 
@@ -57,14 +58,24 @@ class FarmingView(discord.ui.View):
         session = state['sessions'].get(self.location_id)
         active = bool(session and session['status'] == 'active')
         ready = bool(active and time.time() >= session['ready_at'])
-        self._button('種植', 'plant', 2, active, discord.ButtonStyle.success)
-        self._button('收成', 'harvest', 2, not ready, discord.ButtonStyle.primary)
-        self._button('中斷種植', 'cancel', 2, not active, discord.ButtonStyle.danger)
-        self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 2)
-        add_help(self, 3, 'life', 'farming')
-        self._button('返回生活', 'life', 3)
-        self._button('重新整理', 'refresh', 3)
-        self._button('關閉', 'close', 3)
+        if state['level'] >= SPECIALIZATION_LEVEL:
+            current_specialization = state['specializations'].get(self.location_id)
+            self.add_item(PanelSelect('specialization', row=2, placeholder='選擇這塊田的專精',
+                disabled=active, options=[discord.SelectOption(
+                    label=name, value=key,
+                    description=('額外收成 1 份，Lv.100 後有 10% 機率再 +1；額外作物不給 XP'
+                                 if key == 'abundance' else
+                                 '收成 XP +10%，Lv.100 後提高為 +15%'),
+                    default=key == current_specialization)
+                    for key, name in SPECIALIZATIONS.items()]))
+        self._button('種植', 'plant', 3, active, discord.ButtonStyle.success)
+        self._button('收成', 'harvest', 3, not ready, discord.ButtonStyle.primary)
+        self._button('中斷種植', 'cancel', 3, not active, discord.ButtonStyle.danger)
+        self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 3)
+        add_help(self, 4, 'life', 'farming')
+        self._button('返回生活', 'life', 4)
+        self._button('重新整理', 'refresh', 4)
+        self._button('關閉', 'close', 4)
         return state
 
     def embed(self, notice=None):
@@ -80,11 +91,13 @@ class FarmingView(discord.ui.View):
             if state['level'] < LOCATION_LEVELS[location_id]:
                 value = f'農耕 Lv.{LOCATION_LEVELS[location_id]} 解鎖'
             elif not session or session['status'] != 'active':
-                value = '目前閒置'
+                specialization = state['specializations'].get(location_id)
+                value = '目前閒置' + (f'｜{SPECIALIZATIONS[specialization]}專精' if specialization else '')
             else:
                 plant = PLANTS[session['plant_id']]
                 ready = time.time() >= session['ready_at']
                 value = (f'{plant.name}｜種植時 Lv.{session["level_snapshot"]}\n'
+                         f'專精：{SPECIALIZATIONS.get(session.get("specialization"), "無")}\n'
                          f'背包持有 ×{inventory.get(plant.item_id, 0):,}\n') + (
                     '**已成熟，可以收成！**' if ready else f'<t:{int(session["ready_at"])}:R>成熟')
             embed.add_field(name=location_name, value=value, inline=True)
@@ -93,7 +106,8 @@ class FarmingView(discord.ui.View):
                         f'{LOCATIONS[self.location_id]}｜{selected.name}\n'
                         f'背包持有 ×{inventory.get(selected.item_id, 0):,}\n'
                         f'成長 {growth_text(selected.seconds)}｜基礎收成 {selected.base_yield}｜每份 {selected.xp_each} XP\n'
-                        f'料理：{selected.role}', inline=False)
+                        f'料理：{selected.role}\n'
+                        f'田地專精：{SPECIALIZATIONS.get(state["specializations"].get(self.location_id), "尚未設定")}', inline=False)
         embed.add_field(name='成熟通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
             embed.add_field(name='操作結果', value=notice[:1024], inline=False)
@@ -126,15 +140,25 @@ class FarmingView(discord.ui.View):
                     if self.cog.farming.state(self.guild_id, self.owner.id)['level'] < PLANTS[value].level:
                         raise CharacterError(f'農耕 Lv.{PLANTS[value].level} 才能種植{PLANTS[value].name}。')
                     self.plant_id = value
+                elif action == 'specialization' and value in SPECIALIZATIONS:
+                    self.cog.farming.set_specialization(
+                        self.guild_id, self.owner.id, self.location_id, value)
+                    notice = f'{LOCATIONS[self.location_id]}已設定為{SPECIALIZATIONS[value]}專精。'
                 elif action == 'plant':
                     result = self.cog.farming.plant(
                         self.guild_id, self.owner.id, self.location_id, self.plant_id)
                     notice = f'已在{result["location"]}種下{result["plant"].name}。'
+                    if result.get('specialization'):
+                        notice += f'本批使用{SPECIALIZATIONS[result["specialization"]]}專精。'
                 elif action == 'harvest':
                     result = self.cog.farming.harvest(self.guild_id, self.owner.id, self.location_id)
                     plant = PLANTS[result['plant_id']]
                     notice = (f'收成 {plant.name} ×{result["quantity"]}（基礎 {result["base_yield"]}'
-                              f'、等級加成 {result["level_bonus"]}），獲得 {result["xp"]:,} 農耕 XP。')
+                              f'、等級加成 {result["level_bonus"]}'
+                              f'、專精加成 {result.get("specialization_bonus", 0)}），'
+                              f'獲得 {result["xp"]:,} 農耕 XP。')
+                    if result.get('training_bonus_xp'):
+                        notice += f'（研習加成 +{result["training_bonus_xp"]:,} XP）'
                     if result.get('accessory_material'):
                         notice += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
                     for location_id, required_level in LOCATION_LEVELS.items():
@@ -143,6 +167,8 @@ class FarmingView(discord.ui.View):
                     for unlocked in PLANTS.values():
                         if unlocked.level > 1 and result['old_level'] < unlocked.level <= result['new_level']:
                             notice += f'\n解鎖新植物：{unlocked.name}！'
+                    if result['old_level'] < SPECIALIZATION_LEVEL <= result['new_level']:
+                        notice += '\n已解鎖田地專精：可為每塊空田選擇豐收或研習！'
                     if result['new_level'] > result['old_level']:
                         notice += f'\n農耕等級提升至 Lv.{result["new_level"]}！'
                 elif action == 'cancel':

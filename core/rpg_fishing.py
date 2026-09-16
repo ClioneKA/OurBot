@@ -36,7 +36,7 @@ DURATIONS = {
     'long': ('8 小時', 8 * 60 * 60, 20),
 }
 
-# XP targets farming's base hourly yield at each plot unlock (200/1200/3600/8000),
+# XP targets farming's base hourly yield at each tier (200/1200/3600/8000/60000/420000),
 # using six catches per two hours and the 6% chance of 1.5x rare-fish XP.
 # Rod bonuses and farming mastery are excluded from this unlock-level baseline.
 SPOTS = {
@@ -60,6 +60,16 @@ SPOTS = {
         ('fishing:bay:weed', 22), ('fishing:bay:coin', 15),
         ('fishing:bay:rod', 3), ('fishing:bay:line', 3),
         ('fishing:bay:hook', 3)), 'fishing:bay:rare'),
+    'temple': FishingSpot('沉沒神殿潮池', 80, 19420, (
+        ('fishing:temple:common', 48), ('fishing:temple:rare', 6),
+        ('fishing:temple:weed', 22), ('fishing:temple:coin', 15),
+        ('fishing:temple:rod', 3), ('fishing:temple:line', 3),
+        ('fishing:temple:hook', 3)), 'fishing:temple:rare'),
+    'eclipse': FishingSpot('星蝕外海', 100, 135920, (
+        ('fishing:eclipse:common', 48), ('fishing:eclipse:rare', 6),
+        ('fishing:eclipse:weed', 22), ('fishing:eclipse:coin', 15),
+        ('fishing:eclipse:rod', 3), ('fishing:eclipse:line', 3),
+        ('fishing:eclipse:hook', 3)), 'fishing:eclipse:rare'),
 }
 
 BIG_FISH = {
@@ -67,12 +77,17 @@ BIG_FISH = {
     'lake': BigFish('魔女湖王鱒', 18_000),
     'waterway': BigFish('幽淵巨口魚', 30_000),
     'bay': BigFish('月潮巨鮪', 60_000),
+    'temple': BigFish('沉殿皇帶魚', 120_000),
+    'eclipse': BigFish('星蝕巨鯨鯊', 240_000),
 }
+ISLAND_ANGLER_FISH = ('pond', 'lake', 'waterway', 'bay')
+STAR_SEA_FISH = tuple(BIG_FISH)
 
 WEIGHT_RANGES = {'short': (80, 110), 'medium': (90, 125), 'long': (100, 150)}
 ROD_WEIGHT_FLOOR = {
     'fishing:rod:simple': 0, 'fishing:rod:magic': 5,
     'fishing:rod:glow': 10, 'fishing:rod:star_tide': 15,
+    'fishing:rod:sacred_tide': 20, 'fishing:rod:eclipse': 25,
 }
 
 ROD_BONUS = {
@@ -81,6 +96,8 @@ ROD_BONUS = {
     'fishing:rod:magic': (0.3, 1.1),
     'fishing:rod:glow': (0.4, 1.2),
     'fishing:rod:star_tide': (0.5, 1.2),
+    'fishing:rod:sacred_tide': (0.6, 1.2),
+    'fishing:rod:eclipse': (0.7, 1.2),
 }
 
 ROD_ORDER = tuple(ROD_BONUS)
@@ -94,6 +111,10 @@ RECIPES = {
                          'fishing:waterway:line', 'fishing:waterway:hook'),
     'fishing:rod:star_tide': ('fishing:rod:glow', 'fishing:bay:rod',
                               'fishing:bay:line', 'fishing:bay:hook'),
+    'fishing:rod:sacred_tide': ('fishing:rod:star_tide', 'fishing:temple:rod',
+                                'fishing:temple:line', 'fishing:temple:hook'),
+    'fishing:rod:eclipse': ('fishing:rod:sacred_tide', 'fishing:eclipse:rod',
+                            'fishing:eclipse:line', 'fishing:eclipse:hook'),
 }
 
 
@@ -200,6 +221,11 @@ class Fishing:
             WHERE guild_id=? AND user_id=? ORDER BY best_caught_at''', (guild, user)).fetchall()
         return [dict(zip(('fish_id', 'best_weight_g', 'best_caught_at', 'best_rod_id',
                           'best_duration_id', 'caught_count'), row)) for row in rows]
+
+    def level(self, guild, user):
+        row = self.db.execute('SELECT xp FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
+                              (guild, user)).fetchone()
+        return level_for(row[0]) if row else 1
 
     def display_record(self, guild, user):
         row = self.db.execute('''SELECT r.fish_id,r.best_weight_g,r.best_caught_at,

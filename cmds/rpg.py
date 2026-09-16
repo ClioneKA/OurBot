@@ -18,7 +18,7 @@ from core.rpg_loadouts import Loadouts
 from core.rpg_raids import RaidService
 from core.rpg_total_raids import TotalRaidService, TOTAL_RAID_BOSSES
 from core.rpg_total_battle import TotalRaidError
-from core.rpg_fishing import BIG_FISH, Fishing, SPOTS
+from core.rpg_fishing import BIG_FISH, ISLAND_ANGLER_FISH, STAR_SEA_FISH, Fishing, SPOTS
 from core.rpg_farming import Farming, LOCATIONS, PLANTS
 from core.rpg_expeditions import Expeditions
 from core.rpg_provisions import Provisions
@@ -282,9 +282,22 @@ class RPG(commands.Cog):
             embed.add_field(name='距離下一級', value=f'{required - progress:,} XP')
         embed.add_field(name='累積經驗', value=f'{xp:,} XP')
         embed.add_field(name='金幣', value=f'{self.store.gold(guild_id, member.id):,} 金幣')
-        fishing_records = self.fishing.records(guild_id, member.id)
-        if len(fishing_records) == len(BIG_FISH):
-            embed.add_field(name='生活稱號', value='魔女島釣師', inline=False)
+        fishing_ids = {record['fish_id'] for record in self.fishing.records(guild_id, member.id)}
+        fishing_level = self.fishing.level(guild_id, member.id)
+        farming_level = self.farming.level(guild_id, member.id)
+        life_titles = []
+        if all(fish_id in fishing_ids for fish_id in ISLAND_ANGLER_FISH):
+            life_titles.append('魔女島釣師')
+        if all(fish_id in fishing_ids for fish_id in STAR_SEA_FISH):
+            life_titles.append('星海釣聖')
+        if fishing_level >= MAX_LEVEL:
+            life_titles.append('傳說釣師')
+        if farming_level >= MAX_LEVEL:
+            life_titles.append('傳說園藝師')
+        if fishing_level >= MAX_LEVEL and farming_level >= MAX_LEVEL:
+            life_titles.append('魔女島生活大師')
+        if life_titles:
+            embed.add_field(name='生活稱號', value='｜'.join(life_titles), inline=False)
         now = time.time()
         embed.add_field(name='今日聊天經驗（台灣時間）', value=
                         f'文字：{self.store.daily_xp(guild_id, member.id, "text", now):,} / {scaled_chat_xp(self.settings.text_daily_xp_limit, xp):,} XP\n'

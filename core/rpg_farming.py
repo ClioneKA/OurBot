@@ -9,7 +9,13 @@ from core.rpg_character import CharacterError
 
 
 STAR_FIBER_ID = 'life:farming:star_fiber'
-STAR_FIBER_CHANCES = {60: 0.03, 65: 0.06, 70: 0.12}
+STAR_FIBER_CHANCES = {
+    60: 0.03, 65: 0.06, 70: 0.12,
+    80: 0.03, 85: 0.06, 90: 0.12,
+    100: 0.03, 105: 0.06, 110: 0.12,
+}
+SPECIALIZATIONS = {'abundance': '豐收', 'study': '研習'}
+SPECIALIZATION_LEVEL = 80
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,18 @@ PLANTS = {
                            '活力 Q4｜搭配 逆潮海帶'),
     'ember_ginger': Plant('熔心薑', 'farming:ember_ginger', 70, 4 * 60 * 60, 1, 8000,
                           '猛攻 Q5｜搭配 蝕星龍魚'),
+    'tide_lotus': Plant('潮心蓮藕', 'farming:tide_lotus', 80, 60 * 60, 2, 7500,
+                        '盛宴 Q5｜搭配 聖潮鱸'),
+    'sacred_dew_flower': Plant('聖露花', 'farming:sacred_dew_flower', 85, 2 * 60 * 60, 2, 15000,
+                               '活力 Q5｜搭配 祈潮海葡萄'),
+    'reverse_tide_fruit': Plant('逆潮果', 'farming:reverse_tide_fruit', 90, 4 * 60 * 60, 1, 60000,
+                                '猛攻 Q6｜搭配 逆潮神官魚'),
+    'star_ring_wheat': Plant('星環麥', 'farming:star_ring_wheat', 100, 60 * 60, 2, 52500,
+                             '盛宴 Q6｜搭配 星骸旗鯛'),
+    'nightglow_flower': Plant('夜輝花', 'farming:nightglow_flower', 105, 2 * 60 * 60, 2, 105000,
+                              '活力 Q6｜搭配 宵星海藻'),
+    'eclipse_pepper': Plant('蝕心椒', 'farming:eclipse_pepper', 110, 4 * 60 * 60, 1, 420000,
+                            '猛攻 Q7｜搭配 日蝕天龍魚'),
 }
 
 
@@ -70,10 +88,11 @@ def growth_text(seconds):
 
 
 class Farming:
-    def __init__(self, store, rng=None, material_rng=None):
+    def __init__(self, store, rng=None, material_rng=None, specialization_rng=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
         self.material_rng = material_rng or random.Random()
+        self.specialization_rng = specialization_rng or random.Random()
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -86,12 +105,18 @@ class Farming:
                 level_snapshot INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', result TEXT,
                 notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0,1)),
                 PRIMARY KEY (guild_id,user_id,location_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_specializations (
+                guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, location_id TEXT NOT NULL,
+                specialization TEXT NOT NULL CHECK(specialization IN ('abundance','study')),
+                PRIMARY KEY (guild_id,user_id,location_id))''')
             player_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_farming_players)')}
             if 'notify' not in player_columns:
                 self.db.execute('ALTER TABLE rpg_farming_players ADD COLUMN notify INTEGER NOT NULL DEFAULT 0')
             session_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_farming_sessions)')}
             if 'notified' not in session_columns:
                 self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN notified INTEGER NOT NULL DEFAULT 0')
+            if 'specialization' not in session_columns:
+                self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN specialization TEXT')
 
     def _ensure_player(self, guild, user):
         self.db.execute('INSERT OR IGNORE INTO rpg_farming_players(guild_id,user_id) VALUES (?,?)',
@@ -104,14 +129,46 @@ class Farming:
                                      (guild, user)).fetchone()
         sessions = {}
         for row in self.db.execute('''SELECT location_id,plant_id,planted_at,ready_at,
-                level_snapshot,status,result,notified FROM rpg_farming_sessions
+                level_snapshot,status,result,notified,specialization FROM rpg_farming_sessions
                 WHERE guild_id=? AND user_id=?''', (guild, user)):
-            location, plant, planted, ready, level, status, result, notified = row
+            location, plant, planted, ready, level, status, result, notified, specialization = row
             sessions[location] = dict(plant_id=plant, planted_at=planted, ready_at=ready,
                                       level_snapshot=level, status=status,
                                       result=json.loads(result) if result else None,
-                                      notified=bool(notified))
-        return dict(xp=xp, level=level_for(xp), notify=bool(notify), sessions=sessions)
+                                      notified=bool(notified), specialization=specialization)
+        specializations = dict(self.db.execute('''SELECT location_id,specialization
+            FROM rpg_farming_specializations WHERE guild_id=? AND user_id=?''', (guild, user)))
+        return dict(xp=xp, level=level_for(xp), notify=bool(notify), sessions=sessions,
+                    specializations=specializations)
+
+    def level(self, guild, user):
+        row = self.db.execute('SELECT xp FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
+                              (guild, user)).fetchone()
+        return level_for(row[0]) if row else 1
+
+    def set_specialization(self, guild, user, location_id, specialization):
+        if location_id not in LOCATIONS or specialization not in SPECIALIZATIONS:
+            raise CharacterError('請重新選擇農地專精。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self._ensure_player(guild, user)
+            xp = self.db.execute('SELECT xp FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
+                                 (guild, user)).fetchone()[0]
+            level = level_for(xp)
+            if level < SPECIALIZATION_LEVEL:
+                raise CharacterError(f'農耕 Lv.{SPECIALIZATION_LEVEL} 才能設定田地專精。')
+            if level < LOCATION_LEVELS[location_id]:
+                raise CharacterError(f'農耕 Lv.{LOCATION_LEVELS[location_id]} 才能使用{LOCATIONS[location_id]}。')
+            if self.db.execute('''SELECT 1 FROM rpg_farming_sessions
+                    WHERE guild_id=? AND user_id=? AND location_id=? AND status='active' ''',
+                    (guild, user, location_id)).fetchone():
+                raise CharacterError('作物生長中不能變更這塊田的專精。')
+            self.db.execute('''INSERT INTO rpg_farming_specializations
+                (guild_id,user_id,location_id,specialization) VALUES (?,?,?,?)
+                ON CONFLICT(guild_id,user_id,location_id) DO UPDATE SET
+                specialization=excluded.specialization''',
+                (guild, user, location_id, specialization))
+        return specialization
 
     def plant(self, guild, user, location_id, plant_id, now=None):
         now = time.time() if now is None else now
@@ -134,14 +191,21 @@ class Farming:
                 (guild, user, location_id)).fetchone()
             if row and row[0] == 'active':
                 raise CharacterError(f'{LOCATIONS[location_id]}已有植物，成熟後請先收成。')
+            specialization = None
+            if level >= SPECIALIZATION_LEVEL:
+                specialization_row = self.db.execute('''SELECT specialization
+                    FROM rpg_farming_specializations
+                    WHERE guild_id=? AND user_id=? AND location_id=?''',
+                    (guild, user, location_id)).fetchone()
+                specialization = specialization_row[0] if specialization_row else None
             self.db.execute('''DELETE FROM rpg_farming_sessions
                 WHERE guild_id=? AND user_id=? AND location_id=?''', (guild, user, location_id))
             self.db.execute('''INSERT INTO rpg_farming_sessions
-                (guild_id,user_id,location_id,plant_id,planted_at,ready_at,level_snapshot)
-                VALUES (?,?,?,?,?,?,?)''',
-                (guild, user, location_id, plant_id, now, now + crop.seconds, level))
+                (guild_id,user_id,location_id,plant_id,planted_at,ready_at,level_snapshot,specialization)
+                VALUES (?,?,?,?,?,?,?,?)''',
+                (guild, user, location_id, plant_id, now, now + crop.seconds, level, specialization))
         return dict(location=LOCATIONS[location_id], plant=crop, ready_at=now + crop.seconds,
-                    level_snapshot=level)
+                    level_snapshot=level, specialization=specialization)
 
     def harvest(self, guild, user, location_id, now=None, expected_planted_at=None):
         now = time.time() if now is None else now
@@ -149,12 +213,12 @@ class Farming:
             raise CharacterError('請重新選擇農耕地點。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT plant_id,planted_at,ready_at,level_snapshot,status,result
+            row = self.db.execute('''SELECT plant_id,planted_at,ready_at,level_snapshot,status,result,specialization
                 FROM rpg_farming_sessions WHERE guild_id=? AND user_id=? AND location_id=?''',
                 (guild, user, location_id)).fetchone()
             if not row:
                 raise CharacterError(f'{LOCATIONS[location_id]}目前沒有可以收成的植物。')
-            plant_id, planted_at, ready_at, planted_level, status, saved = row
+            plant_id, planted_at, ready_at, planted_level, status, saved, specialization = row
             if expected_planted_at is not None and planted_at != expected_planted_at:
                 raise CharacterError('這則通知的植物已經收成，請查看目前的農耕狀態。')
             if expected_planted_at is not None and status == 'harvested':
@@ -172,8 +236,17 @@ class Farming:
             guaranteed = min(3, difference // 10)
             chance = 0 if guaranteed == 3 else difference % 10 / 10
             lucky = chance > 0 and self.rng.random() < chance
-            quantity = crop.base_yield + guaranteed + int(lucky)
-            gained_xp = quantity * crop.xp_each
+            level_bonus = guaranteed + int(lucky)
+            specialization_bonus = 0
+            if specialization == 'abundance':
+                specialization_bonus = 1
+                if planted_level >= 100 and self.specialization_rng.random() < 0.10:
+                    specialization_bonus += 1
+            quantity = crop.base_yield + level_bonus + specialization_bonus
+            base_xp = (crop.base_yield + level_bonus) * crop.xp_each
+            training_bonus_xp = (base_xp * (15 if planted_level >= 100 else 10) // 100
+                                 if specialization == 'study' else 0)
+            gained_xp = base_xp + training_bonus_xp
             old_xp = self.db.execute('SELECT xp FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
                                      (guild, user)).fetchone()[0]
             self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
@@ -182,14 +255,17 @@ class Farming:
                 (guild, user, crop.item_id, quantity))
             self.db.execute('UPDATE rpg_farming_players SET xp=xp+? WHERE guild_id=? AND user_id=?',
                             (gained_xp, guild, user))
-            material_count = int(planted_level >= 60 and crop.level >= 60
+            material_count = int(crop.level in STAR_FIBER_CHANCES and planted_level >= crop.level
                                  and self.material_rng.random() < STAR_FIBER_CHANCES[crop.level])
             if material_count:
                 self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
                     VALUES (?,?,?,1) ON CONFLICT(guild_id,user_id,item_id)
                     DO UPDATE SET quantity=quantity+1''', (guild, user, STAR_FIBER_ID))
             result = dict(location_id=location_id, plant_id=plant_id, quantity=quantity,
-                          base_yield=crop.base_yield, level_bonus=guaranteed + int(lucky),
+                          base_yield=crop.base_yield, level_bonus=level_bonus,
+                          specialization=specialization,
+                          specialization_bonus=specialization_bonus,
+                          training_bonus_xp=training_bonus_xp,
                           lucky=lucky, accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)

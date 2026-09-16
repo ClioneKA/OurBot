@@ -116,6 +116,15 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.view.spot_id, 'waterway')
         self.assertTrue(self.view.children[0].options[-1].default)
 
+    async def test_level_one_hundred_defaults_to_eclipse_spot(self):
+        self.view.stop()
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(100),))
+        self.view = FishingView(self.cog, self.interaction)
+        self.assertEqual(self.view.spot_id, 'eclipse')
+        self.assertEqual(self.view.children[0].options[-1].label, '星蝕外海')
+
 
 if __name__ == '__main__':
     unittest.main()

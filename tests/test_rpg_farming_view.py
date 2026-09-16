@@ -79,6 +79,25 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.view.children[0].options[-1].default)
         self.assertTrue(self.view.children[1].options[-1].default)
 
+    async def test_level_eighty_can_set_specialization_and_snapshot_it(self):
+        self.view.stop()
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_farming_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                  (level_floor(80),))
+        self.view = FarmingView(self.cog, self.interaction)
+        specialization = next(child for child in self.view.children
+                              if getattr(child, 'action', None) == 'specialization')
+        self.assertEqual([option.value for option in specialization.options], ['abundance', 'study'])
+        await self.view.handle(self.interaction, 'specialization', 'abundance')
+        with patch('core.rpg_farming.time.time', return_value=100), \
+             patch('core.rpg_farming_view.time.time', return_value=100):
+            await self.view.handle(self.interaction, 'plant')
+        state = self.farming.state(1, 1)
+        self.assertEqual(state['sessions']['ruins']['specialization'], 'abundance')
+        specialization = next(child for child in self.view.children
+                              if getattr(child, 'action', None) == 'specialization')
+        self.assertTrue(specialization.disabled)
+
 
 if __name__ == '__main__':
     unittest.main()

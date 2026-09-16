@@ -36,7 +36,7 @@ class FishingTests(unittest.TestCase):
     def test_rules_and_first_use_grants_one_bound_old_rod(self):
         self.assertEqual([(seconds, catches) for _, seconds, catches in DURATIONS.values()],
                          [(1800, 2), (7200, 6), (28800, 20)])
-        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20, 40, 60])
+        self.assertEqual([spot.level for spot in SPOTS.values()], [1, 20, 40, 60, 80, 100])
         self.assertTrue(all(dict(spot.loot)[spot.rare_item] == 6 for spot in SPOTS.values()))
         self.assertEqual([fishing_mastery(level, SPOTS['pond']) for level in (1, 11, 20, 31, 120)],
                          [0, 10, 10, 30, 30])
@@ -171,6 +171,16 @@ class FishingTests(unittest.TestCase):
         counts = self.characters.inventory_counts(1, 1)
         self.assertNotIn('fishing:rod:glow', counts)
         self.assertEqual(counts['fishing:rod:star_tide'], 1)
+        self.grant('fishing:temple:rod', 'fishing:temple:line', 'fishing:temple:hook')
+        self.fishing.craft_next(1, 1)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertNotIn('fishing:rod:star_tide', counts)
+        self.assertEqual(counts['fishing:rod:sacred_tide'], 1)
+        self.grant('fishing:eclipse:rod', 'fishing:eclipse:line', 'fishing:eclipse:hook')
+        self.fishing.craft_next(1, 1)
+        counts = self.characters.inventory_counts(1, 1)
+        self.assertNotIn('fishing:rod:sacred_tide', counts)
+        self.assertEqual(counts['fishing:rod:eclipse'], 1)
         with self.assertRaisesRegex(CharacterError, '最高階'):
             self.fishing.craft_next(1, 1)
 
@@ -205,7 +215,8 @@ class FishingTests(unittest.TestCase):
 
     def test_level_sixty_bay_and_all_big_fish_names(self):
         self.assertEqual([fish.name for fish in BIG_FISH.values()],
-                         ['百年池王鯉', '魔女湖王鱒', '幽淵巨口魚', '月潮巨鮪'])
+                         ['百年池王鯉', '魔女湖王鱒', '幽淵巨口魚', '月潮巨鮪',
+                          '沉殿皇帶魚', '星蝕巨鯨鯊'])
         self.fishing.state(1, 1)
         with self.store.db:
             self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
@@ -215,6 +226,20 @@ class FishingTests(unittest.TestCase):
         self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
         result = self.fishing.claim(1, 1, now=1800)
         self.assertEqual((result['items'], result['xp']), ({'fishing:bay:common': 2}, 5180))
+
+    def test_level_eighty_and_one_hundred_spots_match_target_xp_rates(self):
+        self.fishing.state(1, 1)
+        for level, spot_id, expected_xp in (
+                (80, 'temple', 38_840), (100, 'eclipse', 271_840)):
+            with self.store.db:
+                self.store.db.execute('UPDATE rpg_fishing_players SET xp=? WHERE guild_id=1 AND user_id=1',
+                                      (level_floor(level),))
+            started = self.fishing.start(1, 1, spot_id, 'short', now=level * 100)
+            self.assertEqual(started['spot'].level, level)
+            self.fishing.rng = SequenceRandom([0.9, 0.0, 0.0])
+            result = self.fishing.claim(1, 1, now=level * 100 + 1800)
+            self.assertEqual(result['xp'], expected_xp)
+            self.assertEqual(result['items'], {f'fishing:{spot_id}:common': 2})
 
     def test_level_sixty_bay_can_grant_bound_glimmer_pearls_from_base_catches(self):
         self.fishing.state(1, 1)

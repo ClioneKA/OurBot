@@ -43,7 +43,7 @@ class NotificationViewTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_fishing.time.time', return_value=1800):
             await view.handle(event, True)
         state = self.fishing.state(1, 1)
-        self.assertEqual(state['xp'], 200)
+        self.assertEqual(state['xp'], 130)
         self.assertEqual(state['session']['status'], 'active')
         self.assertEqual((state['session']['spot_id'], state['session']['duration_id']), ('pond', 'short'))
         self.assertEqual(state['session']['ready_at'], 3600)
@@ -73,7 +73,7 @@ class NotificationViewTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.rpg_fishing.time.time', return_value=1801):
             await view.handle(event, True)
         self.assertEqual(self.fishing.state(1, 1)['session']['status'], 'claimed')
-        self.assertEqual(self.fishing.state(1, 1)['xp'], 200)
+        self.assertEqual(self.fishing.state(1, 1)['xp'], 130)
         embed = event.response.edit_message.await_args.kwargs['embed']
         self.assertIn('通知已失效', embed.title)
         self.assertIsNone(event.response.edit_message.await_args.kwargs['view'])

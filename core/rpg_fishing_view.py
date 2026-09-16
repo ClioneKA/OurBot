@@ -7,8 +7,8 @@ import discord
 from core.rpg import MAX_LEVEL
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_fishing import (BIG_FISH, DURATIONS, RECIPES, ROD_BONUS, SPOTS, fishing_mastery,
-                              fishing_progress, next_rod)
+from core.rpg_fishing import (BIG_FISH, DURATIONS, ISLAND_ANGLER_FISH, RECIPES, ROD_BONUS,
+                              SPOTS, STAR_SEA_FISH, fishing_mastery, fishing_progress, next_rod)
 from core.rpg_menu import add_help, navigate
 from core.rpg_fishing_bosses import encounter_notice
 
@@ -104,8 +104,13 @@ class FishingView(discord.ui.View):
                     if state['display_fish_id'] == fish_id:
                         value += '\n**目前展示中**'
                 embed.add_field(name=f'{SPOTS[fish_id].name}｜{fish.name}', value=value, inline=False)
-            if len(records) == len(BIG_FISH):
-                embed.set_footer(text='已完成全圖鑑：魔女島釣師')
+            titles = []
+            if all(fish_id in records for fish_id in ISLAND_ANGLER_FISH):
+                titles.append('魔女島釣師')
+            if all(fish_id in records for fish_id in STAR_SEA_FISH):
+                titles.append('星海釣聖')
+            if titles:
+                embed.set_footer(text='已解鎖：' + '、'.join(titles))
             if notice:
                 embed.add_field(name='操作結果', value=notice[:1024], inline=False)
             return embed
