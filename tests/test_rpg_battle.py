@@ -1088,24 +1088,26 @@ class BattleTests(unittest.TestCase):
         self.assertEqual(restored.fighters[1].hp, 807)
         self.assertEqual(ally.stats['防禦'], 20)
 
-    def test_guard_clears_and_blocks_cleansable_debuffs(self):
+    def test_guard_preserves_existing_and_blocks_new_cleansable_debuffs(self):
         knight = fighter('騎士', job='騎士', rules=[Rule(2, 1, True, 'always', 'lowest')])
         ally = fighter('隊友')
         ally.effects.update(poison=3, weak=3)
         ally.status_stacks['corruption'] = 2
+        ally.status_stacks['drowning_mark'] = 1
         ally.status_stacks['poison_arrows'] = [
             {'source_id': None, 'damage': 70, 'next_round': 2, 'remaining': 2}]
         battle = Battle([knight, ally, fighter('敵人', 1, rules=[])], seed=1)
         battle.round = 1
         battle.act(knight)
-        self.assertNotIn('poison', ally.effects)
-        self.assertNotIn('weak', ally.effects)
-        self.assertNotIn('corruption', ally.status_stacks)
-        self.assertNotIn('poison_arrows', ally.status_stacks)
+        self.assertEqual(ally.effects['poison'], 3)
+        self.assertEqual(ally.effects['weak'], 3)
+        self.assertEqual(ally.status_stacks['corruption'], 2)
+        self.assertEqual(ally.status_stacks['drowning_mark'], 1)
+        self.assertEqual(len(ally.status_stacks['poison_arrows']), 1)
         self.assertFalse(battle.apply_debuff(ally, 'stun', 2))
         battle.add_corruption(ally)
         self.assertNotIn('stun', ally.effects)
-        self.assertNotIn('corruption', ally.status_stacks)
+        self.assertEqual(ally.status_stacks['corruption'], 2)
 
     def test_hindering_shot_interrupts_without_weakness_or_stun(self):
         archer = fighter('弓兵', job='弓兵', attack=100,

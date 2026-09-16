@@ -2293,7 +2293,6 @@ class Battle:
                     ally.effects['immunity'] = self.round + 1
                     if actor.user_id is not None:
                         ally.effect_sources['guard'] = actor.user_id
-                    self.clear_negative_effects(ally)
                     self.log.append(f'{ally.name} 防禦 +{bonus} 並免疫負面狀態至第 {self.round + 1} 回合結束')
         elif effect in ('bless', 'stance', 'taunt'):
             target.effects[effect] = self.round + (2 if effect == 'bless' else 1)
