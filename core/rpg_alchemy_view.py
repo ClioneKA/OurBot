@@ -5,7 +5,8 @@ import time
 
 import discord
 
-from core.rpg_alchemy import (COMBAT_SKILLS, CORE_ITEM, LIFE_SKILLS, LIFE_WORK_UNLOCKS, RARITIES,
+from core.rpg_alchemy import (COMBAT_SKILLS, COMBAT_SKILL_DETAILS, CORE_ITEM, LIFE_SKILLS,
+                              LIFE_WORK_UNLOCKS, RARITIES,
                               STAT_NAMES, FUEL_CAPACITY, body_acceleration_cost,
                               fuel_value, life_skill_unlocks, material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
@@ -187,15 +188,24 @@ class AlchemyView(discord.ui.View):
                     default=core['id'] == self.core_id) for core in visible_cores]))
             chosen = next((core for core in cores if core['id'] == self.core_id), None)
             if chosen:
+                same_stone = False
+                if self.slot and self.item_id:
+                    selected_domain, selected_index = self.slot.split(':')
+                    selected = chosen['skills'][selected_domain][int(selected_index) - 1]
+                    stone = parse_stone(self.item_id)
+                    same_stone = bool(selected and stone and selected['key'] == stone[1]
+                                      and selected['rarity'] == stone[2])
                 self.button('裝備核心', 'equip_core', 1)
                 self.button('刻入技能石', 'engrave', 1,
-                            disabled=not self.slot or not self.item_id)
+                            disabled=not self.slot or not self.item_id or same_stone)
                 self.button('分解技能石', 'decompose', 1, disabled=not self.item_id)
                 slots = []
                 for domain, skills in chosen['skills'].items():
                     for index, saved in enumerate(skills, 1):
                         label = (COMBAT_SKILLS if domain == 'combat' else LIFE_SKILLS).get(
                             saved['key'], '空白') if saved else '空白'
+                        if saved:
+                            label = f'{saved["rarity"]}・{label}'
                         slots.append(discord.SelectOption(
                             label=f'{"戰鬥" if domain == "combat" else "生活"} {index}｜{label}',
                             value=f'{domain}:{index}', default=f'{domain}:{index}' == self.slot))
@@ -205,7 +215,8 @@ class AlchemyView(discord.ui.View):
                           if quantity and parse_stone(key) and parse_stone(key)[0] == domain]
                 self.add_item(PanelSelect('stone', row=3, placeholder='選擇技能石', disabled=not stones,
                     options=[discord.SelectOption(label=ITEMS[key].name[:100], value=key,
-                        description=f'持有 {inventory[key]}', default=key == self.item_id)
+                        description=f'持有 {inventory[key]}｜{ITEMS[key].description}'[:100],
+                        default=key == self.item_id)
                         for key, _ in stones[:25]] or [
                             discord.SelectOption(label='沒有相符技能石', value='empty')]))
             else:
@@ -372,8 +383,9 @@ class AlchemyView(discord.ui.View):
                 embed.add_field(name=f'候選素體 T{candidate["tier"]}',
                                 value='｜'.join(values), inline=False)
         elif self.page == 'cores':
+            cores = self.cog.alchemy.cores(self.guild_id, self.owner.id)
             lines = []
-            for saved in self.cog.alchemy.cores(self.guild_id, self.owner.id):
+            for saved in cores:
                 skills = [entry for domain in saved['skills'].values() for entry in domain if entry]
                 lines.append(f'#{saved["id"]}｜Lv.{saved["level"]} {saved["orientation"]}'
                              f'{"【已裝備】" if saved["equipped"] else ""}｜已刻印 {len(skills)} 格')
@@ -382,8 +394,39 @@ class AlchemyView(discord.ui.View):
                              '先選核心、再選刻印格與對應技能石；覆蓋不返還舊石。\n\n'
                              + ('\n'.join(lines) if lines else
                                 '尚無已定向核心。Lv.1 胚可用 15 枚討伐之證購買。')))
+            chosen = next((saved for saved in cores if saved['id'] == self.core_id), None)
+            if chosen:
+                for domain, label, pool in (('combat', '戰鬥迴路', COMBAT_SKILLS),
+                                            ('life', '生活迴路', LIFE_SKILLS)):
+                    details = []
+                    for index, saved in enumerate(chosen['skills'][domain], 1):
+                        if not saved:
+                            details.append(f'{index}. 空白')
+                        elif domain == 'combat':
+                            effect = (combat_stone_effect(saved['key'], saved['rarity'], body)
+                                      if body else COMBAT_SKILL_DETAILS[saved['key']])
+                            details.append(
+                                f'{index}. {saved["rarity"]}・{pool[saved["key"]]}｜{effect}')
+                        else:
+                            skill = self.cog.alchemy.life_skill(
+                                self.guild_id, self.owner.id, saved['key'])
+                            work = f'工作力 {skill["work"]:,}' if skill else '需安裝素體'
+                            details.append(
+                                f'{index}. {saved["rarity"]}・{pool[saved["key"]]}｜{work}')
+                    embed.add_field(name=f'核心 #{chosen["id"]}｜{label}',
+                                    value='\n'.join(details), inline=False)
+            pending = parse_stone(self.item_id) if self.item_id else None
+            if pending:
+                domain, key, rarity = pending
+                detail = (combat_stone_effect(key, rarity, body) if domain == 'combat' and body
+                          else COMBAT_SKILL_DETAILS[key] if domain == 'combat'
+                          else f'效果倍率 {RARITIES[rarity][1]:.0%}')
+                embed.add_field(name='待刻印技能石',
+                                value=f'{rarity}・{(COMBAT_SKILLS if domain == "combat" else LIFE_SKILLS)[key]}\n{detail}',
+                                inline=False)
         elif self.page == 'gacha':
             gold = self.cog.store.gold(self.guild_id, self.owner.id)
+            pity = self.cog.alchemy.pity(self.guild_id, self.owner.id)
             embed = discord.Embed(title='煉金人偶｜技能石轉蛋', color=0xB8864B,
                 description=f'**目前金幣**　{gold:,}\n'
                             '**價格**　單抽 500｜十連 5,000\n\n'
@@ -392,6 +435,8 @@ class AlchemyView(discord.ui.View):
                             '戰鬥石會套用到技能強度；生活石會套用到最終工作力。\n\n'
                             '**保底**　十連至少一顆稀有；'
                             '50 抽未出史詩時保底史詩以上，100 抽未出傳說時保底傳說。\n'
+                            f'**目前進度**　史詩以上保底剩 **{pity["epic_remaining"]}** 抽｜'
+                            f'傳說保底剩 **{pity["legend_remaining"]}** 抽\n'
                             '戰鬥與生活卡池共用保底計數。')
         elif self.page == 'powder':
             powder = self.cog.characters.inventory_counts(
@@ -408,14 +453,14 @@ class AlchemyView(discord.ui.View):
                             f'**已選**　{len(self.decompose_items)} 種／{quantity} 顆\n'
                             f'**預計取得**　{powder} 鍊金粉塵')
         elif self.page == 'automation':
-            farming_thresholds = '｜'.join(
-                f'{label} {threshold}' for threshold, label in LIFE_WORK_UNLOCKS['farming'])
             embed = discord.Embed(title='煉金人偶｜自動化設定', color=0xB8864B,
                 description='生活技能必須已刻入目前核心才會執行。釣魚與農耕會持續到燃料不足；'
                             '自動備餐與討伐響應另外使用討伐觸發條件。\n\n'
-                            f'**農耕工作力門檻**　{farming_thresholds}。\n'
-                            '每塊田的收成與重種都會獨立檢查該門檻。')
+                            '每次「收竿＋再出發」、「收成＋重種」、備餐或討伐響應'
+                            '皆為基礎 100 燃料，並套用耐久折扣。')
         elif self.page == 'stats':
+            farming_thresholds = '｜'.join(
+                f'{label} {threshold}' for threshold, label in LIFE_WORK_UNLOCKS['farming'])
             embed = discord.Embed(title='煉金人偶｜能力說明', color=0xB8864B,
                 description=('**構造**　每點 +10 最大 HP；農耕、討伐響應的副能力。\n'
                              '**動力**　每點 +3 攻擊；自律農耕的主能力。\n'
@@ -426,6 +471,8 @@ class AlchemyView(discord.ui.View):
                              '**技能石稀有度**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%。\n'
                              '生活工作力 = ⌊（主能力×2＋副能力）÷3×稀有度倍率⌋；'
                              '計算後數值會顯示在人偶主介面。\n'
+                             f'**農耕工作力門檻**　{farming_thresholds}；'
+                             '每塊田獨立檢查。\n'
                              '命中依素體 Tier 固定，不受精密影響；暴擊率 10%、閃避率 0%。'))
         elif self.page == 'triggers':
             label = LIFE_SKILLS[self.trigger_skill]

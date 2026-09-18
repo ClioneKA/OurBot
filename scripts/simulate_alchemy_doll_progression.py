@@ -61,9 +61,9 @@ def gacha_samples(samples, rng):
         epic_misses = legend_misses = 0
         epic_at = legend_at = None
         for pull in range(1, 102):
-            if legend_misses >= 100:
+            if legend_misses >= 99:
                 rarity = 3
-            elif epic_misses >= 50:
+            elif epic_misses >= 49:
                 rarity = 3 if rng.random() < 1 / 6 else 2
             else:
                 roll = rng.random()

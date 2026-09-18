@@ -35,6 +35,20 @@ COMBAT_SKILLS = {
     'rally': '緊急修復', 'repair': '修復射線', 'group_repair': '廣域修復',
     'amplify': '動力增幅', 'cleanse': '清除程序', 'interrupt': '妨害射擊',
 }
+COMBAT_SKILL_DETAILS = {
+    'power_strike': '造成 160% 攻擊傷害',
+    'armor_break': '造成 100% 攻擊傷害，並降低目標 80% 防禦',
+    'sweep': '對全體敵人造成 120% 攻擊傷害',
+    'overload': '對單一敵人造成 220% 攻擊傷害',
+    'counter': '吸引單體攻擊，受到直接攻擊後反擊 100% 攻擊傷害',
+    'barrier': '依自身防禦提高全隊防禦',
+    'rally': '恢復自身 50% 最大 HP',
+    'repair': '依自身治療量恢復一名隊友',
+    'group_repair': '恢復全體隊友各 65% 自身治療量',
+    'amplify': '提高一名隊友 40% 攻擊',
+    'cleanse': '移除一名隊友的負面狀態，數量依稀有度提升',
+    'interrupt': '造成 120% 攻擊傷害，命中後打斷蓄力',
+}
 LIFE_SKILLS = {'fishing': '自律釣魚', 'farming': '自律農耕',
                'cooking': '自動備餐', 'raid_signup': '討伐響應'}
 FARMING_WORK_THRESHOLDS = {'courtyard': 19, 'prison': 47, 'greenhouse': 94, 'ruins': 145}
@@ -48,6 +62,8 @@ POWDER_COSTS = {'普通': 10, '稀有': 30, '史詩': 100}
 CORE_ITEM = {level: f'alchemy:core:{level}' for level in (1, 2, 3)}
 POWDER_ITEM = 'alchemy:powder'
 GACHA_PRICE = 500
+EPIC_PITY = 50
+LEGEND_PITY = 100
 CORE1_PROOF_COST = 15
 BODY_ACCEL_GOLD_PER_HOUR = 500
 FUEL_CAPACITY = 1000
@@ -89,9 +105,14 @@ def _register_items():
     for domain, pool in (('combat', COMBAT_SKILLS), ('life', LIFE_SKILLS)):
         for key, name in pool.items():
             for rarity, (_, multiplier, _) in RARITIES.items():
+                detail = (COMBAT_SKILL_DETAILS[key] if domain == 'combat'
+                          else '最終工作力由素體能力與稀有度共同決定')
+                cleanse_count = {'普通': '1 個', '稀有': '2 個', '史詩': '3 個', '傳說': '全部'}[rarity]
+                rarity_effect = (f'可移除 {cleanse_count} 負面狀態' if key == 'cleanse'
+                                 else f'效果倍率 {multiplier:.0%}')
                 ITEMS[stone_id(domain, key, rarity)] = Item(
                     f'{rarity}・{name}技能石', '', '', 0, (0,) * 5, category='製作材料',
-                    description=f'{domain == "combat" and "戰鬥" or "生活"}技能；效果倍率 {multiplier:.0%}。')
+                    description=f'{detail}；{rarity_effect}。')
 
 
 _register_items()
@@ -399,6 +420,9 @@ class AlchemyDolls:
             skills = json.loads(row[0])
             if not 1 <= slot <= len(skills[domain]):
                 raise CharacterError('無效的刻印格。')
+            current = skills[domain][slot - 1]
+            if current and current['key'] == stone[1] and current['rarity'] == stone[2]:
+                raise CharacterError('這個刻印格已經是完全相同的技能石。')
             if any(index != slot - 1 and saved and saved['key'] == stone[1]
                    for index, saved in enumerate(skills[domain])):
                 raise CharacterError('同一迴路不能重複刻入相同技能。')
@@ -415,9 +439,9 @@ class AlchemyDolls:
         return skills
 
     def _draw_rarity(self, epic_misses, legend_misses):
-        if legend_misses >= 100:
+        if legend_misses >= LEGEND_PITY - 1:
             return '傳說'
-        if epic_misses >= 50:
+        if epic_misses >= EPIC_PITY - 1:
             return '傳說' if self.rng.random() < 1 / 6 else '史詩'
         roll = self.rng.random() * 100
         total = 0
@@ -426,6 +450,13 @@ class AlchemyDolls:
             if roll < total:
                 return rarity
         return '傳說'
+
+    def pity(self, guild, user):
+        row = self.db.execute('''SELECT epic_misses,legend_misses FROM rpg_alchemy_pity
+            WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone() or (0, 0)
+        return dict(epic_misses=row[0], legend_misses=row[1],
+                    epic_remaining=max(1, EPIC_PITY - row[0]),
+                    legend_remaining=max(1, LEGEND_PITY - row[1]))
 
     def draw(self, guild, user, domain, count=1):
         pool = COMBAT_SKILLS if domain == 'combat' else LIFE_SKILLS if domain == 'life' else None
@@ -738,9 +769,8 @@ class AlchemyDolls:
         threshold = {'short': 19, 'medium': 65, 'long': 133}.get(duration_id, 10**9)
         if not config.get('enabled') or not skill or skill['work'] < threshold:
             return None
-        restart = state['fuel'] >= self._fuel_cost(state['active_body'], 2)
         source = str(float(started_at))
-        receipt = self._reserve_operation(guild, user, 'fishing', source, 1 + restart, now)
+        receipt = self._reserve_operation(guild, user, 'fishing', source, 1, now)
         if receipt['status'] == 'completed':
             return receipt['result']
         saved = self.db.execute('''SELECT status,result FROM rpg_fishing_sessions
@@ -749,20 +779,12 @@ class AlchemyDolls:
         result = (json.loads(saved[1]) if saved and saved[0] == 'claimed'
                   else fishing.claim(guild, user, now=now, expected_started_at=started_at))
         restarted = False
-        if restart:
-            try:
-                fishing.start(guild, user, spot_id, duration_id, now=now)
-                restarted = True
-            except CharacterError:
-                # The catch remains sealed; record that the optional second action failed.
-                restarted = False
-        if restart and not restarted:
-            refund = receipt['fuel'] - self._fuel_cost(state['active_body'], 1)
-            if refund:
-                with self.db:
-                    self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=fuel+? '
-                                    'WHERE guild_id=? AND user_id=?', (refund, guild, user))
-                receipt['fuel'] -= refund
+        try:
+            fishing.start(guild, user, spot_id, duration_id, now=now)
+            restarted = True
+        except CharacterError:
+            # Collection already completed; preserve the result if restarting becomes invalid.
+            restarted = False
         summary = {'result': result, 'restarted': restarted, 'fuel': receipt['fuel']}
         self._finish_operation(guild, user, 'fishing', source, summary)
         return summary
@@ -786,9 +808,8 @@ class AlchemyDolls:
         threshold = FARMING_WORK_THRESHOLDS.get(location_id, 10**9)
         if not config.get('enabled') or not skill or skill['work'] < threshold:
             return None
-        replant = state['fuel'] >= self._fuel_cost(state['active_body'], 2)
         source = f'{location_id}:{float(planted_at)}'
-        receipt = self._reserve_operation(guild, user, 'farming', source, 1 + replant, now)
+        receipt = self._reserve_operation(guild, user, 'farming', source, 1, now)
         if receipt['status'] == 'completed':
             return receipt['result']
         saved = self.db.execute('''SELECT status,result FROM rpg_farming_sessions
@@ -798,19 +819,12 @@ class AlchemyDolls:
                   else farming.harvest(guild, user, location_id, now=now,
                                        expected_planted_at=planted_at))
         replanted = False
-        if replant:
-            try:
-                farming.plant(guild, user, location_id, plant_id, now=now)
-                replanted = True
-            except CharacterError:
-                replanted = False
-        if replant and not replanted:
-            refund = receipt['fuel'] - self._fuel_cost(state['active_body'], 1)
-            if refund:
-                with self.db:
-                    self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=fuel+? '
-                                    'WHERE guild_id=? AND user_id=?', (refund, guild, user))
-                receipt['fuel'] -= refund
+        try:
+            farming.plant(guild, user, location_id, plant_id, now=now)
+            replanted = True
+        except CharacterError:
+            # Harvest already completed; preserve the result if replanting becomes invalid.
+            replanted = False
         summary = {'result': result, 'replanted': replanted, 'fuel': receipt['fuel']}
         self._finish_operation(guild, user, 'farming', source, summary)
         return summary
@@ -858,7 +872,8 @@ class AlchemyDolls:
                 WHERE guild_id=? AND user_id=?''', ((now, guild, user) for user in users))
 
 
-__all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'LIFE_SKILLS', 'RARITIES',
+__all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
+           'LIFE_SKILLS', 'RARITIES',
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
            'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
            'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks']
