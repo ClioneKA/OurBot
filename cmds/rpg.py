@@ -232,6 +232,15 @@ class RPG(commands.Cog):
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
+    @app_commands.command(name='攻略', description='查看各類討伐模式與怪物攻略')
+    @app_commands.guild_only()
+    async def raid_guide(self, interaction: discord.Interaction):
+        from core.rpg_guide_view import RaidGuideView
+        view = RaidGuideView(interaction)
+        self.menu_views.add(view)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     @app_commands.command(name='酒館', description='開啟冒險者酒館：準備料理、請大家喝一杯與張貼懸賞')
     @app_commands.guild_only()
     async def open_tavern(self, interaction: discord.Interaction):
