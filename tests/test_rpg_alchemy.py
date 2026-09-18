@@ -13,7 +13,7 @@ from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
 from core.rpg_battle import raid_battle
-from core.rpg_alchemy_view import AlchemyView
+from core.rpg_alchemy_view import AlchemyView, combat_stone_effect
 from core.rpg_monsters import prepare_monster
 from core.settings import RPGSettings
 
@@ -150,6 +150,37 @@ class AlchemyDollTests(unittest.TestCase):
         powder = self.alchemy.decompose(1, 10, item_id)
         self.assertEqual(powder, 1)
         self.assertEqual(self.inventory()[POWDER_ITEM], 1)
+
+    def test_main_panel_shows_calculated_stone_effects_and_gacha_gold(self):
+        body = self.make_body()
+        self.characters.grant_item(1, 10, CORE_ITEM[1])
+        core_id = self.alchemy.orient_core(1, 10, 1, '生活')
+        combat_item = stone_id('combat', 'power_strike', '稀有')
+        life_item = stone_id('life', 'fishing', '史詩')
+        self.characters.grant_item(1, 10, combat_item)
+        self.characters.grant_item(1, 10, life_item)
+        self.alchemy.engrave(1, 10, core_id, 'combat', 1, combat_item)
+        self.alchemy.engrave(1, 10, core_id, 'life', 1, life_item)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,10,4321)')
+
+        provisions = SimpleNamespace(presets=lambda guild, user: [])
+        cog = SimpleNamespace(alchemy=self.alchemy, characters=self.characters,
+                              provisions=provisions, store=self.store)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10, mention='<@10>'), guild_id=1)
+        view = AlchemyView(cog, interaction)
+        overview = view.embed()
+        fields = {field.name: field.value for field in overview.fields}
+        self.assertIn('稀有・動力重擊｜128% 攻擊',
+                      fields['戰鬥技能石｜稀有度計算後'])
+        expected_work = self.alchemy.life_skill(1, 10, 'fishing')['work']
+        self.assertIn(f'史詩・自律釣魚｜工作力 {expected_work:,}',
+                      fields['生活技能石｜稀有度計算後'])
+
+        view.page = 'gacha'
+        self.assertIn('**目前金幣**\u30004,321', view.embed().description)
+        self.assertEqual(combat_stone_effect('cleanse', '傳說', body),
+                         '移除全部負面狀態')
 
     def test_batch_decompose_uses_all_selected_stone_quantities(self):
         common = stone_id('life', 'fishing', '普通')

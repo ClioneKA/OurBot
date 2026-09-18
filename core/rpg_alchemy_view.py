@@ -13,6 +13,43 @@ from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
 
 
+def combat_stone_effect(skill_key, rarity, body):
+    """Describe a combat stone after applying rarity and installed body stats."""
+    multiplier = RARITIES[rarity][1]
+    stats = body['stats'] if body else (0,) * 5
+    structure, power, durability, _, spirit = stats
+    attack, defense = power * 3, durability * 3
+    healing, hp = spirit * 3, 50 + structure * 10
+    percent = lambda base: round(base * multiplier)
+    if skill_key == 'power_strike':
+        return f'{percent(160)}% 攻擊（基礎 {int(attack * 1.6 * multiplier):,}）'
+    if skill_key == 'armor_break':
+        return f'{percent(100)}% 攻擊｜降低防禦 {percent(80)}%'
+    if skill_key == 'sweep':
+        return f'全體 {percent(120)}% 攻擊（基礎 {int(attack * 1.2 * multiplier):,}）'
+    if skill_key == 'overload':
+        return f'{percent(220)}% 攻擊（基礎 {int(attack * 2.2 * multiplier):,}）'
+    if skill_key == 'counter':
+        return f'反擊 {percent(100)}% 攻擊'
+    if skill_key == 'barrier':
+        return f'全隊防禦 +{max(1, int(defense * multiplier)):,}'
+    if skill_key == 'rally':
+        return f'自身恢復 {int((hp // 2) * multiplier):,} HP'
+    if skill_key == 'repair':
+        return f'恢復 {int(healing * multiplier):,} HP'
+    if skill_key == 'group_repair':
+        return f'全隊各恢復 {int((healing * 65 // 100) * multiplier):,} HP'
+    if skill_key == 'amplify':
+        return f'攻擊 +{percent(40)}%'
+    if skill_key == 'cleanse':
+        count = {'普通': '1', '稀有': '2', '史詩': '3', '傳說': '全部'}[rarity]
+        return ('移除全部負面狀態' if count == '全部'
+                else f'移除 {count} 個負面狀態')
+    if skill_key == 'interrupt':
+        return f'{percent(120)}% 攻擊，命中後打斷'
+    return f'效果 {multiplier:.0%}'
+
+
 class RenameDollModal(discord.ui.Modal, title='替煉金人偶命名'):
     name = discord.ui.TextInput(label='人偶名稱', max_length=16)
 
@@ -281,6 +318,34 @@ class AlchemyView(discord.ui.View):
                 description=f'**素體**　{body_text}\n**思考核心**　{core_text}\n'
                             f'**燃料**　{state["fuel"]:,}\n**討伐補位**　'
                             f'{"已登錄" if state["registered"] else "未登錄"}')
+            if core:
+                combat_lines = []
+                for saved in core['skills']['combat']:
+                    if saved:
+                        result = (combat_stone_effect(saved['key'], saved['rarity'], body)
+                                  if body else '需安裝素體')
+                        combat_lines.append(
+                            f'{saved["rarity"]}・{COMBAT_SKILLS[saved["key"]]}｜'
+                            f'{result}')
+                life_lines = []
+                for saved in core['skills']['life']:
+                    if saved:
+                        skill = self.cog.alchemy.life_skill(
+                            self.guild_id, self.owner.id, saved['key'])
+                        result = f'工作力 {skill["work"]:,}' if skill else '需安裝素體'
+                        life_lines.append(
+                            f'{saved["rarity"]}・{LIFE_SKILLS[saved["key"]]}｜{result}')
+                if combat_lines:
+                    embed.add_field(name='戰鬥技能石｜稀有度計算後',
+                                    value='\n'.join(combat_lines), inline=False)
+                if life_lines:
+                    embed.add_field(name='生活技能石｜稀有度計算後',
+                                    value='\n'.join(life_lines), inline=False)
+            embed.add_field(name='使用流程',
+                            value='製作並安裝素體 → 定向並裝備思考核心 → '
+                                  '取得技能石並刻入對應迴路。\n'
+                                  '生活技能還需在「自動化設定」開啟；'
+                                  '戰鬥技能會在人偶補位討伐時使用。', inline=False)
         elif self.page == 'body':
             counts = Counter(self.materials)
             selection = '、'.join(f'{ITEMS[key].name}×{amount}' for key, amount in counts.items()) or '尚未選擇'
@@ -308,11 +373,21 @@ class AlchemyView(discord.ui.View):
                 lines.append(f'#{saved["id"]}｜Lv.{saved["level"]} {saved["orientation"]}'
                              f'{"【已裝備】" if saved["equipped"] else ""}｜已刻印 {len(skills)} 格')
             embed = discord.Embed(title='煉金人偶｜思考核心', color=0xB8864B,
-                description='\n'.join(lines) or '尚無已定向核心。Lv.1 胚可用 15 枚討伐之證購買。')
+                description=('核心定向後會綁定，並決定戰鬥／生活刻印格數。'
+                             '先選核心、再選刻印格與對應技能石；覆蓋不返還舊石。\n\n'
+                             + ('\n'.join(lines) if lines else
+                                '尚無已定向核心。Lv.1 胚可用 15 枚討伐之證購買。')))
         elif self.page == 'gacha':
+            gold = self.cog.store.gold(self.guild_id, self.owner.id)
             embed = discord.Embed(title='煉金人偶｜技能石轉蛋', color=0xB8864B,
-                description='普通 70%｜稀有 24%｜史詩 5%｜傳說 1%\n'
-                            '十連至少一顆稀有；50 抽保底史詩、100 抽保底傳說。')
+                description=f'**目前金幣**　{gold:,}\n'
+                            '**價格**　單抽 500｜十連 5,000\n\n'
+                            '**基礎機率**　普通 70%｜稀有 24%｜史詩 5%｜傳說 1%\n'
+                            '**稀有度效果**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%\n'
+                            '戰鬥石會套用到技能強度；生活石會套用到最終工作力。\n\n'
+                            '**保底**　十連至少一顆稀有；'
+                            '50 抽未出史詩時保底史詩以上，100 抽未出傳說時保底傳說。\n'
+                            '戰鬥與生活卡池共用保底計數。')
         elif self.page == 'powder':
             powder = self.cog.characters.inventory_counts(
                 self.guild_id, self.owner.id).get('alchemy:powder', 0)
@@ -339,7 +414,9 @@ class AlchemyView(discord.ui.View):
                              '自律釣魚的副能力。\n'
                              '**精密**　速度 = 35 + 精密÷10（上限 100）；釣魚、備餐與討伐響應的主能力。\n'
                              '**靈質**　每點 +3 治療量，並影響治療、護盾與輔助技能；備餐的副能力。\n\n'
-                             '生活工作力 =（主能力×2＋副能力）÷3×技能石倍率。\n'
+                             '**技能石稀有度**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%。\n'
+                             '生活工作力 = ⌊（主能力×2＋副能力）÷3×稀有度倍率⌋；'
+                             '計算後數值會顯示在人偶主介面。\n'
                              '命中依素體 Tier 固定，不受精密影響；暴擊率 10%、閃避率 0%。'))
         elif self.page == 'triggers':
             label = LIFE_SKILLS[self.trigger_skill]
