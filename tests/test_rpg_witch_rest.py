@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
+import discord
+
 from core.rpg import RPGStore
 from core.rpg_character import Characters, ITEMS, add_owned_item
 from core.rpg_witch_rest import (
@@ -514,6 +516,30 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(saved['archive_at'], saved['finished_at'])
         self.thread.edit.assert_not_awaited()
         self.thread.message.edit.assert_awaited_once()
+
+    async def test_offline_manual_players_are_not_immediately_switched_to_auto(self):
+        members = {user_id: HashableMember(user_id) for user_id in (10, 11, 12)}
+        for member in members.values():
+            member.status = discord.Status.offline
+        self.guild.get_member = members.get
+        participants = [WitchRestRulesTests.participant(user_id) for user_id in members]
+        room = self.rest.create_room(1, 10, 'ema', 100, practice=True)
+        self.rest.change_member(room['id'], 11, 80)
+        self.rest.change_member(room['id'], 12, 80)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        room = self.rest.start_room(room['id'], 10, participants)
+        battle = manual_battle_from_participants(participants, 'ema', 100, seed=7)
+        room.update(boss='魔女試煉', battle=dump_total_battle(battle),
+                    round_deadline=10**20, action_drafts={}, surrender_votes=[])
+        self.rest.save(room)
+        self.bot.channels[self.thread.id] = self.thread
+
+        with patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            await self.service.tick()
+
+        saved = load_total_battle(self.rest.get(room['id'])['battle'])
+        self.assertEqual(saved.auto_players, set())
+        self.assertEqual(saved.waiting_player_ids(), {10, 11, 12})
 
 
 if __name__ == '__main__':

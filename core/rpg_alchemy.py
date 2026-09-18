@@ -94,6 +94,17 @@ def life_skill_unlocks(key, work):
                  if work >= threshold)
 
 
+def life_work(body, key, rarity):
+    """Calculate a life skill's effective work for an arbitrary body and stone."""
+    if not body or key not in LIFE_SKILLS or rarity not in RARITIES:
+        return None
+    primary, secondary = {'fishing': (3, 2), 'farming': (1, 0),
+                          'cooking': (3, 4), 'raid_signup': (3, 0)}[key]
+    stats = body['stats']
+    multiplier = RARITIES[rarity][1]
+    return math.floor((stats[primary] * 2 + stats[secondary]) / 3 * multiplier)
+
+
 def _register_items():
     ITEMS[POWDER_ITEM] = Item('鍊金粉塵', '', '', 0, (0,) * 5, category='製作材料',
                               description='分解技能石取得；可兌換指定的普通、稀有或史詩技能石。',
@@ -591,11 +602,7 @@ class AlchemyDolls:
                       if entry and entry['key'] == key), None)
         if not saved:
             return None
-        stats = state['active_body']['stats']
-        primary, secondary = {'fishing': (3, 2), 'farming': (1, 0),
-                              'cooking': (3, 4), 'raid_signup': (3, 0)}[key]
-        multiplier = RARITIES[saved['rarity']][1]
-        work = math.floor((stats[primary] * 2 + stats[secondary]) / 3 * multiplier)
+        work = life_work(state['active_body'], key, saved['rarity'])
         return dict(key=key, rarity=saved['rarity'], work=work)
 
     def configure_life(self, guild, user, key, *, enabled=None, preset_slot=None,
@@ -876,4 +883,4 @@ __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAIL
            'LIFE_SKILLS', 'RARITIES',
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
            'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
-           'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks']
+           'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work']

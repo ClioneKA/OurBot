@@ -8,7 +8,8 @@ import discord
 from core.rpg_alchemy import (COMBAT_SKILLS, COMBAT_SKILL_DETAILS, CORE_ITEM, LIFE_SKILLS,
                               LIFE_WORK_UNLOCKS, RARITIES,
                               STAT_NAMES, FUEL_CAPACITY, body_acceleration_cost,
-                              fuel_value, life_skill_unlocks, material_profile, parse_stone)
+                              fuel_value, life_skill_unlocks, life_work,
+                              material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
@@ -49,6 +50,15 @@ def combat_stone_effect(skill_key, rarity, body):
     if skill_key == 'interrupt':
         return f'{percent(120)}% 攻擊，命中後打斷'
     return f'效果 {multiplier:.0%}'
+
+
+def life_work_state(skill_key, rarity, body):
+    """Return work and unlock text for previews without mutating the doll."""
+    work = life_work(body, skill_key, rarity)
+    if work is None:
+        return '無素體，無法計算'
+    unlocks = '、'.join(life_skill_unlocks(skill_key, work)) or '尚無'
+    return f'工作力 {work:,}｜解鎖：{unlocks}'
 
 
 class RenameDollModal(discord.ui.Modal, title='替煉金人偶命名'):
@@ -382,6 +392,19 @@ class AlchemyView(discord.ui.View):
                     values.append(f'{name} {value}' + (f' ({delta:+d})' if delta is not None else ''))
                 embed.add_field(name=f'候選素體 T{candidate["tier"]}',
                                 value='｜'.join(values), inline=False)
+                if core:
+                    previews = []
+                    for saved in core['skills']['life']:
+                        if not saved:
+                            continue
+                        current = life_work_state(saved['key'], saved['rarity'], body)
+                        after = life_work_state(saved['key'], saved['rarity'], candidate)
+                        previews.append(
+                            f'{saved["rarity"]}・{LIFE_SKILLS[saved["key"]]}\n'
+                            f'目前　{current}\n安裝後　{after}')
+                    if previews:
+                        embed.add_field(name='安裝候選素體｜生活工作力預覽',
+                                        value='\n\n'.join(previews), inline=False)
         elif self.page == 'cores':
             cores = self.cog.alchemy.cores(self.guild_id, self.owner.id)
             lines = []
@@ -424,6 +447,17 @@ class AlchemyView(discord.ui.View):
                 embed.add_field(name='待刻印技能石',
                                 value=f'{rarity}・{(COMBAT_SKILLS if domain == "combat" else LIFE_SKILLS)[key]}\n{detail}',
                                 inline=False)
+                if chosen and domain == 'life' and self.slot:
+                    slot_domain, slot_index = self.slot.split(':')
+                    if slot_domain == 'life':
+                        current = chosen['skills']['life'][int(slot_index) - 1]
+                        before = ('空白' if not current else
+                                  f'{current["rarity"]}・{LIFE_SKILLS[current["key"]]}｜'
+                                  f'{life_work_state(current["key"], current["rarity"], body)}')
+                        after = (f'{rarity}・{LIFE_SKILLS[key]}｜'
+                                 f'{life_work_state(key, rarity, body)}')
+                        embed.add_field(name='刻印後｜生活工作力預覽',
+                                        value=f'目前　{before}\n刻印後　{after}', inline=False)
         elif self.page == 'gacha':
             gold = self.cog.store.gold(self.guild_id, self.owner.id)
             pity = self.cog.alchemy.pity(self.guild_id, self.owner.id)

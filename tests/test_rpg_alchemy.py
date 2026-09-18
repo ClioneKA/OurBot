@@ -164,6 +164,12 @@ class AlchemyDollTests(unittest.TestCase):
 
     def test_main_panel_shows_calculated_stone_effects_and_gacha_gold(self):
         body = self.make_body()
+        body['stats'] = [70, 70, 70, 70, 70]
+        candidate = dict(body, stats=[100, 100, 100, 100, 100])
+        with self.store.db:
+            self.store.db.execute('''UPDATE rpg_alchemy_dolls
+                SET active_body=?,candidate_body=? WHERE guild_id=1 AND user_id=10''',
+                (__import__('json').dumps(body), __import__('json').dumps(candidate)))
         self.characters.grant_item(1, 10, CORE_ITEM[1])
         core_id = self.alchemy.orient_core(1, 10, 1, '生活')
         combat_item = stone_id('combat', 'power_strike', '稀有')
@@ -212,6 +218,24 @@ class AlchemyDollTests(unittest.TestCase):
         core_fields = {field.name: field.value for field in view.embed().fields}
         self.assertIn('128% 攻擊', core_fields[f'核心 #{core_id}｜戰鬥迴路'])
         self.assertIn('稀有・動力重擊', core_fields['待刻印技能石'])
+
+        legendary_life = stone_id('life', 'fishing', '傳說')
+        self.characters.grant_item(1, 10, legendary_life)
+        view.slot = 'life:1'
+        view.item_id = legendary_life
+        view.rebuild()
+        preview_fields = {field.name: field.value for field in view.embed().fields}
+        skill_preview = preview_fields['刻印後｜生活工作力預覽']
+        self.assertIn('目前　史詩・自律釣魚｜工作力 63', skill_preview)
+        self.assertIn('刻印後　傳說・自律釣魚｜工作力 70', skill_preview)
+        self.assertIn('2 小時', skill_preview)
+
+        view.page = 'body'
+        body_fields = {field.name: field.value for field in view.embed().fields}
+        body_preview = body_fields['安裝候選素體｜生活工作力預覽']
+        self.assertIn('目前　工作力 63', body_preview)
+        self.assertIn('安裝後　工作力 90', body_preview)
+        self.assertIn('2 小時', body_preview)
 
         view.page = 'gacha'
         gacha = view.embed().description

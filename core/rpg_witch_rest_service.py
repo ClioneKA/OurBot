@@ -116,18 +116,6 @@ class WitchRestService:
                     if room.get('round_deadline') and now >= room['round_deadline']:
                         await self._step_auto(room, battle)
                     continue
-                channel = self.bot.get_channel(room['channel_id'])
-                guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
-                changed = False
-                for user_id in battle.living_player_ids():
-                    member = guild.get_member(user_id) if guild else None
-                    if (member is None or member.status == discord.Status.offline) and user_id not in battle.auto_players:
-                        battle.enable_auto(user_id)
-                        changed = True
-                if changed:
-                    room['battle'] = dump_total_battle(battle)
-                    self.repo.save(room)
-                    await self._edit_public(room, battle)
                 if room.get('round_deadline') and now >= room['round_deadline']:
                     await self._resolve(room, battle, timeout=True)
         for room in self.repo.expire_rooms():
