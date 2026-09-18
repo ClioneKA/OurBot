@@ -1,15 +1,19 @@
 from pathlib import Path
+import asyncio
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock
 
 from core.rpg import RPGStore
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM,
-                              RARITY_ORDER, material_profile, parse_stone, stat_caps,
-                              stone_id)
+                              RARITY_ORDER, body_acceleration_cost, material_profile,
+                              parse_stone, stat_caps, stone_id)
 from core.rpg_character import Characters, CharacterError
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
 from core.rpg_battle import raid_battle
+from core.rpg_alchemy_view import AlchemyView
 from core.rpg_monsters import prepare_monster
 from core.settings import RPGSettings
 
@@ -61,6 +65,38 @@ class AlchemyDollTests(unittest.TestCase):
         with self.assertRaisesRegex(CharacterError, '沒有正在製作'):
             self.alchemy.finish_body(1, 10, now=999999)
 
+    def test_body_acceleration_charges_for_exact_remaining_time(self):
+        self.characters.grant_item(1, 10, 'farming:wheat', 10)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,10,1000)')
+        craft = self.alchemy.start_body(1, 10, ['farming:wheat'] * 10, now=100)
+        self.assertEqual(body_acceleration_cost(craft, now=100), 250)
+        self.assertEqual(self.alchemy.accelerate_body(1, 10, now=100), 250)
+        self.assertEqual(self.store.gold(1, 10), 750)
+        body = self.alchemy.finish_body(1, 10, now=100)
+        self.assertEqual(body['tier'], 10)
+
+    def test_core_page_builds_without_a_core_and_triggers_explain_missing_doll(self):
+        async def check():
+            provisions = SimpleNamespace(presets=lambda guild, user: [])
+            cog = SimpleNamespace(alchemy=self.alchemy, characters=self.characters,
+                                  provisions=provisions, store=self.store)
+            interaction = SimpleNamespace(
+                user=SimpleNamespace(id=10, mention='<@10>'), guild_id=1,
+                response=SimpleNamespace(send_message=AsyncMock()))
+            view = AlchemyView(cog, interaction)
+            view.page = 'cores'
+            view.rebuild()
+            self.assertGreater(len(view.children), 0)
+            self.characters.grant_item(1, 10, CORE_ITEM[1])
+            view.core_id = self.alchemy.orient_core(1, 10, 1, '生活')
+            view.rebuild()
+            self.assertGreater(len(view.children), 0)
+            await view.handle(interaction, 'triggers')
+            interaction.response.send_message.assert_awaited_once()
+
+        asyncio.run(check())
+
     def test_core_orientation_engraving_and_participant_snapshot(self):
         body = self.make_body()
         self.characters.grant_item(1, 10, CORE_ITEM[1])
@@ -107,7 +143,7 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(self.alchemy.state(1, 10)['fuel'], gained)
         self.assertEqual(self.inventory()['farming:wheat'], 1)
 
-    def test_life_automation_claims_and_repeats_once_with_fuel(self):
+    def test_life_automation_restarts_until_only_collection_fuel_remains(self):
         self.make_body()
         body = self.alchemy.state(1, 10)['active_body']
         body['stats'] = [30, 30, 30, 30, 20]
@@ -120,7 +156,7 @@ class AlchemyDollTests(unittest.TestCase):
             item_id = stone_id('life', key, '普通')
             self.characters.grant_item(1, 10, item_id)
             self.alchemy.engrave(1, 10, core_id, 'life', slot, item_id)
-            self.alchemy.configure_life(1, 10, key, enabled=True, repeat=True)
+            self.alchemy.configure_life(1, 10, key, enabled=True)
         signup_item = stone_id('life', 'raid_signup', '普通')
         self.characters.grant_item(1, 10, signup_item)
         self.alchemy.engrave(1, 10, core_id, 'life', 3, signup_item)
@@ -155,6 +191,25 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(self.alchemy.state(1, 10)['fuel'], 24)
         self.assertEqual(fishing.state(1, 10)['session']['status'], 'active')
         self.assertEqual(farming.state(1, 10)['sessions']['courtyard']['status'], 'active')
+
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=94 '
+                                  'WHERE guild_id=1 AND user_id=10')
+        fish = fishing.state(1, 10)['session']
+        fish_result = self.alchemy.auto_fish(
+            fishing, 1, 10, 'pond', 'short', fish['started_at'], now=fish['ready_at'])
+        self.assertFalse(fish_result['restarted'])
+        self.assertEqual(fishing.state(1, 10)['session']['status'], 'claimed')
+
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=94 '
+                                  'WHERE guild_id=1 AND user_id=10')
+        crop = farming.state(1, 10)['sessions']['courtyard']
+        farm_result = self.alchemy.auto_farm(
+            farming, 1, 10, 'courtyard', 'potato', crop['planted_at'],
+            now=crop['ready_at'])
+        self.assertFalse(farm_result['replanted'])
+        self.assertEqual(farming.state(1, 10)['sessions']['courtyard']['status'], 'harvested')
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ import time
 import discord
 
 from core.rpg_alchemy import (COMBAT_SKILLS, CORE_ITEM, LIFE_SKILLS, RARITIES,
-                              STAT_NAMES, material_profile, parse_stone)
+                              STAT_NAMES, body_acceleration_cost, material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
@@ -81,12 +81,8 @@ class AlchemyView(discord.ui.View):
             farm = state['config'].get('farming', {})
             self.button(f'自律釣魚：{"開" if fish.get("enabled") else "關"}',
                         'toggle_life:fishing:enabled', 2)
-            self.button(f'釣魚再出發：{"開" if fish.get("repeat") else "關"}',
-                        'toggle_life:fishing:repeat', 2)
             self.button(f'自律農耕：{"開" if farm.get("enabled") else "關"}',
                         'toggle_life:farming:enabled', 2)
-            self.button(f'農耕再種植：{"開" if farm.get("repeat") else "關"}',
-                        'toggle_life:farming:repeat', 2)
             signup = state['config'].get('raid_signup', {})
             self.button(f'討伐響應：{"開" if signup.get("enabled") else "關"}',
                         'toggle_life:raid_signup:enabled', 1)
@@ -101,9 +97,14 @@ class AlchemyView(discord.ui.View):
                     value=str(preset['slot']), default=preset['slot'] == cooking.get('preset_slot'))
                     for preset in presets[:25]] or [discord.SelectOption(label='尚無已保存配方', value='empty')]))
         elif self.page == 'body':
+            materials = [(key, quantity, material_profile(key))
+                         for key, quantity in inventory.items() if quantity and material_profile(key)]
+            materials.sort(key=lambda row: (-row[2][0], ITEMS[row[0]].name, row[0]))
             options = [discord.SelectOption(label=ITEMS[key].name[:100], value=key,
-                       description=f'持有 {quantity}｜素材 T{material_profile(key)[0]}')
-                       for key, quantity in inventory.items() if quantity and material_profile(key)]
+                       description=(f'持有 {quantity}｜素材 T{profile[0]}｜傾向 '
+                                    + '／'.join(STAT_NAMES[index] for index, weight
+                                                 in enumerate(profile[1]) if weight)))
+                       for key, quantity, profile in materials]
             self.add_item(PanelSelect('add_material', row=0, placeholder='每次加入一份素材',
                 disabled=not options or len(self.materials) >= 10,
                 options=options[:25] or [discord.SelectOption(label='沒有可用素材', value='empty')]))
@@ -113,28 +114,30 @@ class AlchemyView(discord.ui.View):
             craft = state['crafting']
             self.button('完成素體', 'finish_body', 1,
                         disabled=not craft or time.time() < craft['ready_at'])
+            acceleration_cost = body_acceleration_cost(craft)
+            self.button(f'立即完成・{acceleration_cost:,} 金幣', 'accelerate_body', 1,
+                        disabled=not acceleration_cost, style=discord.ButtonStyle.primary)
             self.button('安裝候選素體', 'install_body', 2, disabled=not state['candidate_body'])
             self.button('拆除候選素體', 'discard_body', 2, disabled=not state['candidate_body'],
                         style=discord.ButtonStyle.danger)
         elif self.page == 'cores':
             cores = self.cog.alchemy.cores(self.guild_id, self.owner.id)
-            visible_cores = cores[:25]
-            if visible_cores and self.core_id not in {core['id'] for core in visible_cores}:
-                self.core_id = visible_cores[0]['id']
-            self.add_item(PanelSelect('core', row=0, placeholder='選擇思考核心', disabled=not cores,
-                options=[discord.SelectOption(label=f'#{core["id"]} Lv.{core["level"]} {core["orientation"]}',
+            visible_cores = cores[:24]
+            if self.core_id not in {core['id'] for core in visible_cores}:
+                self.core_id = None
+            self.add_item(PanelSelect('core', row=0, placeholder='選擇思考核心', options=[
+                discord.SelectOption(label='新增／定向思考核心', value='new',
+                                     default=self.core_id is None)] + [
+                discord.SelectOption(label=f'#{core["id"]} Lv.{core["level"]} {core["orientation"]}',
                     value=str(core['id']), description='已裝備' if core['equipped'] else '未裝備',
-                    default=core['id'] == self.core_id) for core in visible_cores]
-                    or [discord.SelectOption(label='尚無已定向核心', value='empty')]))
-            self.button('證章購買 Lv.1', 'buy_core', 1)
-            for level in (1, 2, 3):
-                self.button(f'Lv.{level} 定向戰鬥', f'orient:{level}:戰鬥', 1 + level // 3,
-                            disabled=not inventory.get(CORE_ITEM[level]))
-                self.button(f'Lv.{level} 定向生活', f'orient:{level}:生活', 1 + level // 3,
-                            disabled=not inventory.get(CORE_ITEM[level]))
+                    default=core['id'] == self.core_id) for core in visible_cores]))
             chosen = next((core for core in cores if core['id'] == self.core_id), None)
-            slots = []
             if chosen:
+                self.button('裝備核心', 'equip_core', 1)
+                self.button('刻入技能石', 'engrave', 1,
+                            disabled=not self.slot or not self.item_id)
+                self.button('分解技能石', 'decompose', 1, disabled=not self.item_id)
+                slots = []
                 for domain, skills in chosen['skills'].items():
                     for index, saved in enumerate(skills, 1):
                         label = (COMBAT_SKILLS if domain == 'combat' else LIFE_SKILLS).get(
@@ -142,18 +145,22 @@ class AlchemyView(discord.ui.View):
                         slots.append(discord.SelectOption(
                             label=f'{"戰鬥" if domain == "combat" else "生活"} {index}｜{label}',
                             value=f'{domain}:{index}', default=f'{domain}:{index}' == self.slot))
-            self.add_item(PanelSelect('slot', row=3, placeholder='選擇刻印格', disabled=not slots,
-                options=slots or [discord.SelectOption(label='沒有刻印格', value='empty')]))
-            domain = self.slot.split(':')[0] if self.slot else None
-            stones = [(key, parse_stone(key)) for key, quantity in inventory.items()
-                      if quantity and parse_stone(key) and parse_stone(key)[0] == domain]
-            self.add_item(PanelSelect('stone', row=4, placeholder='選擇技能石', disabled=not stones,
-                options=[discord.SelectOption(label=ITEMS[key].name[:100], value=key,
-                    description=f'持有 {inventory[key]}', default=key == self.item_id)
-                    for key, _ in stones[:25]] or [discord.SelectOption(label='沒有相符技能石', value='empty')]))
-            self.button('裝備核心', 'equip_core', 2, disabled=not chosen)
-            self.button('刻入技能石', 'engrave', 2, disabled=not chosen or not self.slot or not self.item_id)
-            self.button('分解技能石', 'decompose', 2, disabled=not self.item_id)
+                self.add_item(PanelSelect('slot', row=2, placeholder='選擇刻印格', options=slots))
+                domain = self.slot.split(':')[0] if self.slot else None
+                stones = [(key, parse_stone(key)) for key, quantity in inventory.items()
+                          if quantity and parse_stone(key) and parse_stone(key)[0] == domain]
+                self.add_item(PanelSelect('stone', row=3, placeholder='選擇技能石', disabled=not stones,
+                    options=[discord.SelectOption(label=ITEMS[key].name[:100], value=key,
+                        description=f'持有 {inventory[key]}', default=key == self.item_id)
+                        for key, _ in stones[:25]] or [
+                            discord.SelectOption(label='沒有相符技能石', value='empty')]))
+            else:
+                self.button('證章購買 Lv.1', 'buy_core', 1)
+                for level in (1, 2, 3):
+                    self.button(f'Lv.{level} 定向戰鬥', f'orient:{level}:戰鬥', 1 + level // 3,
+                                disabled=not inventory.get(CORE_ITEM[level]))
+                    self.button(f'Lv.{level} 定向生活', f'orient:{level}:生活', 1 + level // 3,
+                                disabled=not inventory.get(CORE_ITEM[level]))
         elif self.page == 'gacha':
             for index, domain in enumerate(('combat', 'life')):
                 label = '戰鬥' if domain == 'combat' else '生活'
@@ -300,7 +307,12 @@ class AlchemyView(discord.ui.View):
             return
         async with self.lock:
             try:
-                if action in ('overview', 'body', 'cores', 'gacha', 'powder', 'fuel', 'triggers'):
+                if action == 'triggers':
+                    state = self.cog.alchemy.state(self.guild_id, self.owner.id)
+                    if not state['active_body'] or not state['core']:
+                        raise CharacterError('請先安裝素體與思考核心，再編輯觸發條件。')
+                    self.page = action
+                elif action in ('overview', 'body', 'cores', 'gacha', 'powder', 'fuel'):
                     self.page = action
                 elif action == 'share':
                     await interaction.response.defer()
@@ -336,6 +348,10 @@ class AlchemyView(discord.ui.View):
                 elif action == 'finish_body':
                     body = self.cog.alchemy.finish_body(self.guild_id, self.owner.id)
                     notice = f'T{body["tier"]} 素體已完成，請確認是否安裝。'
+                elif action == 'accelerate_body':
+                    cost = self.cog.alchemy.accelerate_body(self.guild_id, self.owner.id)
+                    body = self.cog.alchemy.finish_body(self.guild_id, self.owner.id)
+                    notice = f'已消耗 {cost:,} 金幣，T{body["tier"]} 素體已完成。'
                 elif action == 'install_body':
                     self.cog.alchemy.install_candidate(self.guild_id, self.owner.id)
                     notice = '已安裝候選素體。'
@@ -350,8 +366,9 @@ class AlchemyView(discord.ui.View):
                     self.core_id = self.cog.alchemy.orient_core(
                         self.guild_id, self.owner.id, int(level), orientation)
                     notice = f'核心已定向為{orientation}面向。'
-                elif action == 'core' and value != 'empty':
-                    self.core_id, self.slot, self.item_id = int(value), None, None
+                elif action == 'core':
+                    self.core_id = None if value == 'new' else int(value)
+                    self.slot, self.item_id = None, None
                 elif action == 'slot' and value != 'empty':
                     self.slot, self.item_id = value, None
                 elif action in ('stone', 'fuel_item') and value != 'empty':

@@ -42,6 +42,7 @@ CORE_ITEM = {level: f'alchemy:core:{level}' for level in (1, 2, 3)}
 POWDER_ITEM = 'alchemy:powder'
 GACHA_PRICE = 500
 CORE1_PROOF_COST = 15
+BODY_ACCEL_GOLD_PER_HOUR = 500
 
 
 def stone_id(domain, skill, rarity):
@@ -82,6 +83,13 @@ _register_items()
 
 def _floor_tier(level):
     return max(10, min(110, level // 10 * 10))
+
+
+def body_acceleration_cost(craft, now=None):
+    if not craft:
+        return 0
+    now = time.time() if now is None else now
+    return math.ceil(max(0, craft['ready_at'] - now) * BODY_ACCEL_GOLD_PER_HOUR / 3600)
 
 
 def material_profile(item_id):
@@ -259,6 +267,29 @@ class AlchemyDolls:
                 WHERE guild_id=? AND user_id=?''',
                             (json.dumps(body, ensure_ascii=False), guild, user))
         return body
+
+    def accelerate_body(self, guild, user, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self._ensure(guild, user)
+            row = self.db.execute('SELECT crafting FROM rpg_alchemy_dolls '
+                                  'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
+            if not row[0]:
+                raise CharacterError('目前沒有正在製作的素體。')
+            craft = json.loads(row[0])
+            cost = body_acceleration_cost(craft, now)
+            if cost:
+                paid = self.db.execute('''UPDATE rpg_wallets SET gold=gold-?
+                    WHERE guild_id=? AND user_id=? AND gold>=?''', (cost, guild, user, cost))
+                if not paid.rowcount:
+                    raise CharacterError(f'金幣不足，需要 {cost:,} 金幣。')
+                record_gold(self.db, guild, user, -cost, 'alchemy_body_acceleration')
+                craft['ready_at'] = now
+                self.db.execute('UPDATE rpg_alchemy_dolls SET crafting=? '
+                                'WHERE guild_id=? AND user_id=?',
+                                (json.dumps(craft, ensure_ascii=False), guild, user))
+        return cost
 
     def install_candidate(self, guild, user):
         with self.db:
@@ -491,7 +522,7 @@ class AlchemyDolls:
         work = math.floor((stats[primary] * 2 + stats[secondary]) / 3 * multiplier)
         return dict(key=key, rarity=saved['rarity'], work=work)
 
-    def configure_life(self, guild, user, key, *, enabled=None, repeat=None, preset_slot=None,
+    def configure_life(self, guild, user, key, *, enabled=None, preset_slot=None,
                        pools=None, qualities=None, scheduled=None, bounty=None,
                        require_no_effect=None):
         if key not in LIFE_SKILLS:
@@ -502,11 +533,9 @@ class AlchemyDolls:
             row = self.db.execute('SELECT life_config FROM rpg_alchemy_dolls '
                                   'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
             config = json.loads(row[0])
-            saved = config.setdefault(key, {'enabled': False, 'repeat': False})
+            saved = config.setdefault(key, {'enabled': False})
             if enabled is not None:
                 saved['enabled'] = bool(enabled)
-            if repeat is not None:
-                saved['repeat'] = bool(repeat)
             if preset_slot is not None:
                 saved['preset_slot'] = int(preset_slot)
             if pools is not None:
@@ -664,9 +693,9 @@ class AlchemyDolls:
         threshold = {'short': 19, 'medium': 65, 'long': 133}.get(duration_id, 10**9)
         if not config.get('enabled') or not skill or skill['work'] < threshold:
             return None
-        repeat = bool(config.get('repeat'))
+        restart = state['fuel'] >= self._fuel_cost(state['active_body'], 2)
         source = str(float(started_at))
-        receipt = self._reserve_operation(guild, user, 'fishing', source, 1 + repeat, now)
+        receipt = self._reserve_operation(guild, user, 'fishing', source, 1 + restart, now)
         if receipt['status'] == 'completed':
             return receipt['result']
         saved = self.db.execute('''SELECT status,result FROM rpg_fishing_sessions
@@ -675,14 +704,14 @@ class AlchemyDolls:
         result = (json.loads(saved[1]) if saved and saved[0] == 'claimed'
                   else fishing.claim(guild, user, now=now, expected_started_at=started_at))
         restarted = False
-        if repeat:
+        if restart:
             try:
                 fishing.start(guild, user, spot_id, duration_id, now=now)
                 restarted = True
             except CharacterError:
                 # The catch remains sealed; record that the optional second action failed.
                 restarted = False
-        if repeat and not restarted:
+        if restart and not restarted:
             refund = receipt['fuel'] - self._fuel_cost(state['active_body'], 1)
             if refund:
                 with self.db:
@@ -711,9 +740,9 @@ class AlchemyDolls:
         skill = self.life_skill(guild, user, 'farming')
         if not config.get('enabled') or not skill or skill['work'] < 19:
             return None
-        repeat = bool(config.get('repeat'))
+        replant = state['fuel'] >= self._fuel_cost(state['active_body'], 2)
         source = f'{location_id}:{float(planted_at)}'
-        receipt = self._reserve_operation(guild, user, 'farming', source, 1 + repeat, now)
+        receipt = self._reserve_operation(guild, user, 'farming', source, 1 + replant, now)
         if receipt['status'] == 'completed':
             return receipt['result']
         saved = self.db.execute('''SELECT status,result FROM rpg_farming_sessions
@@ -723,13 +752,13 @@ class AlchemyDolls:
                   else farming.harvest(guild, user, location_id, now=now,
                                        expected_planted_at=planted_at))
         replanted = False
-        if repeat:
+        if replant:
             try:
                 farming.plant(guild, user, location_id, plant_id, now=now)
                 replanted = True
             except CharacterError:
                 replanted = False
-        if repeat and not replanted:
+        if replant and not replanted:
             refund = receipt['fuel'] - self._fuel_cost(state['active_body'], 1)
             if refund:
                 with self.db:
@@ -784,4 +813,5 @@ class AlchemyDolls:
 
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'LIFE_SKILLS', 'RARITIES',
-           'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id']
+           'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
+           'body_acceleration_cost']
