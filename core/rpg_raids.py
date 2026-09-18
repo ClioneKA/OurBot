@@ -456,7 +456,8 @@ class RaidService:
             summary = []
             for fighter in players:
                 stats = fighter.combat_stats
-                label = f'<@{fighter.user_id}>' if fighter.user_id else safe_text(fighter.name, 24)
+                label = (safe_text(fighter.name, 24) if fighter.job == '煉金人偶'
+                         else f'<@{fighter.user_id}>' if fighter.user_id else safe_text(fighter.name, 24))
                 summary.append(f'{label}：實際傷害 {stats["direct_damage"]:,}｜輔助傷害 {stats["support_damage"]:,}｜'
                                f'治療 {stats["healing_done"]:,}｜'
                                f'承傷 {stats["damage_taken"]:,}｜輔助承傷 {stats["support_taken"]:,}｜命中 {stats["hits"]}/{stats["attacks"]}')
@@ -516,6 +517,19 @@ class RaidService:
                     for participant in participants:
                         if participant['id'] in prepared:
                             participant['meal'] = prepared[participant['id']]
+                alchemy = getattr(self.cog, 'alchemy', None)
+                if (alchemy is not None and 0 < len(participants) < 4
+                        and raid.get('source') is None
+                        and raid.get('pool', 'regular') in ('regular', 'mid', 'high')):
+                    candidates = []
+                    for order, owner in enumerate(participants):
+                        doll = alchemy.participant(raid['guild_id'], owner['id'], owner['name'])
+                        if doll and doll['state']['level'] >= raid_min_level(raid):
+                            selected_at = alchemy.state(raid['guild_id'], owner['id'])['last_selected']
+                            candidates.append((selected_at, order, doll))
+                    dolls = [entry[2] for entry in sorted(candidates)[:4 - len(participants)]]
+                    participants.extend(dolls)
+                    alchemy.mark_selected(raid['guild_id'], [doll['owner_id'] for doll in dolls])
                 raid['participants'] = participants
                 if not participants:
                     raid.update(status='cancelled', reason='沒有人參與，魔物離開了。')
@@ -647,6 +661,11 @@ class RaidService:
                                                                                  roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
+            if source in (None, 'bounty'):
+                joined = await self.apply_alchemy_signups(raid, channel)
+                if joined:
+                    raid = self.repo.get(raid['id'])
+                    await message.edit(embed=self.lobby_embed(raid), view=self.signup(raid))
             return (message, raid) if return_raid else message
         except (Exception, asyncio.CancelledError):
             if raid is not None:
@@ -666,6 +685,56 @@ class RaidService:
             self.spawning.discard(channel.id)
             self.spawning_guilds.discard(channel.guild.id)
             self.spawn_tasks.discard(task)
+
+    async def apply_alchemy_signups(self, raid, channel):
+        alchemy = getattr(self.cog, 'alchemy', None)
+        if alchemy is None:
+            return []
+        settings = self.settings_for_channel(channel.id)
+        joined = []
+        provisions = getattr(self.cog, 'provisions', None)
+        tavern = getattr(self.cog, 'tavern', None)
+        if provisions is not None and tavern is not None:
+            for user_id, ingredients in alchemy.auto_cooking_candidates(raid, provisions):
+                receipt = None
+                try:
+                    receipt = alchemy.reserve_cooking(raid['guild_id'], user_id, raid['id'])
+                    if receipt['status'] != 'reserved':
+                        continue
+                    _, meal = await tavern.serve_auto_meal(channel.guild, user_id, ingredients)
+                    alchemy.finish_cooking(raid['guild_id'], user_id, raid['id'],
+                                           receipt['fuel'], meal['id'])
+                except asyncio.CancelledError:
+                    if receipt and receipt['status'] == 'reserved':
+                        alchemy.cancel_cooking(raid['guild_id'], user_id, raid['id'])
+                    raise
+                except Exception:
+                    if receipt and receipt['status'] == 'reserved':
+                        alchemy.cancel_cooking(raid['guild_id'], user_id, raid['id'])
+                    logger.exception('Alchemy auto-cooking failed for raid %s user %s',
+                                     raid['id'], user_id)
+        for user_id in alchemy.auto_signup_candidates(raid):
+            member = channel.guild.get_member(user_id)
+            if member is None or member.bot:
+                continue
+            receipt = None
+            try:
+                receipt = alchemy.reserve_signup(raid['guild_id'], user_id, raid['id'])
+                if receipt['status'] != 'reserved':
+                    continue
+                self.repo.join(raid['id'], raid['guild_id'], user_id, time.time(),
+                               settings.max_participants)
+                alchemy.finish_signup(raid['guild_id'], user_id, raid['id'], receipt['fuel'])
+                joined.append(user_id)
+                try:
+                    await member.send(f'煉金人偶已替你報名【{monster_name(raid["monster"])}】，'
+                                      f'消耗 {receipt["fuel"]} 燃料。')
+                except discord.HTTPException:
+                    pass
+            except CharacterError:
+                if receipt and receipt['status'] == 'reserved':
+                    alchemy.cancel_signup(raid['guild_id'], user_id, raid['id'])
+        return joined
 
     async def publish_fishing_encounters(self, guild_id=None):
         from core.rpg_fishing_raids import publish_fishing_encounters
@@ -738,7 +807,8 @@ class RaidService:
 
         self.cog.divinations.reserve_summon(guild.id, user.id)
         try:
-            _, raid = await self.spawn(channel, initial_member=user.id, return_raid=True)
+            _, raid = await self.spawn(channel, initial_member=user.id, return_raid=True,
+                                       source='divination')
             self.cog.divinations.finish_summon(guild.id, user.id, raid['id'])
             return channel, raid
         except (Exception, asyncio.CancelledError):

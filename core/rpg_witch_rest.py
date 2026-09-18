@@ -8,6 +8,7 @@ import uuid
 
 from core.rpg import record_gold
 from core.rpg_character import CharacterError, Item, ITEMS, add_owned_item
+from core.rpg_alchemy import CORE_ITEM
 
 
 MIN_LEVEL = 70
@@ -774,6 +775,11 @@ class WitchRestStore:
                        'weapon' if progress['found_suit'] and not progress['found_weapon'] else None)
             result = roll_reward(random.Random(seed), witch_id, job, enrage,
                                  progress['dry_wins'], progress['luck_points'], missing)
+            core_drop = enrage >= 1000 and random.Random(
+                f'{seed}:alchemy-core').random() < .30
+            if core_drop:
+                result['items'][CORE_ITEM[3]] = result['items'].get(CORE_ITEM[3], 0) + 1
+            result['alchemy_core'] = core_drop
             for item_id, quantity in result['items'].items():
                 add_owned_item(self.db, guild_id, user_id, item_id, quantity)
             if result['gold']:

@@ -123,7 +123,7 @@ class DailyCommissions:
         if raid.get('source') == 'admin':
             return
         day = commission_day(now)
-        for user in {p['id'] for p in raid['participants']}:
+        for user in {p['id'] for p in raid['participants'] if not p.get('is_doll')}:
             self.db.execute('''INSERT INTO rpg_daily_commission_kills VALUES (?,?,?,?,1)
                 ON CONFLICT(guild_id,user_id,day,kind) DO UPDATE SET quantity=quantity+1''',
                 (raid['guild_id'], user, day, raid['monster']['kind']))

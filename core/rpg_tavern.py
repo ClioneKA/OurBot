@@ -344,6 +344,9 @@ class TavernService:
         guild = interaction.guild
         if guild is None:
             raise CharacterError('酒館公開功能只能在伺服器內使用。')
+        return self.public_channel_for_guild(guild)
+
+    def public_channel_for_guild(self, guild):
         space_store = getattr(getattr(self.cog, 'spaces', None), 'store', None)
         space = space_store.get(guild.id) if space_store else None
         managed = (space.tavern_channel_id,) if space and space.tavern_channel_id else ()
@@ -401,6 +404,20 @@ class TavernService:
         try:
             message = await channel.send(embed=view.embed(), view=view,
                 allowed_mentions=discord.AllowedMentions.none())
+            self.cog.provisions.publish(meal['id'], message.id)
+            return message, self.cog.provisions.meal(meal['id'])
+        except (Exception, asyncio.CancelledError):
+            self.cog.provisions.cancel(meal['id'], refund=True)
+            view.stop()
+            raise
+
+    async def serve_auto_meal(self, guild, user_id, ingredients):
+        channel = self.public_channel_for_guild(guild)
+        meal = self.cog.provisions.cook(guild.id, user_id, channel.id, ingredients)
+        view = self.meal_view(meal['id'])
+        try:
+            message = await channel.send(embed=view.embed(), view=view,
+                                         allowed_mentions=discord.AllowedMentions.none())
             self.cog.provisions.publish(meal['id'], message.id)
             return message, self.cog.provisions.meal(meal['id'])
         except (Exception, asyncio.CancelledError):

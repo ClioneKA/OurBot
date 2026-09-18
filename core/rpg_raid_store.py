@@ -374,22 +374,23 @@ class RaidStore:
                 raid['failure_progress'] = dict(max_hp=maximum, remaining_hp=remaining)
             fixed_drop = raid.get('fixed_drop')
             fixed_drop_mode = raid.get('fixed_drop_mode', 'per_participant')
+            reward_participants = [p for p in raid['participants'] if not p.get('is_doll')]
             fixed_drop_winner = None
-            if victory and fixed_drop and fixed_drop_mode == 'single_random' and raid['participants']:
-                fixed_drop_winner = rng.choice(raid['participants'])['id']
+            if victory and fixed_drop and fixed_drop_mode == 'single_random' and reward_participants:
+                fixed_drop_winner = rng.choice(reward_participants)['id']
             chance_drop = raid.get('chance_drop')
             chance_drop_results = []
-            if victory and chance_drop and raid['participants']:
+            if victory and chance_drop and reward_participants:
                 for _ in range(chance_drop.get('rolls', 1)):
                     if rng.random() >= chance_drop['chance']:
                         continue
                     item = rng.choice(chance_drop['pool'])
                     winner = None
                     if chance_drop.get('mode') == 'single_random':
-                        winner = rng.choice(raid['participants'])['id']
+                        winner = rng.choice(reward_participants)['id']
                     chance_drop_results.append((winner, item))
             rewards = []
-            for p in raid['participants']:
+            for p in reward_participants:
                 fortune = p.get('fortune') or {}
                 tavern = p.get('tavern') or {}
                 meal = p.get('meal') or {}

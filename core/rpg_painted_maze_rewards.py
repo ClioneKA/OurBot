@@ -4,6 +4,7 @@ import random
 import time
 
 from core.rpg_character import ITEMS, MAZE_CHOICE_BOXES, CharacterError, add_owned_item
+from core.rpg_alchemy import CORE_ITEM
 from core.rpg import record_gold
 
 
@@ -41,6 +42,11 @@ class PaintedMazeRewardStore:
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 xp INTEGER NOT NULL, gold INTEGER NOT NULL, created_at INTEGER NOT NULL,
                 PRIMARY KEY(room_id,checkpoint,user_id))''')
+            columns = {row[1] for row in self.db.execute(
+                'PRAGMA table_info(rpg_painted_maze_currency_rewards)')}
+            if 'alchemy_core' not in columns:
+                self.db.execute('''ALTER TABLE rpg_painted_maze_currency_rewards
+                    ADD COLUMN alchemy_core INTEGER NOT NULL DEFAULT 0''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_painted_maze_accessories (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 shadow_room_id TEXT, noah_room_id TEXT, instance_id INTEGER,
@@ -133,11 +139,12 @@ class PaintedMazeRewardStore:
             result = []
             for participant in room['participants']:
                 user_id = participant['id']
-                existing = self.db.execute('''SELECT xp,gold FROM rpg_painted_maze_currency_rewards
+                existing = self.db.execute('''SELECT xp,gold,alchemy_core FROM rpg_painted_maze_currency_rewards
                     WHERE room_id=? AND checkpoint=? AND user_id=?''',
                     (room_id, checkpoint, user_id)).fetchone()
                 if existing:
-                    result.append(dict(user_id=user_id, xp=existing[0], gold=existing[1]))
+                    result.append(dict(user_id=user_id, xp=existing[0], gold=existing[1],
+                                       alchemy_core=bool(existing[2])))
                     continue
                 fortune = participant.get('fortune') or {}
                 tavern = participant.get('tavern') or {}
@@ -154,9 +161,13 @@ class PaintedMazeRewardStore:
                     prior_gold = sum(CHECKPOINT_REWARDS[i][1] * gold_bonus // 100 for i in range(1, checkpoint))
                     xp = (prior_xp + xp) // 2 - prior_xp // 2
                     gold = (prior_gold + gold) // 2 - prior_gold // 2
+                core_drop = checkpoint == 4 and random.Random(
+                    f'{room_id}:{user_id}:alchemy-core').random() < .10
                 self.db.execute('''INSERT INTO rpg_painted_maze_currency_rewards
-                    VALUES (?,?,?,?,?,?,?)''',
-                    (room_id, checkpoint, room['guild_id'], user_id, xp, gold, now))
+                    (room_id,checkpoint,guild_id,user_id,xp,gold,created_at,alchemy_core)
+                    VALUES (?,?,?,?,?,?,?,?)''',
+                    (room_id, checkpoint, room['guild_id'], user_id, xp, gold, now,
+                     int(core_drop)))
                 self.db.execute('''INSERT INTO players(guild_id,user_id,xp) VALUES (?,?,?)
                     ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=players.xp+excluded.xp''',
                     (room['guild_id'], user_id, xp))
@@ -165,7 +176,10 @@ class PaintedMazeRewardStore:
                     (room['guild_id'], user_id, gold))
                 record_gold(self.db, room['guild_id'], user_id, gold, 'maze_reward',
                             f'{room_id}:{checkpoint}', now)
-                result.append(dict(user_id=user_id, xp=xp, gold=gold))
+                if core_drop:
+                    add_owned_item(self.db, room['guild_id'], user_id, CORE_ITEM[2])
+                result.append(dict(user_id=user_id, xp=xp, gold=gold,
+                                   alchemy_core=core_drop))
             return result
 
     def rewards(self, room_id):
@@ -180,14 +194,15 @@ class PaintedMazeRewardStore:
         } for row in rows]
 
     def currency_rewards(self, room_id, checkpoint=None):
-        query = '''SELECT checkpoint,user_id,xp,gold
+        query = '''SELECT checkpoint,user_id,xp,gold,alchemy_core
             FROM rpg_painted_maze_currency_rewards WHERE room_id=?'''
         args = [room_id]
         if checkpoint is not None:
             query += ' AND checkpoint=?'
             args.append(checkpoint)
         query += ' ORDER BY checkpoint,user_id'
-        return [dict(checkpoint=row[0], user_id=row[1], xp=row[2], gold=row[3])
+        return [dict(checkpoint=row[0], user_id=row[1], xp=row[2], gold=row[3],
+                     alchemy_core=bool(row[4]))
                 for row in self.db.execute(query, args).fetchall()]
 
     def release_pending_boxes(self, guild_id, user_id):

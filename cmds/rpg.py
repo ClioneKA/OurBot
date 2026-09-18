@@ -32,6 +32,7 @@ from core.rpg_painted_maze_service import PaintedMazeService
 from core.rpg_crystals import crystal_affix_name, crystal_effect_text
 from core.rpg_witch_rest import WitchRestStore
 from core.rpg_witch_rest_service import WitchRestService
+from core.rpg_alchemy import AlchemyDolls
 
 
 class RPG(commands.Cog):
@@ -48,6 +49,7 @@ class RPG(commands.Cog):
         self.expeditions = Expeditions(self.store, self.settings)
         self.provisions = Provisions(self.store)
         self.divinations = Divinations(self.store)
+        self.alchemy = AlchemyDolls(self.store, self.settings)
         self.tracker = VoiceTracker()
         self.manual_room_lock = asyncio.Lock()
         self.menu_views = WeakSet()
@@ -159,6 +161,20 @@ class RPG(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def fishing_notification_tick(self):
+        for guild_id, user_id, spot_id, duration_id, started_at in self.alchemy.auto_fishing_due():
+            try:
+                summary = self.alchemy.auto_fish(
+                    self.fishing, guild_id, user_id, spot_id, duration_id, started_at)
+                if summary:
+                    user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                    suffix = '，並已沿用原設定再次出發' if summary['restarted'] else ''
+                    await asyncio.wait_for(user.send(
+                        f'煉金人偶已自動收竿{suffix}，消耗 {summary["fuel"]} 燃料。'), timeout=20)
+            except CharacterError:
+                pass
+            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
+                logging.info('Alchemy fishing DM could not be delivered for guild %s user %s',
+                             guild_id, user_id)
         for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notifications_due():
             if not self.fishing.reserve_notification(guild_id, user_id):
                 continue
@@ -183,6 +199,29 @@ class RPG(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def farming_notification_tick(self):
+        processed = {}
+        for guild_id, user_id, location_id, plant_id, planted_at in self.alchemy.auto_farming_due():
+            skill = self.alchemy.life_skill(guild_id, user_id, 'farming')
+            work = skill['work'] if skill else 0
+            limit = 4 if work >= 145 else 3 if work >= 94 else 2 if work >= 47 else 1
+            key = guild_id, user_id
+            if processed.get(key, 0) >= limit:
+                continue
+            try:
+                summary = self.alchemy.auto_farm(
+                    self.farming, guild_id, user_id, location_id, plant_id, planted_at)
+                if summary:
+                    processed[key] = processed.get(key, 0) + 1
+                    user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                    suffix = '，並已重新種植原植物' if summary['replanted'] else ''
+                    await asyncio.wait_for(user.send(
+                        f'煉金人偶已自動收成 {LOCATIONS[location_id]}{suffix}，'
+                        f'消耗 {summary["fuel"]} 燃料。'), timeout=20)
+            except CharacterError:
+                pass
+            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
+                logging.info('Alchemy farming DM could not be delivered for guild %s user %s',
+                             guild_id, user_id)
         for guild_id, user_id, location_id, plant_id, planted_at in self.farming.notifications_due():
             if not self.farming.reserve_notification(guild_id, user_id, location_id):
                 continue

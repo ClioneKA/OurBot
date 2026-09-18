@@ -56,6 +56,9 @@ class Skill:
     description: str
     condition: str = 'always'
     timing: str = 'normal'
+    potency_percent: int = 100
+    cleanse_count: int | None = None
+    guard_immunity: bool = True
 
 
 PREPARATION_TIMING = 'preparation'
@@ -137,6 +140,30 @@ SKILLS = {
              Skill('群體治療', 'group_heal', 5, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
              Skill('聖光', 'holy_light', 5, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50')),
 }
+DOLL_SKILL_SPECS = {
+    'power_strike': ('動力重擊', 'strike', 3, '造成 160% 傷害', 'always', 'normal'),
+    'armor_break': ('裂甲鑿擊', 'break', 4, '造成傷害並降低防禦', 'always', 'normal'),
+    'sweep': ('廣域掃蕩', 'cleave', 5, '對全體敵人造成 120% 傷害', 'always', 'normal'),
+    'overload': ('超載猛擊', 'crush', 5, '對單體造成 220% 傷害', 'always', 'normal'),
+    'counter': ('誘敵反擊', 'taunt', 4, '吸引單體攻擊並反擊', 'always', 'normal'),
+    'barrier': ('防護力場', 'guard', 4, '增加全隊防禦', 'ally50', 'normal'),
+    'rally': ('緊急修復', 'rally', 5, '恢復自身最大 HP', 'self40', 'normal'),
+    'repair': ('修復射線', 'heal', 3, '恢復一名隊友生命', 'ally50', 'normal'),
+    'group_repair': ('廣域修復', 'group_heal', 5, '恢復全體隊友生命', 'ally50', 'normal'),
+    'amplify': ('動力增幅', 'bless', 4, '提高一名隊友攻擊', 'always', 'normal'),
+    'cleanse': ('清除程序', 'cleanse', 3, '移除隊友負面狀態', 'ally_debuff', 'normal'),
+    'interrupt': ('妨害射擊', 'hindering_shot', 4, '命中後打斷蓄力', 'enemy_charging', 'normal'),
+}
+DOLL_RARITIES = (('普通', 70, 1), ('稀有', 80, 2), ('史詩', 90, 3), ('傳說', 100, 99))
+DOLL_SKILL_IDS = {}
+_doll_skills = []
+for key, spec in DOLL_SKILL_SPECS.items():
+    name, effect, cooldown, description, condition, timing = spec
+    for rarity, potency, cleanse_count in DOLL_RARITIES:
+        DOLL_SKILL_IDS[key, rarity] = len(_doll_skills) + 1
+        _doll_skills.append(Skill(f'{rarity}・{name}', effect, cooldown, description,
+                                  condition, timing, potency, cleanse_count, False))
+SKILLS['煉金人偶'] = tuple(_doll_skills)
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
@@ -151,6 +178,8 @@ def unlocked_skills(job, level):
 
 def rule_skill(job, rule):
     # Old saved tactics and battle snapshots used the slot as the skill ID.
+    if job == '煉金人偶' and not rule.skill_id:
+        return None
     return SKILLS[job][(rule.skill_id or rule.slot) - 1]
 
 
@@ -385,6 +414,7 @@ class Fighter:
     is_boss: bool = False
     mechanic_priority: int = 0
     basic_target: str = 'lowest'
+    cycle_index: int = 0
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -1119,15 +1149,19 @@ class Battle:
             return None
         return next((fighter for fighter in self.fighters if fighter.user_id == source_id), None)
 
-    def clear_negative_effects(self, target):
+    def clear_negative_effects(self, target, limit=None):
         """Remove every player-cleansable debuff, including stacked poison arrows."""
         removed = 0
-        for effect in ('poison', 'break', 'stun', 'weak'):
-            removed += target.effects.pop(effect, None) is not None
-            target.effect_sources.pop(effect, None)
-        removed += target.status_stacks.pop('corruption', None) is not None
-        removed += target.status_stacks.pop('drowning_mark', None) is not None
-        removed += target.status_stacks.pop('poison_arrows', None) is not None
+        entries = (('effect', 'stun'), ('stack', 'corruption'), ('effect', 'break'),
+                   ('effect', 'weak'), ('stack', 'drowning_mark'),
+                   ('stack', 'poison_arrows'), ('effect', 'poison'))
+        for source, effect in entries:
+            if limit is not None and removed >= limit:
+                break
+            container = target.effects if source == 'effect' else target.status_stacks
+            if container.pop(effect, None) is not None:
+                removed += 1
+                target.effect_sources.pop(effect, None)
         return removed
 
     def apply_debuff(self, target, effect, until, source=None):
@@ -1304,8 +1338,13 @@ class Battle:
 
     def select(self, actor):
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
-        for rule in sorted(actor.rules, key=lambda r: r.priority):
+        rules = sorted(actor.rules, key=lambda r: r.priority)
+        if actor.job == '煉金人偶' and rules:
+            rules = [rules[actor.cycle_index % len(rules)]]
+        for rule in rules:
             skill = rule_skill(actor.job, rule)
+            if skill is None:
+                continue
             if skill.effect == 'knight_charge' and rule.target == 'self':
                 # Existing knight slot-3 tactics targeted self when this skill was 堅守.
                 condition = 'always' if rule.condition == 'self40' else rule.condition
@@ -1440,7 +1479,10 @@ class Battle:
         if target.has('guard', self.round):
             base_defense += target.guard_bonus
         broken = target.has('break', self.round)
-        defense = base_defense * 0.2 if broken else base_defense
+        break_percent = (target.status_stacks.get('break_defense_percent', 80)
+                         if target.status_stacks.get('break_defense_until') == target.effects.get('break')
+                         else 80)
+        defense = base_defense * (100 - break_percent) / 100 if broken else base_defense
         low, high = actor.stability
         stability = self.rng.randint(low, high) if low != high else low
         critical = self.rng.random() * 100 < self.critical_chance(actor)
@@ -1460,7 +1502,7 @@ class Battle:
             if target.has('stance', self.round):
                 multiplier = {'民兵': 0.8}.get(target.job, 0.65)
                 value = max(1, int(value * multiplier))
-            if target.has('taunt', self.round) and target.job != '騎士':
+            if target.has('taunt', self.round) and target.job not in ('騎士', '煉金人偶'):
                 value = max(1, int(value * 0.85))
             if target.has('noah_blue_guard', self.round):
                 value = max(1, value * self.mechanics.get('noah_blue_reduction', 0) // 100)
@@ -1496,7 +1538,7 @@ class Battle:
             value = final_damage(attack_value, defense_value, watch_guard)
             return max(1, value * 110 // 100) if vulnerable else value
 
-        unguarded_defense = target.stats['防禦'] * (0.2 if broken else 1)
+        unguarded_defense = target.stats['防禦'] * ((100 - break_percent) / 100 if broken else 1)
         weak = actor.has('weak', self.round)
         before_support = mitigation_damage(attack / .8 if weak else attack, unguarded_defense)
         after_weak = mitigation_damage(attack, unguarded_defense)
@@ -1622,11 +1664,12 @@ class Battle:
         healing = self.heal(actor, actor, actual_damage * drain // 100, maze_trigger=False)
         if healing > 0 and actor.hp > 0:
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
-        if (counterable and target.job == '騎士' and target.hp > 0 and actor.hp > 0
+        if (counterable and target.job in ('騎士', '煉金人偶') and target.hp > 0 and actor.hp > 0
                 and target.has('taunt', self.round)
                 and target.team != actor.team):
             self.log.append(f'{target.name} 發動【挑釁反擊】！')
-            self.hit(target, actor, 1.0, counterable=False)
+            self.hit(target, actor, target.status_stacks.get('doll_counter_percent', 100) / 100,
+                     counterable=False)
         if passive_trigger and tempo is not None:
             if tempo >= 6:
                 actor.passive_state['arrow_tempo'] = 0
@@ -2228,9 +2271,13 @@ class Battle:
                 self.apply_debuff(target, 'poison', self.round + 2, actor)
             if hit and actor.job == '瘟疫縫合獸' and target.hp > 0:
                 self.add_corruption(target)
+            if actor.job == '煉金人偶' and actor.rules:
+                actor.cycle_index = (actor.cycle_index + 1) % len(actor.rules)
             return
         rule, skill, target = selected
         self.use_skill(actor, rule, skill, target)
+        if actor.job == '煉金人偶' and actor.rules:
+            actor.cycle_index = (actor.cycle_index + 1) % len(actor.rules)
 
     def use_skill(self, actor, rule, skill, target):
         context = self._begin_passive_action(actor, skill, target)
@@ -2257,14 +2304,17 @@ class Battle:
         actor.ready[rule.slot] = self.round + cooldown
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
+        potency = skill.potency_percent
         if effect in ('group_heal', 'rally'):
             targets = self.living(actor.team) if effect == 'group_heal' else [actor]
             healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 2
+            healing = healing * potency // 100
             for ally in targets:
                 amount = self.heal(actor, ally, healing)
                 self.log.append(f'{ally.name} 恢復 {amount} HP')
         elif effect == 'heal':
             healing = actor.stats['治療量'] // 2 if actor.job == '民兵' else actor.stats['治療量']
+            healing = healing * potency // 100
             amount = self.heal(actor, target, healing)
             self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'holy_light':
@@ -2274,7 +2324,7 @@ class Battle:
             amount = self.heal(actor, target, actor.stats['治療量'] * 70 // 100)
             self.log.append(f'{target.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
-            removed = self.clear_negative_effects(target)
+            removed = self.clear_negative_effects(target, skill.cleanse_count)
             removed += bool(target.status_stacks.get('source_erosion'))
             if self._passive_action is not None:
                 self._passive_action['cleansed'] = removed
@@ -2285,22 +2335,26 @@ class Battle:
                 self.log.append(f'{target.name} 因【洗彩療癒】恢復 {amount} HP。')
             self.log.append(f'移除 {target.name} 的負面狀態')
         elif effect == 'guard':
-            bonus = max(1, actor.stats['防禦'])
+            bonus = max(1, actor.stats['防禦'] * potency // 100)
             for ally in self.living(actor.team):
                 if not ally.has('guard', self.round) or ally.guard_bonus < bonus:
                     ally.guard_bonus = bonus
                     ally.effects['guard'] = self.round + 1
-                    ally.effects['immunity'] = self.round + 1
+                    if skill.guard_immunity:
+                        ally.effects['immunity'] = self.round + 1
                     if actor.user_id is not None:
                         ally.effect_sources['guard'] = actor.user_id
-                    self.log.append(f'{ally.name} 防禦 +{bonus} 並免疫負面狀態至第 {self.round + 1} 回合結束')
+                    immunity = ' 並免疫負面狀態' if skill.guard_immunity else ''
+                    self.log.append(f'{ally.name} 防禦 +{bonus}{immunity}至第 {self.round + 1} 回合結束')
         elif effect in ('bless', 'stance', 'taunt'):
             target.effects[effect] = self.round + (2 if effect == 'bless' else 1)
             if effect == 'bless':
-                target.status_stacks['bless_attack_percent'] = 40
+                target.status_stacks['bless_attack_percent'] = 40 * potency // 100
                 target.effect_sources['bless'] = actor.user_id
                 if self._passive_action is not None:
                     self._passive_action['hymn_bless'] = True
+            elif effect == 'taunt' and actor.job == '煉金人偶':
+                target.status_stacks['doll_counter_percent'] = potency
             self.log.append(f'{target.name} 獲得效果，持續至第 {target.effects[effect]} 回合結束')
         elif effect == 'knight_charge':
             self.hit(actor, target, 0.5, attack_override=actor.stats['HP'])
@@ -2309,18 +2363,20 @@ class Battle:
                 if actor.hp > 0 and enemy.hp > 0:
                     for _ in range(1 if effect == 'cleave' else 3):
                         if actor.hp > 0 and enemy.hp > 0:
-                            self.hit(actor, enemy, 1.2 if effect == 'cleave' else 0.4,
+                            self.hit(actor, enemy, (1.2 if effect == 'cleave' else 0.4) * potency / 100,
                                      attack_scope='group')
         elif effect in ('double', 'triple'):
             for _ in range(3 if effect == 'triple' else 2):
                 if actor.hp > 0 and target.hp > 0:
-                    self.hit(actor, target, 0.85 if effect == 'triple' else 0.9)
+                    self.hit(actor, target, (0.85 if effect == 'triple' else 0.9) * potency / 100)
         else:
             power = {'strike': 1.6, 'hindering_shot': 1.2, 'crush': 2.2,
                      'shield_bash': 1.2, 'poison_arrow': 1.1}.get(effect, 1)
-            hit = self.hit(actor, target, power)
+            hit = self.hit(actor, target, power * potency / 100)
             if hit and effect == 'break' and target.hp > 0:
-                self.apply_debuff(target, 'break', self.round + 1, actor)
+                if self.apply_debuff(target, 'break', self.round + 1, actor):
+                    target.status_stacks['break_defense_percent'] = 80 * potency // 100
+                    target.status_stacks['break_defense_until'] = target.effects.get('break')
             if hit and effect == 'poison_arrow' and target.hp > 0:
                 if target.job == '逆潮法陣':
                     self.log.append(f'{target.name} 免疫毒箭侵蝕。')
@@ -2729,7 +2785,7 @@ def raid_battle(participants, monster, seed):
     if profile:
         for stat, key in (('HP', 'hp'), ('攻擊', 'attack'), ('防禦', 'defense')):
             stats[stat] = max(1, int(stats[stat] * Decimal(str(profile[key]))))
-        stats['HP'] *= party_hp_scale
+        stats['HP'] = max(1, int(stats['HP'] * party_hp_scale))
         stats.update(命中率=profile['hit'], 閃避率=profile['dodge'], 暴擊率=profile['crit'])
         speed = max(1, int(profile['speed'] if balance_version >= 3 else speed * profile['speed']))
     elif monster['kind'] == '鐵殼魔像':
@@ -2900,6 +2956,7 @@ def load_battle(data):
         f.passive_state = data_f.get('passive_state', {})
         f.is_boss = data_f.get('is_boss', False)
         f.mechanic_priority = data_f.get('mechanic_priority', 0)
+        f.cycle_index = data_f.get('cycle_index', 0)
         saved_stats = data_f.get('combat_stats', {})
         f.combat_stats = empty_combat_stats()
         for key in f.combat_stats:

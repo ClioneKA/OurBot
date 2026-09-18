@@ -104,9 +104,11 @@ class WitchBattle(TotalRaidBattle):
             self.result = '戰敗'
         return self.result is not None
 
-    def clear_negative_effects(self, target):
-        removed = super().clear_negative_effects(target)
+    def clear_negative_effects(self, target, limit=None):
+        removed = super().clear_negative_effects(target, limit)
         for key in DEBUFFS:
+            if limit is not None and removed >= limit:
+                break
             removed += target.effects.pop(key, None) is not None
             target.status_stacks.pop(key, None)
         return removed
@@ -697,10 +699,12 @@ class WitchBattleV4(WitchBattleV3):
             self.recovery[key] = self.round + 1
             self.next_cast[key] = max(self.next_cast[key], self.round + 2)
 
-    def clear_negative_effects(self, target):
-        removed = super().clear_negative_effects(target)
+    def clear_negative_effects(self, target, limit=None):
+        removed = super().clear_negative_effects(target, limit)
         if not self.command_locked:
             for ban in BANS:
+                if limit is not None and removed >= limit:
+                    break
                 removed += target.effects.pop(ban, None) is not None
         return removed
 

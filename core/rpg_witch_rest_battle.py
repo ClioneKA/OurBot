@@ -202,7 +202,7 @@ class WitchRestManualBattle(WitchRaidBattle):
             return False
         return super().apply_debuff(target, effect, until, source)
 
-    def clear_negative_effects(self, target):
+    def clear_negative_effects(self, target, limit=None):
         stacks = self.factor_stacks(target)
         data = self.pending.get('ema')
         if (stacks and data and data.get('kind') == 'rest_prosecution'
@@ -210,9 +210,9 @@ class WitchRestManualBattle(WitchRaidBattle):
             data['testimony_broken'] = True
         protected = target.status_stacks.get('rest_factor_preservation', 0)
         if not stacks or not protected:
-            return super().clear_negative_effects(target)
+            return super().clear_negative_effects(target, limit)
         until = target.effects.get('factor', self.round + 30)
-        removed = super().clear_negative_effects(target)
+        removed = super().clear_negative_effects(target, limit)
         target.status_stacks['factor'] = stacks
         target.effects['factor'] = until
         target.status_stacks['rest_factor_preservation'] = protected - 1

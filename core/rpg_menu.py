@@ -86,6 +86,9 @@ async def navigate(view, interaction, page='home', *, help_topic='intro', help_r
     elif page == 'raids':
         from core.rpg_raid_hub import RaidHubView
         next_view = RaidHubView(view.cog, view.origin)
+    elif page == 'alchemy':
+        from core.rpg_alchemy_view import AlchemyView
+        next_view = AlchemyView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page,
                                   help_topic=help_topic, help_return=help_return)
@@ -140,6 +143,7 @@ class AdventureView(discord.ui.View):
             self.button('釣魚', 'fishing', 0)
             self.button('農耕', 'farming', 0)
             self.button('遠征', 'expedition', 0)
+            self.button('煉金人偶', 'alchemy', 0)
         elif self.page == 'travel':
             self.button('瑪格的占卜室', 'divination', 0)
             self.button('冒險者酒館', 'tavern', 0)
@@ -239,7 +243,7 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids',
+            if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids', 'alchemy',
                           'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
