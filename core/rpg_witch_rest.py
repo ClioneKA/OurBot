@@ -366,13 +366,16 @@ class WitchRestStore:
                              json.dumps(room, ensure_ascii=False)))
             return room
 
-    def attach_room(self, room_id, channel_id, message_id):
+    def attach_room(self, room_id, channel_id, message_id, *, parent_channel_id=None,
+                    index_message_id=None):
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             room = self.room(room_id)
             if not room or room['status'] != 'lobby':
                 raise CharacterError('這個房間已經關閉。')
-            room.update(channel_id=channel_id, message_id=message_id)
+            room.update(channel_id=channel_id, message_id=message_id,
+                        parent_channel_id=parent_channel_id,
+                        index_message_id=index_message_id)
             self._save_room(room)
             return room
 

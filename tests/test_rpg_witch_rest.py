@@ -1,6 +1,7 @@
 import random
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,8 @@ from core.rpg_witch_rest_battle import (
     manual_stats,
     run_auto_battle,
 )
+from core.rpg_witch_rest_service import WitchRestService
+from tests.test_rpg_total_raids import FakeBot, FakeChannel, FakeThread, HashableMember
 
 
 class WitchRestRulesTests(unittest.TestCase):
@@ -433,6 +436,43 @@ class WitchRestStoreTests(unittest.TestCase):
         self.assertEqual(self.quantity(10, 'witch_rest:ema:core'), 8)
         self.assertEqual(self.quantity(10, 'witch_rest:memory_page'), 3)
         self.assertEqual(self.quantity(10, 'witch_rest:crystal'), 0)
+
+
+class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = RPGStore(Path(self.temp.name) / 'rpg.db')
+        self.rest = WitchRestStore(self.store)
+        self.bot = FakeBot()
+        self.host = HashableMember(10, '房主')
+        self.guild = SimpleNamespace(id=1)
+        self.parent = FakeChannel(80, self.guild)
+        self.thread = FakeThread(81, self.guild)
+        self.parent.create_thread.return_value = self.thread
+        total_raids = SimpleNamespace(
+            repo=SimpleNamespace(active=lambda: []),
+            witch_announcement_channels=AsyncMock(return_value=[self.parent]))
+        self.cog = SimpleNamespace(
+            bot=self.bot, store=self.store, witch_rest=self.rest, total_raids=total_raids)
+        self.service = WitchRestService(self.cog)
+
+    async def asyncTearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    async def test_create_room_uses_public_card_and_private_thread(self):
+        interaction = SimpleNamespace(
+            guild_id=1, guild=self.guild, user=self.host)
+        with patch('core.rpg_witch_rest_service.level_for', return_value=70):
+            room, created = await self.service.create_room(interaction, 'ema', 100)
+        self.assertIs(created, self.thread)
+        self.assertEqual(room['channel_id'], self.thread.id)
+        self.assertEqual(room['parent_channel_id'], self.parent.id)
+        self.assertEqual(room['index_message_id'], self.parent.message.id)
+        self.parent.send.assert_awaited_once()
+        self.parent.create_thread.assert_awaited_once()
+        self.thread.add_user.assert_awaited_once_with(self.host)
+        self.thread.send.assert_awaited_once()
 
 
 if __name__ == '__main__':

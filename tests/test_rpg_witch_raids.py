@@ -11,7 +11,9 @@ from core.rpg_witch_battle import WitchRaidBattle
 from core.rpg_witch_embroideries import REQUIREMENTS, record_victory
 from core.rpg_total_raids import WitchBattleView, WitchPrivateActionView, WitchActionButton, WitchPrivateTargetSelect, active_effect_notes, field_chunks, effect_status
 from tests import test_rpg_witch_battle as battle_fixtures
-from tests.test_rpg_total_raids import TotalRaidRoomTests, HashableMember, FakeChannel, FakeCategory
+from tests.test_rpg_total_raids import (
+    TotalRaidRoomTests, HashableMember, FakeChannel, FakeCategory, FakeThread,
+)
 import discord
 from types import SimpleNamespace
 
@@ -130,14 +132,38 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertFalse(desired[channel.guild.default_role].view_channel)
         self.assertTrue(desired[role].view_channel)
         for target in (channel.guild.default_role, role):
-            for permission in ('send_messages', 'create_public_threads',
-                               'create_private_threads', 'send_messages_in_threads'):
+            for permission in ('send_messages', 'create_public_threads', 'create_private_threads'):
                 self.assertIs(getattr(desired[target], permission), False)
+            self.assertIs(desired[target].send_messages_in_threads, True)
         self.assertTrue(desired[channel.guild.me].send_messages)
         self.assertTrue(channel.overwrites[role].send_messages)
         channel.overwrites = desired
         await self.service.lock_witch_announcement(channel)
         channel.edit.assert_awaited_once()
+
+    async def test_witch_room_uses_private_thread_and_public_lobby_card(self):
+        category, parent = self.announcement_fixture(existing=True)
+        host = HashableMember(1, '房主')
+        guild = parent.guild
+        guild.get_channel = lambda channel_id: category if channel_id == 50 else None
+        guild.get_member = lambda user_id: host if user_id == host.id else None
+        thread = FakeThread(70, guild)
+        parent.create_thread.return_value = thread
+        self.bot.channels.update({50: category, 70: thread, 80: parent})
+        self.service.witch_channel_ids = {80}
+        self.characters.create(1, host.id)
+        with patch('core.rpg_total_raids.discord.CategoryChannel', FakeCategory), \
+             patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), \
+             patch('core.rpg_total_raids.discord.Thread', FakeThread):
+            room, created = await self.service.create_room(guild, host, WITCH_BOSS)
+        self.assertIs(created, thread)
+        self.assertEqual(room['channel_id'], thread.id)
+        self.assertEqual(room['parent_channel_id'], parent.id)
+        self.assertEqual(room['index_message_id'], parent.message.id)
+        parent.create_thread.assert_awaited_once()
+        thread.add_user.assert_awaited_once_with(host)
+        parent.send.assert_awaited_once()
+        thread.send.assert_awaited_once()
 
     async def test_existing_channel_lock_failure_backs_off(self):
         category, channel = self.announcement_fixture(existing=True)

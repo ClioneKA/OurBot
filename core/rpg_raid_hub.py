@@ -140,7 +140,7 @@ class RaidHubView(discord.ui.View):
                 try:
                     _, channel = await self.cog.total_raids.create_room(interaction.guild, interaction.user, WITCH_BOSS)
                     await interaction.followup.send(f'已開啟當日魔女試煉：{channel.mention}', ephemeral=True)
-                except (CharacterError, TotalRaidError) as exc:
+                except (CharacterError, TotalRaidError, discord.HTTPException) as exc:
                     await interaction.followup.send(str(exc), ephemeral=True)
                 return
             elif action == 'items':

@@ -82,10 +82,10 @@ class WitchRestService:
 
     def start(self):
         for room in self.repo.active_rooms():
-            if room['status'] == 'lobby' and room.get('message_id'):
+            if room['status'] == 'lobby' and (room.get('index_message_id') or room.get('message_id')):
                 view = WitchRestLobbyView(self, room['id'])
                 self.views[room['id']] = view
-                self.bot.add_view(view, message_id=room['message_id'])
+                self.bot.add_view(view, message_id=room.get('index_message_id') or room['message_id'])
             elif room['status'] == 'running' and room.get('message_id') and room.get('battle'):
                 view = WitchBattleView(self, room['id'])
                 self.views[(room['id'], 'running')] = view
@@ -111,7 +111,7 @@ class WitchRestService:
                     continue
                 battle = load_total_battle(room['battle'])
                 channel = self.bot.get_channel(room['channel_id'])
-                guild = channel.guild if isinstance(channel, discord.TextChannel) else None
+                guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
                 changed = False
                 for user_id in battle.living_player_ids():
                     member = guild.get_member(user_id) if guild else None
@@ -126,12 +126,14 @@ class WitchRestService:
                     await self._resolve(room, battle, timeout=True)
         for room in self.repo.expire_rooms():
             channel = self.bot.get_channel(room.get('channel_id'))
-            if isinstance(channel, discord.TextChannel) and room.get('message_id'):
+            if isinstance(channel, (discord.TextChannel, discord.Thread)) and room.get('message_id'):
                 try:
                     await channel.get_partial_message(room['message_id']).edit(
                         content='房間已因 30 分鐘沒有互動而關閉。', embed=None, view=None)
                 except discord.HTTPException:
                     pass
+            await self._close_index(room, '魔女安息儀式房間已逾時關閉。')
+            await self._archive_thread(room, '魔女安息儀式房間已逾時')
 
     @tick.before_loop
     async def before_tick(self):
@@ -147,32 +149,46 @@ class WitchRestService:
             room = self.repo.create_room(
                 interaction.guild_id, interaction.user.id, witch_id, enrage, practice)
         async with self.lock(('guild', interaction.guild_id)):
-            category = self.cog.total_raids.category_for(interaction.guild)
             witch = WITCHES[witch_id]
             name = f'{"練習-" if practice else ""}魔女安息-{witch.name}-{room["number"]}'
-            overwrites = {
-                interaction.guild.default_role: discord.PermissionOverwrite(
-                    view_channel=True, send_messages=False, read_message_history=True),
-                interaction.guild.me: discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, manage_channels=True,
-                    read_message_history=True, embed_links=True),
-                interaction.user: discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, read_message_history=True),
-            }
+            parents = [channel for channel in await self.cog.total_raids.witch_announcement_channels()
+                       if channel.guild.id == interaction.guild_id]
+            if not parents:
+                self.repo.close_room(room['id'], interaction.user.id)
+                raise CharacterError('找不到魔女試煉大廳頻道。')
+            parent = parents[0]
+            index = thread = None
+            view = WitchRestLobbyView(self, room['id'])
             try:
-                channel = await category.create_text_channel(
-                    name=name[:100], overwrites=overwrites,
-                    topic=f'{witch.name}｜魔女化 {enrage:,}%｜{"練習" if practice else "正式"}',
-                    reason=f'{interaction.user} 建立魔女安息儀式房間')
-                view = WitchRestLobbyView(self, room['id'])
-                message = await channel.send(embed=self.lobby_embed(room), view=view,
-                                             allowed_mentions=discord.AllowedMentions.none())
+                index = await parent.send(
+                    embed=self.lobby_embed(room), view=view,
+                    allowed_mentions=discord.AllowedMentions.none())
+                thread = await parent.create_thread(
+                    name=name[:100], type=discord.ChannelType.private_thread,
+                    invitable=False, auto_archive_duration=1440,
+                    reason=f'{interaction.user} 建立魔女安息儀式私人房')
+                await thread.add_user(interaction.user)
+                message = await thread.send(embed=self.thread_lobby_embed(room),
+                                            allowed_mentions=discord.AllowedMentions.none())
             except Exception:
                 self.repo.close_room(room['id'], interaction.user.id)
+                if index is not None:
+                    try:
+                        await index.edit(content='魔女安息儀式房間建立失敗。', embed=None, view=None)
+                    except discord.HTTPException:
+                        pass
+                if thread is not None:
+                    try:
+                        await thread.edit(archived=True, locked=True,
+                                          reason='魔女安息儀式建立失敗')
+                    except discord.HTTPException:
+                        pass
                 raise
-            room = self.repo.attach_room(room['id'], channel.id, message.id)
+            room = self.repo.attach_room(
+                room['id'], thread.id, message.id, parent_channel_id=parent.id,
+                index_message_id=index.id)
             self.views[room['id']] = view
-            return room, channel
+            return room, thread
 
     async def change_member(self, room_id, member, *, leave=False):
         async with self.lock(room_id):
@@ -183,7 +199,12 @@ class WitchRestService:
                     raise CharacterError('你已在另一個手動房間中。')
                 room = self.repo.change_member(room_id, member.id, level, leave=leave)
             channel = self.bot.get_channel(room['channel_id'])
-            if isinstance(channel, discord.TextChannel):
+            if isinstance(channel, discord.Thread):
+                if leave:
+                    await channel.remove_user(member)
+                else:
+                    await channel.add_user(member)
+            elif isinstance(channel, discord.TextChannel):
                 await channel.set_permissions(member, overwrite=None if leave else discord.PermissionOverwrite(
                     view_channel=True, send_messages=True, read_message_history=True),
                     reason='更新魔女安息儀式隊員')
@@ -195,7 +216,7 @@ class WitchRestService:
             if not room:
                 raise CharacterError('找不到這個房間。')
             channel = self.bot.get_channel(room['channel_id'])
-            if not isinstance(channel, discord.TextChannel):
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 raise CharacterError('找不到戰鬥頻道。')
             participants = []
             for user_id in room['members']:
@@ -210,6 +231,7 @@ class WitchRestService:
                     'passive_id': passive.id if passive else None,
                     'basic_target': self.cog.tactics.basic_target(room['guild_id'], user_id, state['job'])})
             room = self.repo.start_room(room_id, member.id, participants)
+            await self._close_index(room, '魔女安息儀式已開始。')
             if room['enrage'] >= 100:
                 battle = manual_battle_from_participants(
                     participants, room['witch_id'], room['enrage'], random.randrange(2**31))
@@ -236,6 +258,7 @@ class WitchRestService:
             await channel.get_partial_message(room['message_id']).edit(
                 embed=self.result_embed(room, rewards), view=None,
                 allowed_mentions=discord.AllowedMentions.none())
+            await self._archive_thread(room, '魔女安息儀式已結束')
             return room
 
     running_battle = TotalRaidService.running_battle
@@ -265,7 +288,7 @@ class WitchRestService:
                         expires_at=time.time(), round_deadline=None)
             if battle.result == '勝利' and not room['practice']:
                 channel = self.bot.get_channel(room['channel_id'])
-                guild = channel.guild if isinstance(channel, discord.TextChannel) else None
+                guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
                 for index, participant in enumerate(room['participants']):
                     member = guild.get_member(participant['id']) if guild else None
                     if member is None or member.bot or member.status == discord.Status.offline:
@@ -285,16 +308,42 @@ class WitchRestService:
             await self._edit_public(room, battle)
         finally:
             await self.refresh_private_panels(room)
+        if battle.result:
+            await self._archive_thread(room, '魔女安息儀式已結束')
 
     async def _edit_public(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
-        if not isinstance(channel, discord.TextChannel):
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return
         embed = (self.result_embed(room, room.get('rewards', [])) if battle.result
                  else self.battle_embed(room, battle))
         await channel.get_partial_message(room['message_id']).edit(
             embed=embed, view=self.view(room) if room['status'] == 'running' else None,
             allowed_mentions=discord.AllowedMentions.none())
+
+    async def _close_index(self, room, content):
+        parent = self.bot.get_channel(room.get('parent_channel_id'))
+        if not isinstance(parent, discord.TextChannel) or not room.get('index_message_id'):
+            return
+        try:
+            await parent.get_partial_message(room['index_message_id']).edit(
+                content=content, embed=self.lobby_embed(room), view=None,
+                allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+
+    async def _archive_thread(self, room, reason):
+        channel = self.bot.get_channel(room.get('channel_id'))
+        if isinstance(channel, discord.Thread):
+            try:
+                await channel.edit(archived=True, locked=True, reason=reason)
+            except discord.HTTPException:
+                pass
+
+    def thread_lobby_embed(self, room):
+        return discord.Embed(
+            title=f'魔女安息儀式 #{room["number"]}', color=0xA855F7,
+            description='這是私人作戰討論串。請在大廳房間卡加入隊伍，由房主開始戰鬥。')
 
     def battle_embed(self, room, battle):
         embed = TotalRaidService.battle_embed(self, room, battle)
@@ -314,7 +363,9 @@ class WitchRestService:
 
     async def close_room(self, room_id, member):
         async with self.lock(room_id):
-            return self.repo.close_room(room_id, member.id)
+            room = self.repo.close_room(room_id, member.id)
+            await self._archive_thread(room, '魔女安息儀式房間已關閉')
+            return room
 
     def lobby_embed(self, room):
         witch = WITCHES[room['witch_id']]

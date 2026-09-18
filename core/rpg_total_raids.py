@@ -425,7 +425,7 @@ class WitchDailyView(discord.ui.View):
             await interaction.followup.send(str(exc), ephemeral=True)
         except discord.HTTPException:
             logger.exception('Witch room creation failed')
-            await interaction.followup.send('無法建立房間，請確認機器人具有管理頻道權限。', ephemeral=True)
+            await interaction.followup.send('無法建立房間，請確認機器人具有建立與管理討論串權限。', ephemeral=True)
 
 
 class TotalRaidLobbyView(discord.ui.View):
@@ -475,7 +475,7 @@ class TotalRaidLobbyView(discord.ui.View):
             try:
                 await self.service.cancel_lobby(self.room_id, interaction.user)
                 await self.service.cleanup_witch_rooms(time.time())
-                await interaction.followup.send('房間已關閉；紀錄送達魔女試煉頻道後會刪除房間。', ephemeral=True)
+                await interaction.followup.send('房間已關閉；紀錄送達魔女試煉頻道後會封存討論串。', ephemeral=True)
             except (CharacterError, TotalRaidError) as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
             return
@@ -858,10 +858,10 @@ class TotalRaidService:
     def start(self):
         self.bot.add_view(WitchDailyView(self))
         for room in self.repo.active():
-            if not room.get('message_id'):
-                continue
-            view = self.view(room)
-            self.bot.add_view(view, message_id=room['message_id'])
+            if room['status'] == 'lobby' and room.get('index_message_id'):
+                self.bot.add_view(self.view(room), message_id=room['index_message_id'])
+            elif room.get('message_id'):
+                self.bot.add_view(self.view(room), message_id=room['message_id'])
         self.tick.start()
 
     async def close(self):
@@ -986,6 +986,48 @@ class TotalRaidService:
         category = self.category_for(guild)
         number = self.repo.reserve_number(guild.id, boss)
         name = f'魔女試煉-{number}' if boss == WITCH_BOSS else f'總力戰-{boss}-{number}'
+        if boss == WITCH_BOSS:
+            parents = [channel for channel in await self.witch_announcement_channels()
+                       if channel.guild.id == guild.id]
+            if not parents:
+                raise CharacterError('找不到魔女試煉大廳頻道。')
+            parent = parents[0]
+            thread = await parent.create_thread(
+                name=name[:100], type=discord.ChannelType.private_thread,
+                invitable=False, auto_archive_duration=1440,
+                reason=f'{host} 建立魔女試煉私人房')
+            try:
+                room = self.repo.create(guild.id, category.id, thread.id, host.id, boss, number)
+            except TotalRaidError:
+                await thread.edit(archived=True, locked=True,
+                                  reason='房主已開始遠征，取消建立魔女試煉房間')
+                raise
+            room['witch_day'], room['witch_ids'] = self.repo.daily_witches()
+            room['parent_channel_id'] = parent.id
+            self.repo.save(room)
+            index = None
+            try:
+                await thread.add_user(host)
+                index = await parent.send(embed=self.lobby_embed(room), view=self.view(room),
+                                          allowed_mentions=discord.AllowedMentions.none())
+                message = await thread.send(embed=self.thread_lobby_embed(room),
+                                            allowed_mentions=discord.AllowedMentions.none())
+            except Exception:
+                room['status'] = 'cancelled'
+                self.repo.save(room)
+                if index is not None:
+                    try:
+                        await index.edit(content='魔女試煉房間建立失敗。', embed=None, view=None)
+                    except discord.HTTPException:
+                        pass
+                try:
+                    await thread.edit(archived=True, locked=True, reason='魔女試煉建立失敗')
+                except discord.HTTPException:
+                    pass
+                raise
+            room.update(index_message_id=index.id, message_id=message.id)
+            self.repo.save(room)
+            return room, thread
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(
                 view_channel=True, send_messages=False, read_message_history=True),
@@ -1005,9 +1047,6 @@ class TotalRaidService:
         except TotalRaidError:
             await channel.delete(reason='房主已開始遠征，取消建立總力戰房間')
             raise
-        if boss == WITCH_BOSS:
-            room['witch_day'], room['witch_ids'] = self.repo.daily_witches()
-            self.repo.save(room)
         try:
             message = await channel.send(embed=self.lobby_embed(room), view=self.view(room),
                                          allowed_mentions=discord.AllowedMentions.none())
@@ -1055,6 +1094,13 @@ class TotalRaidService:
                         raise TotalRaidError('你已在另一個總力戰房間中。')
                 room['members'].append(member.id)
             self.repo.save(room)
+            if room['boss'] == WITCH_BOSS:
+                thread = self.bot.get_channel(room['channel_id'])
+                if isinstance(thread, discord.Thread):
+                    if leave:
+                        await thread.remove_user(member)
+                    else:
+                        await thread.add_user(member)
             return room
 
     async def begin(self, room_id, member):
@@ -1065,7 +1111,7 @@ class TotalRaidService:
             if member.id != room['host_id']:
                 raise TotalRaidError('只有開房的房主可以開始總力戰。')
             channel = self.bot.get_channel(room['channel_id'])
-            if not isinstance(channel, discord.TextChannel):
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 raise TotalRaidError('找不到總力戰文字頻道。')
             participants = []
             for user_id in room['members']:
@@ -1109,6 +1155,8 @@ class TotalRaidService:
             old = self.views.pop((room_id, 'lobby'), None)
             if old:
                 old.stop()
+            if room['boss'] == WITCH_BOSS:
+                await self._close_lobby_index(room, '魔女試煉已開始。')
             await channel.get_partial_message(room['message_id']).edit(
                 embed=self.battle_embed(room, battle), view=self.view(room),
                 allowed_mentions=discord.AllowedMentions.none())
@@ -1351,7 +1399,7 @@ class TotalRaidService:
 
     async def _edit_public(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
-        if not isinstance(channel, discord.TextChannel):
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return
         view = self.view(room) if room['status'] in ('lobby', 'running') else None
         await channel.get_partial_message(room['message_id']).edit(
@@ -1360,6 +1408,22 @@ class TotalRaidService:
         if room.get('public_pending'):
             room['public_pending'] = False
             self.repo.save(room)
+
+    async def _close_lobby_index(self, room, content):
+        parent = self.bot.get_channel(room.get('parent_channel_id'))
+        if not isinstance(parent, discord.TextChannel) or not room.get('index_message_id'):
+            return
+        try:
+            await parent.get_partial_message(room['index_message_id']).edit(
+                content=content, embed=self.lobby_embed(room), view=None,
+                allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+
+    def thread_lobby_embed(self, room):
+        return discord.Embed(
+            title=f'魔女試煉 #{room["number"]}', color=0x8B5CF6,
+            description='這是私人作戰討論串。請在大廳房間卡加入隊伍，由房主開始戰鬥。')
 
     def lobby_embed(self, room):
         roster = '\n'.join(f'<@{user_id}>' for user_id in room['members'])
@@ -1378,7 +1442,7 @@ class TotalRaidService:
         embed.add_field(name='參戰成員', value=roster or '尚無成員', inline=False)
         embed.set_footer(text='房主建立房間時會自動加入；目前最多六人。')
         if room['boss'] == WITCH_BOSS:
-            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；戰鬥結束後戰報送至魔女試煉頻道並刪除房間。')
+            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；戰鬥結束後戰報送至魔女試煉頻道並封存討論串。')
         return embed
 
     def daily_embed(self):
@@ -1400,7 +1464,7 @@ class TotalRaidService:
         overwrites = {target: discord.PermissionOverwrite.from_pair(*overwrite.pair())
                       for target, overwrite in (existing or {}).items()}
         locked = dict(send_messages=False, create_public_threads=False,
-                      create_private_threads=False, send_messages_in_threads=False)
+                      create_private_threads=False, send_messages_in_threads=True)
         for target, overwrite in overwrites.items():
             if target != guild.me:
                 overwrite.update(**locked)
@@ -1409,6 +1473,8 @@ class TotalRaidService:
         bot = overwrites.setdefault(guild.me, discord.PermissionOverwrite())
         bot.update(view_channel=True, send_messages=True, read_message_history=True,
                    embed_links=True, manage_channels=True, manage_messages=True,
+                   create_private_threads=True, send_messages_in_threads=True,
+                   manage_threads=True,
                    **({'pin_messages': True} if 'pin_messages' in discord.Permissions.VALID_FLAGS else {}))
         return overwrites
 
@@ -1596,7 +1662,16 @@ class TotalRaidService:
                         pass
                     except discord.HTTPException:
                         continue
-                if isinstance(channel, discord.TextChannel):
+                if isinstance(channel, discord.Thread):
+                    try:
+                        await channel.edit(archived=True, locked=True,
+                                           reason='魔女試煉房間已結束')
+                    except discord.NotFound:
+                        pass
+                    except discord.HTTPException:
+                        logger.exception('Witch thread cleanup failed: %s', room['id'])
+                        continue
+                elif isinstance(channel, discord.TextChannel):
                     try:
                         await channel.delete(reason='魔女試煉暫時房間到期')
                     except discord.NotFound:
@@ -1604,6 +1679,9 @@ class TotalRaidService:
                     except discord.HTTPException:
                         logger.exception('Witch room cleanup failed: %s', room['id'])
                         continue
+                await self._close_lobby_index(
+                    room, '魔女試煉房間已關閉。' if room['status'] == 'lobby'
+                    else '魔女試煉已結束，討論串已封存。')
                 room['status'] = 'cancelled' if room['status'] == 'lobby' else room['status']
                 room['channel_deleted'] = True
                 self.repo.save(room)
@@ -1721,7 +1799,8 @@ class TotalRaidService:
                 if room:
                     await self.refresh_private_panels(room)
         for room in self.repo.active():
-            if not isinstance(self.bot.get_channel(room['channel_id']), discord.TextChannel):
+            if not isinstance(self.bot.get_channel(room['channel_id']),
+                              (discord.TextChannel, discord.Thread)):
                 room['status'] = 'cancelled'
                 self.repo.save(room)
                 continue
