@@ -1,0 +1,439 @@
+import random
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+
+from core.rpg import RPGStore
+from core.rpg_character import Characters, ITEMS, add_owned_item
+from core.rpg_witch_rest import (
+    ENTRY_PROOFS,
+    WitchRestStore,
+    equipment_id,
+    party_size_allowed,
+    reroll_cost,
+    roll_affixes,
+    roll_reward,
+    treasure_weights,
+)
+from core.rpg_total_battle import dump_total_battle, load_total_battle
+from core.rpg_witch_rest_battle import (
+    WitchRestManualBattle,
+    manual_battle_from_participants,
+    manual_stats,
+    run_auto_battle,
+)
+
+
+class WitchRestRulesTests(unittest.TestCase):
+    @staticmethod
+    def participant(user_id=1, attack=100_000):
+        return {'id': user_id, 'name': f'P{user_id}', 'state': {
+            'level': 80, 'job': '裝甲步兵',
+            'combat': {'HP': 10_000, '攻擊': attack, '防禦': 1_000, '治療量': 0,
+                       '命中率': 100, '閃避率': 0, '暴擊率': 0},
+            'speed': 80, 'stability': (100, 100), 'equipped': {'武器': 'test'}},
+            'rules': [], 'basic_target': 'boss', 'passive_id': None}
+
+    def test_party_boundary_switches_at_one_hundred(self):
+        self.assertTrue(party_size_allowed(99, 1))
+        self.assertFalse(party_size_allowed(100, 1))
+        self.assertTrue(party_size_allowed(100, 3))
+        self.assertFalse(party_size_allowed(100, 7))
+        self.assertEqual(ENTRY_PROOFS, 10)
+
+    def test_low_enrage_cannot_roll_t90_material_or_directed_memory(self):
+        kinds = {kind for kind, _ in treasure_weights(99)}
+        self.assertNotIn('crystal', kinds)
+        self.assertNotIn('directed_memory', kinds)
+        for seed in range(200):
+            reward = roll_reward(random.Random(seed), 'ema', '弓兵', 99)
+            self.assertNotIn('witch_rest:crystal_shard', reward['items'])
+            self.assertNotIn(reward['treasure'], {
+                'witch_rest:crystal', 'witch_rest:ema:directed_memory'})
+
+    def test_affixes_follow_slot_and_degree_pools(self):
+        for seed in range(100):
+            prefix, suffix = roll_affixes(random.Random(seed), '裝甲步兵', 'weapon', 4000)
+            self.assertIn(prefix[0], {'vitality', 'assault', 'fortitude'})
+            self.assertIn(suffix[0], {'precision', 'haste', 'critical', 'prowess', 'stability', 'drain'})
+            self.assertIn(prefix[1], {3, 4})
+            self.assertIn(suffix[1], {3, 4})
+
+    def test_reroll_cost_keeps_rising(self):
+        self.assertEqual(reroll_cost(0), {'fragment': 4, 'dust': 2, 'gold': 1500})
+        self.assertEqual(reroll_cost(6), {'fragment': 16, 'dust': 8, 'gold': 10500})
+
+    def test_static_first_release_equipment_is_registered(self):
+        item = ITEMS[equipment_id('hiro', '僧侶', 'weapon', 90)]
+        self.assertEqual(item.required_level, 90)
+        self.assertEqual(item.combat, (0, 217, 0, 231))
+        self.assertEqual(item.sell_price, 12000)
+        self.assertEqual(ITEMS['witch_rest:ema:accessory'].embroidery_slots, 3)
+        self.assertTrue(ITEMS['witch_rest:ema:directed_memory'].transferable)
+        self.assertTrue(ITEMS['witch_rest:memory_page'].transferable)
+        self.assertFalse(ITEMS['witch_rest:advanced_memory'].transferable)
+
+    def test_auto_hiro_uses_one_weak_rewind(self):
+        battle = run_auto_battle([self.participant()], 'hiro', 99, seed=7)
+        self.assertEqual(battle.result, '勝利')
+        self.assertTrue(battle.mechanics['hiro_rewound'])
+        self.assertLessEqual(battle.round, 30)
+
+    def test_manual_stats_interpolate_approved_anchors(self):
+        self.assertEqual(manual_stats('ema', 1000), (90_000, 1_625, 500))
+        self.assertEqual(manual_stats('ema', 1500), (101_250, 1_772, 550))
+
+    def test_manual_battle_scales_party_and_survives_restart(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        battle = manual_battle_from_participants(participants, 'ema', 1000, seed=7)
+        boss = battle.witch('ema')
+        self.assertEqual((boss.stats['HP'], boss.stats['攻擊'], boss.stats['防禦']),
+                         (90_000, 1_625, 500))
+        loaded = load_total_battle(dump_total_battle(battle))
+        self.assertIsInstance(loaded, WitchRestManualBattle)
+        self.assertEqual((loaded.witch_id, loaded.enrage), ('ema', 1000))
+        self.assertEqual(loaded.rng.getstate(), battle.rng.getstate())
+
+    def test_ema_prosecution_consumes_factors_and_builds_shield(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 4)]
+        battle = manual_battle_from_participants(participants, 'ema', 100, seed=7)
+        player, boss = battle.living(0)[0], battle.witch('ema')
+        for _ in range(3):
+            battle.mark(player, 'factor', 30, True)
+        boss.hp -= 10_000
+        battle.prepare(boss)
+        battle.spell(boss, battle.pending.pop('ema'))
+        self.assertEqual(player.hp, 6_400)
+        self.assertEqual(battle.factor_stacks(player), 0)
+        self.assertGreater(battle.mechanics['rest_boss_shield'], 0)
+        self.assertGreater(boss.hp, boss.stats['HP'] - 10_000)
+
+    def test_ema_evidence_preserves_factor_and_can_disprove_prosecution(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 4)]
+        battle = manual_battle_from_participants(participants, 'ema', 500, seed=7)
+        player, boss = battle.living(0)[0], battle.witch('ema')
+        for _ in range(3):
+            battle.mark(player, 'factor', 30, True)
+        player.status_stacks['rest_factor_preservation'] = 1
+        battle.clear_negative_effects(player)
+        self.assertEqual(battle.factor_stacks(player), 3)
+        battle.clear_negative_effects(player)
+        self.assertEqual(battle.factor_stacks(player), 0)
+
+        battle.mark(player, 'factor', 30, True)
+        battle.prepare(boss)
+        data = battle.pending['ema']
+        evidence = battle.fighter_for_key(data['objects'][0])
+        self.assertEqual(data['objection_resist'], 1)
+        self.assertFalse(battle.apply_debuff(boss, 'stun', battle.round + 1))
+        self.assertIn('ema', battle.pending)
+        evidence.hp = 0
+        before = player.hp
+        battle.spell(boss, data)
+        self.assertEqual(player.hp, before)
+        self.assertEqual(battle.factor_stacks(player), 1)
+
+    def test_ema_shared_testimony_and_guilt_verdict(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        battle = manual_battle_from_participants(participants, 'ema', 750, seed=7)
+        players, boss = battle.living(0), battle.witch('ema')
+        boss.hp = boss.stats['HP'] * 60 // 100
+        for player in players[:2]:
+            battle.mark(player, 'factor', 30, True)
+        battle.prepare(boss)
+        before = players[1].hp
+        battle._rest_player_actor = players[2]
+        battle.apply_damage(players[0], 1_000, direct=True)
+        battle._rest_player_actor = None
+        self.assertEqual(players[1].hp, before - 300)
+
+        battle.pending.pop('ema')
+        battle._start_ema_guilt(boss)
+        data = battle.pending['ema']
+        defendant = battle.fighter_for_key(data['targets'][0])
+        defendant.effects['defend'] = battle.round
+        data['defended'].append(defendant.user_id)
+        object_key = data['objects'][0]
+        data['hits'][object_key] = data['assignments'][object_key][:2]
+        before = defendant.hp
+        battle.spell(boss, data)
+        self.assertEqual(defendant.hp, before - defendant.stats['HP'] * 20 // 100)
+
+    def test_ema_witch_killer_success_and_failure_are_explicit(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        battle = manual_battle_from_participants(participants, 'ema', 1000, seed=7)
+        boss = battle.witch('ema')
+        battle._start_ema_final(boss)
+        final = battle.mechanics['ema_final']
+        final['denied'] = list(final['manifests'])
+        final['advocated'] = list(final['manifests'])
+        for _ in range(3):
+            battle.round += 1
+            battle._resolve_ema_final_round()
+        self.assertFalse(final['active'])
+        self.assertEqual(final['manifests'], [])
+        self.assertEqual(battle.mechanics['rest_vulnerable_until'], battle.round + 1)
+
+        failed = manual_battle_from_participants(participants, 'ema', 1000, seed=8)
+        failed._start_ema_final(failed.witch('ema'))
+        for _ in range(3):
+            failed.round += 1
+            failed._resolve_ema_final_round()
+        self.assertFalse(failed.living(0))
+
+    def test_hiro_two_rewinds_and_final_worldline(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        battle = manual_battle_from_participants(participants, 'hiro', 1000, seed=7)
+        boss = battle.witch('hiro')
+        references = ('defend', 'attack', 'attack', 'attack')
+        for player, reference in zip(battle.living(0), references):
+            battle.mechanics.setdefault('rest_action_history', {})[str(player.user_id)] = [
+                reference, reference, reference]
+        boss.hp = 0
+        self.assertFalse(battle.check_end())
+        self.assertEqual(boss.hp, boss.stats['HP'] * 30 // 100)
+        boss.hp = 0
+        self.assertFalse(battle.check_end())
+        final = battle.mechanics['hiro_final']
+        self.assertEqual(boss.hp, 1)
+        categories = ('attack', 'skill', 'defend', 'skill')
+        for _ in range(3):
+            battle.round += 1
+            final['current'] = {str(player.user_id): category
+                                for player, category in zip(battle.living(0), categories)}
+            battle._resolve_hiro_round()
+        self.assertFalse(final['active'])
+        self.assertEqual(len(battle.living(0)), 4)
+
+    def test_hiro_rewrite_action_is_once_per_player(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 4)]
+        battle = manual_battle_from_participants(participants, 'hiro', 1000, seed=7)
+        boss = battle.witch('hiro')
+        battle.mechanics['hiro_rewinds'] = 1
+        boss.hp = 0
+        battle.check_end()
+        player = battle.living(0)[0]
+        battle.submit(player.user_id, 'rewrite_defend')
+        battle._resolve_player(player, battle.choices[player.user_id])
+        actions = {item['action'] for item in battle.available_actions(player.user_id)}
+        self.assertNotIn('rewrite_defend', actions)
+        self.assertIn(player.user_id, battle.mechanics['hiro_final']['rewrite_used'])
+
+    def test_manual_thresholds_complete_real_round_loop(self):
+        participants = [self.participant(user_id, attack=5_000) for user_id in range(1, 5)]
+        for witch_id in ('ema', 'hiro'):
+            for enrage in (100, 250, 500, 750, 1_000, 2_000, 4_000):
+                with self.subTest(witch_id=witch_id, enrage=enrage):
+                    battle = manual_battle_from_participants(participants, witch_id, enrage, seed=7)
+                    for user_id in battle.living_player_ids():
+                        battle.enable_auto(user_id)
+                    while not battle.result:
+                        battle.resolve()
+                    self.assertIn(battle.result, {'勝利', '戰敗', '平手（達回合上限）'})
+
+    def test_final_mechanic_state_survives_restart(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        ema = manual_battle_from_participants(participants, 'ema', 4000, seed=7)
+        ema._start_ema_final(ema.witch('ema'))
+        ema.mechanics['ema_final']['denied'].append(1)
+        restored = load_total_battle(dump_total_battle(ema))
+        self.assertEqual(restored.mechanics['ema_final']['denied'], [1])
+        self.assertEqual(len(restored.mechanics['ema_final']['shadows']), 4)
+
+        hiro = manual_battle_from_participants(participants, 'hiro', 2000, seed=8)
+        hiro.mechanics['hiro_rewinds'] = 1
+        hiro.witch('hiro').hp = 0
+        hiro.check_end()
+        restored = load_total_battle(dump_total_battle(hiro))
+        self.assertTrue(restored.mechanics['hiro_final']['active'])
+        self.assertEqual(restored.witch('hiro').hp, 1)
+
+    def test_four_thousand_strengthens_existing_solutions_only(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        ema = manual_battle_from_participants(participants, 'ema', 4000, seed=7)
+        for player in ema.living(0):
+            ema.mark(player, 'factor', 30, True)
+        ema.prepare(ema.witch('ema'))
+        self.assertEqual(ema.pending['ema']['objection_resist'], 2)
+        self.assertEqual(len(ema.pending['ema']['targets']), 4)
+        ema.pending.pop('ema')
+        ema._start_ema_guilt(ema.witch('ema'))
+        self.assertEqual(len(ema.pending['ema']['targets']), 2)
+
+        hiro = manual_battle_from_participants(participants, 'hiro', 4000, seed=8)
+        hiro.mechanics['hiro_rewinds'] = 1
+        hiro.witch('hiro').hp = 0
+        hiro.check_end()
+        self.assertEqual(len(hiro.mechanics['hiro_final']['focus']), 2)
+
+
+class WitchRestStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = RPGStore(Path(self.temp.name) / 'rpg.db')
+        self.store.create_player(1, 10)
+        Characters(self.store, SimpleNamespace(stage_levels=(1, 10, 20, 50)))
+        self.rest = WitchRestStore(self.store)
+
+    def quantity(self, user_id, item_id):
+        row = self.store.db.execute('''SELECT quantity FROM rpg_inventory
+            WHERE guild_id=1 AND user_id=? AND item_id=?''', (user_id, item_id)).fetchone()
+        return row[0] if row else 0
+
+    def equipment(self, *, tier=80, grades=(2, 3), source='test-equipment'):
+        item_id = equipment_id('ema', '騎士', 'weapon', tier)
+        with self.store.db:
+            instance_id = add_owned_item(self.store.db, 1, 10, item_id)[0]
+            self.store.db.execute('INSERT INTO rpg_instance_affixes VALUES (?,?,?,?,?)',
+                                  (instance_id, 0, f'witch:vitality:{grades[0]}', 'combat:0', 100))
+            self.store.db.execute('INSERT INTO rpg_instance_affixes VALUES (?,?,?,?,?)',
+                                  (instance_id, 1, f'witch:drain:{grades[1]}', 'lifesteal', grades[1]))
+            self.store.db.execute('INSERT INTO rpg_witch_rest_equipment VALUES (?,?,?,?,?,?)',
+                                  (instance_id, 'ema', 0, 0, source, 0))
+        return instance_id
+
+    def tearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    def test_settlement_is_idempotent_and_updates_progress_once(self):
+        first = self.rest.settle('clear-1', 1, 10, 'ema', '騎士', 1000, seed=42)
+        second = self.rest.settle('clear-1', 1, 10, 'ema', '騎士', 1000, seed=999)
+        self.assertEqual(first, second)
+        progress = self.rest.progress(1, 10, 'ema')
+        self.assertEqual(progress['total_wins'], 1)
+        self.assertEqual(progress['eligible_wins'], 1)
+        self.assertEqual(progress['highest_enrage'], 1000)
+
+    def test_auto_clear_does_not_advance_bad_luck_protection(self):
+        self.rest.settle('clear-low', 1, 10, 'hiro', '弓兵', 99, seed=1)
+        progress = self.rest.progress(1, 10, 'hiro')
+        self.assertEqual(progress['eligible_wins'], 0)
+        self.assertEqual(progress['dry_wins'], 0)
+        self.assertEqual(progress['luck_points'], 0)
+
+    def test_entry_charge_is_all_or_nothing_and_idempotent(self):
+        self.store.create_player(1, 11)
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 10, 'proof:raid', 20)
+        with self.assertRaisesRegex(Exception, '討伐之證不足'):
+            self.rest.charge_entry('room-1', 1, [10, 11])
+        self.assertEqual(self.quantity(10, 'proof:raid'), 20)
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 11, 'proof:raid', 10)
+        self.assertTrue(self.rest.charge_entry('room-1', 1, [10, 11]))
+        self.assertFalse(self.rest.charge_entry('room-1', 1, [10, 11]))
+        self.assertEqual(self.quantity(10, 'proof:raid'), 10)
+        self.assertEqual(self.quantity(11, 'proof:raid'), 0)
+
+    def test_upgrade_keeps_instance_and_affixes(self):
+        with self.store.db:
+            instance_id = add_owned_item(
+                self.store.db, 1, 10, equipment_id('ema', '騎士', 'weapon'))[0]
+            self.store.db.execute('INSERT INTO rpg_instance_affixes VALUES (?,?,?,?,?)',
+                                  (instance_id, 0, 'witch:vitality:3', 'combat:0', 132))
+            self.store.db.execute('INSERT INTO rpg_instance_affixes VALUES (?,?,?,?,?)',
+                                  (instance_id, 1, 'witch:drain:3', 'lifesteal', 3))
+            self.store.db.execute('INSERT INTO rpg_witch_rest_equipment VALUES (?,?,?,?,?,?)',
+                                  (instance_id, 'ema', 2, 4, 'source', 0))
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:ema:core', 12)
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:crystal', 1)
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,10,20000)')
+        result = self.rest.upgrade(1, 10, instance_id)
+        retry = self.rest.upgrade(1, 10, instance_id)
+        self.assertEqual(result, retry)
+        self.assertEqual(result['instance_id'], instance_id)
+        self.assertIn(':t90:', result['item_id'])
+        rows = self.store.db.execute('''SELECT affix_id FROM rpg_instance_affixes
+            WHERE instance_id=? ORDER BY affix_index''', (instance_id,)).fetchall()
+        self.assertEqual(rows, [('witch:vitality:3',), ('witch:drain:3',)])
+        self.assertEqual(self.quantity(10, 'witch_rest:ema:core'), 0)
+
+    def test_practice_room_starts_without_fee_and_records_no_progress(self):
+        room = self.rest.create_room(1, 10, 'ema', 99, practice=True, now=100)
+        participant = WitchRestRulesTests.participant(10)
+        running = self.rest.start_room(room['id'], 10, [participant], now=101)
+        self.assertEqual(running['status'], 'running')
+        finished = self.rest.finish_room(room['id'], '勝利', {'rounds': 1, 'log': []}, now=102)
+        self.assertTrue(finished['practice'])
+        self.assertEqual(self.rest.progress(1, 10, 'ema')['total_wins'], 0)
+        self.assertEqual(self.quantity(10, 'proof:raid'), 0)
+
+    def test_formal_room_charges_when_battle_starts_not_when_created(self):
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 10, 'proof:raid', 10)
+        room = self.rest.create_room(1, 10, 'hiro', 0, now=100)
+        self.assertEqual(self.quantity(10, 'proof:raid'), 10)
+        self.rest.start_room(room['id'], 10, [WitchRestRulesTests.participant(10)], now=101)
+        self.assertEqual(self.quantity(10, 'proof:raid'), 0)
+
+    def test_same_clear_can_drop_equipment_for_multiple_players(self):
+        self.store.create_player(1, 11)
+        seed = next(seed for seed in range(10_000)
+                    if (roll_reward(random.Random(seed), 'ema', '騎士', 1000)['treasure'] or '').endswith(
+                        (':weapon', ':suit')))
+        first = self.rest.settle('party-clear', 1, 10, 'ema', '騎士', 1000, seed=seed)
+        second = self.rest.settle('party-clear', 1, 11, 'ema', '騎士', 1000, seed=seed)
+        self.assertIsNotNone(first.get('instance_id'))
+        self.assertIsNotNone(second.get('instance_id'))
+        self.assertNotEqual(first['instance_id'], second['instance_id'])
+
+    def test_reroll_charges_once_and_accepts_preview(self):
+        instance_id = self.equipment(source='reroll')
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:fragment', 20)
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:dust', 10)
+            self.store.db.execute('INSERT OR REPLACE INTO rpg_wallets VALUES (1,10,10000)')
+        offer = self.rest.offer_reroll('reroll-1', 1, 10, instance_id, 0)
+        retry = self.rest.offer_reroll('reroll-1', 1, 10, instance_id, 0)
+        self.assertEqual(offer, retry)
+        self.assertNotEqual(offer['old'][0], offer['new'][0])
+        result = self.rest.resolve_reroll('reroll-1', True)
+        self.assertTrue(result['accepted'])
+        row = self.store.db.execute('''SELECT affix_id FROM rpg_instance_affixes
+            WHERE instance_id=? AND affix_index=0''', (instance_id,)).fetchone()
+        self.assertIn(offer['new'][0], row[0])
+        self.assertEqual(self.quantity(10, 'witch_rest:fragment'), 16)
+
+    def test_memories_upgrade_and_direct_affixes_idempotently(self):
+        instance_id = self.equipment(grades=(1, 2), source='memories')
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:advanced_memory', 1)
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:ema:directed_memory', 1)
+            self.store.db.execute('INSERT OR REPLACE INTO rpg_wallets VALUES (1,10,20000)')
+        improved = self.rest.improve_affix('improve-1', 1, 10, instance_id, 0)
+        self.assertTrue(improved['success'])
+        self.assertEqual(improved['grade'], 2)
+        self.assertEqual(self.quantity(10, 'witch_rest:advanced_memory'), 0)
+        directed = self.rest.direct_affix('direct-1', 1, 10, instance_id, 1, 'haste')
+        retry = self.rest.direct_affix('direct-1', 1, 10, instance_id, 1, 'haste')
+        self.assertEqual(directed, retry)
+        row = self.store.db.execute('''SELECT affix_id FROM rpg_instance_affixes
+            WHERE instance_id=? AND affix_index=1''', (instance_id,)).fetchone()
+        self.assertEqual(row[0], 'witch:haste:2')
+
+        failed_instance = self.equipment(grades=(3, 2), source='memory-failure')
+        with self.store.db:
+            add_owned_item(self.store.db, 1, 10, 'witch_rest:advanced_memory', 1)
+        request_id = next(f'improve-fail-{value}' for value in range(100)
+                          if random.Random(f'improve-fail-{value}').random() >= .5)
+        failed = self.rest.improve_affix(request_id, 1, 10, failed_instance, 0)
+        retry = self.rest.improve_affix(request_id, 1, 10, failed_instance, 0)
+        self.assertEqual(failed, retry)
+        self.assertFalse(failed['success'])
+        self.assertEqual(self.quantity(10, 'witch_rest:advanced_memory'), 1)
+
+    def test_t90_dismantle_returns_core_and_pages_but_no_crystal(self):
+        instance_id = self.equipment(tier=90, grades=(3, 4), source='dismantle')
+        result = self.rest.dismantle('dismantle-1', 1, 10, instance_id)
+        retry = self.rest.dismantle('dismantle-1', 1, 10, instance_id)
+        self.assertEqual(result, retry)
+        self.assertEqual((result['cores'], result['pages']), (8, 3))
+        self.assertEqual(self.quantity(10, 'witch_rest:ema:core'), 8)
+        self.assertEqual(self.quantity(10, 'witch_rest:memory_page'), 3)
+        self.assertEqual(self.quantity(10, 'witch_rest:crystal'), 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

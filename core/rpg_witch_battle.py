@@ -60,9 +60,12 @@ WITCH_RHYTHMS = {
 
 
 class WitchRaidBattle(WitchBattleV9):
+    expected_witches = 3
+
     def __init__(self, fighters, ids, seed=None, max_rounds=30):
-        if len(ids) != 3 or len(set(ids)) != 3 or any(k not in IDS for k in ids):
-            raise TotalRaidError('每日總力戰需要三位不同魔女。')
+        if (len(ids) != self.expected_witches or len(set(ids)) != len(ids)
+                or any(k not in IDS for k in ids)):
+            raise TotalRaidError('魔女戰鬥的參戰魔女設定無效。')
         super().__init__(fighters, ids, seed=seed, max_rounds=max_rounds, tuning=True)
         self.next_cast = {key: self.rng.randint(*WITCH_RHYTHMS[key][0]) for key in ids}
         if len(set(self.next_cast.values())) == 1:
@@ -398,12 +401,13 @@ def dump_witch_battle(battle):
     return data
 
 
-def load_witch_battle(data):
+def load_witch_battle(data, *, battle_class=WitchRaidBattle, battle_args=None):
     if data.get('witch_version') != 1:
         raise TotalRaidError('不支援此魔女戰鬥存檔版本。')
     base = load_battle(data)
     state = {k: _decode(v) for k, v in data['witch_state'].items()}
-    battle = WitchRaidBattle(base.fighters, state['ids'], max_rounds=base.max_rounds)
+    battle = battle_class(base.fighters, *(battle_args or (state['ids'],)),
+                          max_rounds=base.max_rounds)
     battle.round, battle.result, battle.log, battle.mechanics = base.round, base.result, base.log, base.mechanics
     battle.rng.setstate(base.rng.getstate())
     for key in STATE_FIELDS:

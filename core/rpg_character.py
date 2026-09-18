@@ -126,6 +126,10 @@ class Item:
     first_skill_cooldown_reduction: int = 0
     critical_points: int = 0
     healing_received_percent: int = 0
+    critical_damage_percent_add: int = 0
+    direct_damage_reduction: int = 0
+    dot_damage_reduction: int = 0
+    low_hp_damage_reduction: int = 0
 
 
 @dataclass(frozen=True)
@@ -1071,6 +1075,7 @@ class Characters:
         item = ITEMS[self.instance_item_id(instance)]
         stats, combat = list(item.stats), list(item.combat)
         changes = {}
+        stability = item.stability
         for _, _, effect_key, value in instance.affixes:
             if effect_key.startswith('stat:'):
                 index = int(effect_key.split(':', 1)[1])
@@ -1081,8 +1086,13 @@ class Characters:
             elif effect_key in ('speed', 'accuracy', 'evasion', 'lifesteal',
                                 'damage_guard_chance', 'vulnerable_chance',
                                 'vulnerable_percent', 'healing_share',
-                                'alternating_damage_percent', 'defense_conversion'):
+                                'alternating_damage_percent', 'defense_conversion',
+                                'critical_points', 'healing_received_percent',
+                                'critical_damage_percent_add', 'direct_damage_reduction',
+                                'dot_damage_reduction', 'low_hp_damage_reduction'):
                 changes[effect_key] = changes.get(effect_key, getattr(item, effect_key)) + value
+            elif effect_key == 'stability_lower':
+                stability = (min(stability[1], stability[0] + value), stability[1])
         crystal_table = self.db.execute("""SELECT 1 FROM sqlite_master
             WHERE type='table' AND name='rpg_crystal_instances'""").fetchone()
         if crystal_table:
@@ -1097,7 +1107,7 @@ class Characters:
                                         'critical_points', 'healing_received_percent'):
                         changes[effect_key] = changes.get(
                             effect_key, getattr(item, effect_key)) + value
-        return replace(item, stats=tuple(stats), combat=tuple(combat), **changes)
+        return replace(item, stats=tuple(stats), combat=tuple(combat), stability=stability, **changes)
 
     def _resolve_instance(self, guild_id, user_id, reference):
         if isinstance(reference, int) or isinstance(reference, str) and reference.startswith('instance:'):
@@ -1152,7 +1162,11 @@ class Characters:
         allowed_fields = {'speed', 'accuracy', 'evasion', 'lifesteal',
                           'damage_guard_chance', 'vulnerable_chance',
                           'vulnerable_percent', 'healing_share',
-                          'alternating_damage_percent', 'defense_conversion'}
+                          'alternating_damage_percent', 'defense_conversion',
+                          'critical_points', 'healing_received_percent',
+                          'critical_damage_percent_add', 'direct_damage_reduction',
+                          'dot_damage_reduction', 'low_hp_damage_reduction',
+                          'stability_lower'}
         normalized = []
         for index, entry in enumerate(affixes):
             if len(entry) != 3:

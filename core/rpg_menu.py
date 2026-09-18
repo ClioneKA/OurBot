@@ -83,6 +83,9 @@ async def navigate(view, interaction, page='home', *, help_topic='intro', help_r
     elif page == 'profile':
         from core.rpg_profile_view import ProfileView
         next_view = ProfileView(view.cog, view.origin)
+    elif page == 'raids':
+        from core.rpg_raid_hub import RaidHubView
+        next_view = RaidHubView(view.cog, view.origin)
     else:
         next_view = AdventureView(view.cog, view.origin, page,
                                   help_topic=help_topic, help_return=help_return)
@@ -122,7 +125,7 @@ class AdventureView(discord.ui.View):
         if self.page == 'home':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
                 ('出戰配置', 'loadouts'), ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('生活', 'life'),
-                ('移動', 'travel'), ('展示名片', 'profile'), ('說明', 'help'), ('訓練假人', 'training'))):
+                ('移動', 'travel'), ('討伐', 'raids'), ('展示名片', 'profile'), ('說明', 'help'), ('訓練假人', 'training'))):
                 self.button(label, action, i // 3)
         elif self.page == 'help':
             from core.rpg_equipment_view import PanelSelect
@@ -234,7 +237,7 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel',
+            if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids',
                           'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return

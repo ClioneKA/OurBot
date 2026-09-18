@@ -739,6 +739,11 @@ def noah_total_battle_from_participants(participants, seed=None, max_rounds=30):
 
 def dump_total_battle(battle):
     from core.rpg_witch_battle import WitchRaidBattle, dump_witch_battle
+    from core.rpg_witch_rest_battle import WitchRestManualBattle
+    if isinstance(battle, WitchRestManualBattle):
+        data = dump_witch_battle(battle)
+        data.update(mode='witch_rest_manual', witch_id=battle.witch_id, enrage=battle.enrage)
+        return data
     if isinstance(battle, WitchRaidBattle):
         return dump_witch_battle(battle)
     data = dump_battle(battle)
@@ -749,6 +754,11 @@ def dump_total_battle(battle):
 
 
 def load_total_battle(data):
+    if data.get('mode') == 'witch_rest_manual':
+        from core.rpg_witch_battle import load_witch_battle
+        from core.rpg_witch_rest_battle import WitchRestManualBattle
+        return load_witch_battle(data, battle_class=WitchRestManualBattle,
+                                 battle_args=(data['witch_id'], data['enrage']))
     if data.get('mode') == 'witch_raid':
         from core.rpg_witch_battle import load_witch_battle
         return load_witch_battle(data)

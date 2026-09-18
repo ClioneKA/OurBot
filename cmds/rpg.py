@@ -30,6 +30,8 @@ from core.rpg_spaces import AdventureSpaceService
 from core.rpg_painted_maze import MODE_NAME
 from core.rpg_painted_maze_service import PaintedMazeService
 from core.rpg_crystals import crystal_affix_name, crystal_effect_text
+from core.rpg_witch_rest import WitchRestStore
+from core.rpg_witch_rest_service import WitchRestService
 
 
 class RPG(commands.Cog):
@@ -38,6 +40,7 @@ class RPG(commands.Cog):
         self.settings = get_settings().rpg
         self.store = RPGStore(Path(__file__).resolve().parent.parent / 'data/rpg.db')
         self.characters = Characters(self.store, self.settings)
+        self.witch_rest = WitchRestStore(self.store)
         self.spaces = AdventureSpaceService(self)
         self.invitations = AdventurerInvitations(self)
         self.fishing = Fishing(self.store)
@@ -46,6 +49,7 @@ class RPG(commands.Cog):
         self.provisions = Provisions(self.store)
         self.divinations = Divinations(self.store)
         self.tracker = VoiceTracker()
+        self.manual_room_lock = asyncio.Lock()
         self.menu_views = WeakSet()
         self.notification_views = WeakSet()
         self.tactics = Tactics(self.store)
@@ -60,6 +64,7 @@ class RPG(commands.Cog):
         self.tavern = TavernService(self)
         self.total_raids = TotalRaidService(self)
         self.painted_maze = PaintedMazeService(self)
+        self.witch_rest_service = WitchRestService(self)
 
     async def cog_load(self):
         self.invitations.restore_views()
@@ -78,6 +83,7 @@ class RPG(commands.Cog):
         self.tavern.start()
         self.total_raids.start()
         self.painted_maze.start()
+        self.witch_rest_service.start()
 
     async def cog_unload(self):
         self.voice_tick.cancel()
@@ -87,6 +93,7 @@ class RPG(commands.Cog):
         self.tavern.close()
         await self.total_raids.close()
         self.painted_maze.close()
+        self.witch_rest_service.close()
         for view in tuple(self.menu_views):
             view.closed = True
             view.stop()
@@ -208,6 +215,19 @@ class RPG(commands.Cog):
                 '你還沒有正式加入安安大冒險。請先接受一封邀請函！', ephemeral=True)
             return
         view = AdventureView(self, interaction)
+        self.menu_views.add(view)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name='討伐', description='開啟統一討伐入口：魔女安息、魔女試煉、繪境與特殊召喚')
+    @app_commands.guild_only()
+    async def raid_hub(self, interaction: discord.Interaction):
+        if not self.store.has_player(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message(
+                '你還沒有正式加入安安大冒險。請先接受一封邀請函！', ephemeral=True)
+            return
+        from core.rpg_raid_hub import RaidHubView
+        view = RaidHubView(self, interaction)
         self.menu_views.add(view)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())

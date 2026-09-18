@@ -967,8 +967,12 @@ class TotalRaidService:
         raise CharacterError('這個伺服器尚未設定總力戰類別。')
 
     async def create_room(self, guild, host, boss):
-        async with self.lock(('guild', guild.id)):
-            return await self._create_room(guild, host, boss)
+        from core.rpg_room_occupancy import occupied_room, room_lock
+        async with room_lock(self.cog):
+            if occupied_room(self.cog, guild.id, host.id):
+                raise CharacterError('你已在這個伺服器的另一個手動房間中。')
+            async with self.lock(('guild', guild.id)):
+                return await self._create_room(guild, host, boss)
 
     async def _create_room(self, guild, host, boss):
         require_not_expedition(self.repo.db, host.id)
@@ -1019,8 +1023,13 @@ class TotalRaidService:
         room = self.repo.get(room_id)
         if not room:
             raise TotalRaidError('房間已關閉。')
-        async with self.lock(('guild', room['guild_id'])):
-            return await self._change_member(room_id, member, leave)
+        from core.rpg_room_occupancy import occupied_room, room_lock
+        async with room_lock(self.cog):
+            if not leave and occupied_room(
+                    self.cog, room['guild_id'], member.id, exclude=('total', room_id)):
+                raise TotalRaidError('你已在這個伺服器的另一個手動房間中。')
+            async with self.lock(('guild', room['guild_id'])):
+                return await self._change_member(room_id, member, leave)
 
     async def _change_member(self, room_id, member, leave=False):
         async with self.lock(room_id):
@@ -1147,8 +1156,10 @@ class TotalRaidService:
                 if choice.action == ACTION_CANVAS:
                     selected = f'踏入畫布・{PAINT_NAMES[{"red": 1, "yellow": 2, "blue": 4}[choice.target]]}'
                 else:
-                    rule = next(rule for rule in actor.rules if rule.slot == choice.skill_slot)
-                    selected = f'【{rule_skill(actor.job, rule).name}】'
+                    action = next((item for item in battle.available_actions(user_id)
+                                   if item['action'] == choice.action
+                                   and item.get('skill_slot') == choice.skill_slot), None)
+                    selected = f'【{action["name"]}】' if action else '特殊行動'
             lines.extend(('', f'目前已登記：{selected}（可在結算前修改）'))
             if isinstance(battle, WitchRaidBattle):
                 target = battle.fighter_for_key(choice.target)

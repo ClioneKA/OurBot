@@ -196,9 +196,13 @@ class PaintedMazeService:
         space = self.cog.spaces.store.get(interaction.guild_id)
         if not space or interaction.channel_id != space.maze_channel_id:
             raise PaintedMazeError('請在「🎨・繪境迷宮」頻道開啟畫作。')
+        from core.rpg_room_occupancy import occupied_room, room_lock
         level = self.cog.characters.snapshot(interaction.guild_id, interaction.user.id)['level']
-        room = self.repo.create(interaction.guild_id, interaction.user.id, entry_item, level,
-                                channel_id=interaction.channel_id, require_entry=require_entry)
+        async with room_lock(self.cog):
+            if occupied_room(self.cog, interaction.guild_id, interaction.user.id):
+                raise PaintedMazeError('你已在這個伺服器的另一個手動房間中。')
+            room = self.repo.create(interaction.guild_id, interaction.user.id, entry_item, level,
+                                    channel_id=interaction.channel_id, require_entry=require_entry)
         index = thread = None
         try:
             index = await interaction.channel.send(
@@ -234,8 +238,13 @@ class PaintedMazeService:
             room = self.repo.get(room_id)
             if not leave and room.get('requires_entry', True) and not ENTRY_ENABLED:
                 raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
+            from core.rpg_room_occupancy import occupied_room, room_lock
             level = self.cog.characters.snapshot(room['guild_id'], member.id)['level']
-            room = self.repo.change_member(room_id, member.id, level, leave=leave)
+            async with room_lock(self.cog):
+                if not leave and occupied_room(
+                        self.cog, room['guild_id'], member.id, exclude=('maze', room_id)):
+                    raise PaintedMazeError('你已在這個伺服器的另一個手動房間中。')
+                room = self.repo.change_member(room_id, member.id, level, leave=leave)
             thread = await self._thread(room)
             if thread:
                 if leave:

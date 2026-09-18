@@ -18,3 +18,7 @@ docs/balance/cooldown-summary.md
 # Local witch simulation data and reports.
 docs/witch-*.json
 docs/witch-*.md
+scripts/simulate_witch_affixes.py
+scripts/simulate_witch_boss_mechanics.py
+scripts/simulate_witch_farm.py
+scripts/simulate_witch_gear_effects.py
