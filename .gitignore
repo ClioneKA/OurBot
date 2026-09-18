@@ -22,3 +22,6 @@ scripts/simulate_witch_affixes.py
 scripts/simulate_witch_boss_mechanics.py
 scripts/simulate_witch_farm.py
 scripts/simulate_witch_gear_effects.py
+
+# Local design notes
+docs/alchemy-dolls.md
