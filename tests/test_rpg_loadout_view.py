@@ -52,13 +52,16 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(next(child for child in self.view.children
                              if getattr(child, 'label', '') == '套用配置').disabled)
         await self.view.handle(self.interaction, 'save')
-        self.assertIn('已將目前', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+        self.assertIn('已將目前', self.interaction.response.edit_message.call_args.kwargs['embed'].fields[0].value)
         await self.view.handle(self.interaction, 'rename_value', '治療配置')
         self.assertEqual(self.view.current()['name'], '治療配置')
         self.cog.characters.change_job(1, 1, '弓兵')
         await self.view.handle(self.interaction, 'apply')
         self.assertEqual(self.cog.characters.job(1, 1), '僧侶')
         await self.view.handle(self.interaction, 'clear')
+        self.assertIsNotNone(self.view.current()['data'])
+        self.assertEqual(self.view.pending_action, 'clear')
+        await self.view.handle(self.interaction, 'confirm_pending')
         self.assertIsNone(self.view.current()['data'])
         self.assertLessEqual(len(self.view.to_components()), 5)
 
@@ -71,14 +74,27 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
             self.store.db.execute('DELETE FROM rpg_equipment_instances WHERE instance_id=?', (weapon_id,))
         await self.view.handle(self.interaction, 'apply')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('已套用', embed.fields[-1].value)
-        self.assertIn('已略過遺失的裝備：武器', embed.fields[-1].value)
+        self.assertIn('已套用', embed.fields[0].value)
+        self.assertIn('已略過遺失的裝備：武器', embed.fields[0].value)
         self.assertIn('物品已遺失', embed.description)
         state = self.cog.characters.snapshot(1, 1)
         self.assertEqual(state['job'], '僧侶')
         self.assertNotIn('武器', state['equipped_instances'])
         self.assertEqual(state['equipped_instances'], {
             slot: value for slot, value in saved['data']['equipment'].items() if slot != '武器'})
+
+    async def test_overwrite_requires_confirmation_and_can_be_cancelled(self):
+        await self.view.handle(self.interaction, 'save')
+        self.cog.characters.change_job(1, 1, '弓兵')
+
+        await self.view.handle(self.interaction, 'save')
+        self.assertEqual(self.view.current()['data']['job'], '僧侶')
+        await self.view.handle(self.interaction, 'cancel_pending')
+        self.assertEqual(self.view.current()['data']['job'], '僧侶')
+
+        await self.view.handle(self.interaction, 'save')
+        await self.view.handle(self.interaction, 'confirm_pending')
+        self.assertEqual(self.view.current()['data']['job'], '弓兵')
 
     async def test_equipment_is_displayed_in_slot_order(self):
         charm_id = self.cog.characters.grant_item(1, 1, 'puppet:twin_charm')[0]

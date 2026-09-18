@@ -130,7 +130,7 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.view.children[3].disabled)
         self.assertIn('全隊', self.view.children[3].options[0].label)
         self.assertEqual(len(self.view.to_components()), 5)
-        self.assertEqual(len(self.view.to_components()[-1]['components']), 5)
+        self.assertEqual(len(self.view.to_components()[-1]['components']), 4)
         await self.view.handle(self.interaction, 'priority', '3')
         await self.view.handle(self.interaction, 'condition', 'always')
         await self.view.handle(self.interaction, 'toggle')

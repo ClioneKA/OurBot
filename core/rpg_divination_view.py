@@ -5,7 +5,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_divination import CARDS
-from core.rpg_menu import add_help, add_back, navigate
+from core.rpg_menu import add_help, navigate
 
 
 class DivinationView(discord.ui.View):
@@ -13,6 +13,7 @@ class DivinationView(discord.ui.View):
         super().__init__(timeout=180)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
+        self.confirming_draw = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -20,14 +21,22 @@ class DivinationView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         status = self.cog.divinations.status(self.guild_id, self.owner.id)
-        draw = discord.ui.Button(label=f'占卜（{status["next_price"]:,} 金幣）',
-                                 style=discord.ButtonStyle.primary, row=0)
-        async def draw_callback(interaction):
-            await self.handle(interaction, 'draw')
-        draw.callback = draw_callback
-        self.add_item(draw)
-        if (status['card'] == 'high_priestess' and status['summon_raid_id'] is None
-                and status['bound_raid_id'] is None):
+        if not status['card']:
+            self.confirming_draw = False
+        if self.confirming_draw:
+            for label, action, style in (
+                    ('保留目前占卜', 'keep', discord.ButtonStyle.secondary),
+                    (f'確認覆蓋（{status["next_price"]:,} 金幣）', 'draw_confirm', discord.ButtonStyle.danger)):
+                button = discord.ui.Button(label=label, style=style, row=0)
+                button.callback = lambda interaction, action=action: self.handle(interaction, action)
+                self.add_item(button)
+        else:
+            draw = discord.ui.Button(label=f'占卜（{status["next_price"]:,} 金幣）',
+                                     style=discord.ButtonStyle.primary, row=0)
+            draw.callback = lambda interaction: self.handle(interaction, 'draw')
+            self.add_item(draw)
+        if (not self.confirming_draw and status['card'] == 'high_priestess'
+                and status['summon_raid_id'] is None and status['bound_raid_id'] is None):
             summon = discord.ui.Button(label='揭開帷幕，發起討伐', style=discord.ButtonStyle.danger, row=0)
             async def summon_callback(interaction):
                 await self.handle(interaction, 'summon')
@@ -39,7 +48,6 @@ class DivinationView(discord.ui.View):
             await self.handle(interaction, 'travel')
         back.callback = back_callback
         self.add_item(back)
-        add_back(self, 1)
         refresh = discord.ui.Button(label='重新整理', row=1)
         close = discord.ui.Button(label='關閉', row=1)
         async def refresh_callback(interaction):
@@ -68,8 +76,11 @@ class DivinationView(discord.ui.View):
                          '每天不限次數，每次價格增加 300 金幣；每日 00:00 重置價格。'
                          '再次占卜會覆蓋尚未使用的牌，參加的討伐結束後效果清空。'),
             color=0x6D3A8D)
+        if self.confirming_draw:
+            embed.insert_field_at(0, name='⚠️ 請確認',
+                                  value='再次占卜會覆蓋目前尚未使用的牌。', inline=False)
         if notice:
-            embed.add_field(name='操作結果', value=notice, inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice, inline=False)
         embed.set_footer(text='所有牌都會使下一場討伐取得的經驗增加 10%。')
         return embed
 
@@ -107,9 +118,23 @@ class DivinationView(discord.ui.View):
                 await interaction.edit_original_response(embed=self.embed(notice), view=self)
                 return
             notice = None
+            draw_now = False
             if action == 'draw':
+                if self.cog.divinations.status(self.guild_id, self.owner.id)['card']:
+                    self.confirming_draw = True
+                else:
+                    draw_now = True
+            elif action == 'keep':
+                self.confirming_draw = False
+            elif action == 'draw_confirm':
+                if self.confirming_draw:
+                    draw_now = True
+                else:
+                    notice = '沒有等待確認的占卜。'
+            if draw_now:
                 try:
                     card_id, cost = self.cog.divinations.draw(self.guild_id, self.owner.id)
+                    self.confirming_draw = False
                     card = CARDS[card_id]
                     notice = f'瑪格翻開了「{card.name}」。已支付 {cost:,} 金幣。\n{card.omen}'
                 except CharacterError as exc:

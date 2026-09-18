@@ -69,7 +69,7 @@ class ShopView(discord.ui.View):
                 self.item_id in owned
                 or state['level'] < stage_level(item.stage, self.cog.settings)
                 or self.cog.store.gold(self.guild_id, self.owner.id) < item.price)
-        for button in (self.buy_button, self.refresh, self.close_panel, self.sell_button):
+        for button in (self.buy_button, self.close_panel, self.sell_button):
             self.add_item(button)
         add_back(self, 2)
 

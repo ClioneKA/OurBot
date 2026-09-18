@@ -22,7 +22,7 @@ class PanelSelect(discord.ui.Select):
 
 class EquipmentView(discord.ui.View):
     def __init__(self, cog, interaction):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cog = cog
         self.origin = interaction
         self.owner = interaction.user
@@ -83,7 +83,7 @@ class EquipmentView(discord.ui.View):
                     await self.handle(interaction, action)
                 button.callback = callback
                 buttons.append(button)
-        buttons.extend((self.refresh, self.close_panel))
+        buttons.append(self.close_panel)
         for button in buttons:
             self.add_item(button)
         add_help(self, 4, 'combat', 'equipment')
@@ -111,7 +111,7 @@ class EquipmentView(discord.ui.View):
                 embed.add_field(name='套裝效果：1/2', value=f'{set_name}：{set_effect}', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='先選欄位與物品；裝備染色與飾品刺繡請前往遠野漢娜的裁縫所。閒置 3 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
+        embed.set_footer(text='先選欄位與物品；裝備染色與飾品刺繡請前往遠野漢娜的裁縫所。閒置 5 分鐘後關閉，可重新使用 /冒險 → 裝備／能力。')
         return embed
 
     async def handle(self, interaction, action, value=None):

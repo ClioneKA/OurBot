@@ -124,8 +124,9 @@ class AdventureView(discord.ui.View):
         self.clear_items()
         if self.page == 'home':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
-                ('出戰配置', 'loadouts'), ('背包', 'backpack'), ('商店', 'shop'), ('轉職', 'jobs'), ('生活', 'life'),
-                ('移動', 'travel'), ('討伐', 'raids'), ('展示名片', 'profile'), ('說明', 'help'), ('訓練假人', 'training'))):
+                ('出戰配置', 'loadouts'), ('背包', 'backpack'), ('商店', 'shop'), ('展示名片', 'profile'),
+                ('生活', 'life'), ('移動', 'travel'), ('討伐', 'raids'), ('轉職', 'jobs'),
+                ('訓練假人', 'training'), ('說明', 'help'))):
                 self.button(label, action, i // 3)
         elif self.page == 'help':
             from core.rpg_equipment_view import PanelSelect
@@ -169,8 +170,9 @@ class AdventureView(discord.ui.View):
             add_help(self, 2, topic, self.page)
         if self.page != 'home':
             add_back(self, 2)
-        self.button('重新整理', 'refresh', 2)
-        self.button('關閉', 'close', 2)
+        utility_row = 4 if self.page == 'home' else 2
+        self.button('重新整理', 'refresh', utility_row)
+        self.button('關閉', 'close', utility_row)
 
     def embed(self, notice=None):
         if self.page == 'home':

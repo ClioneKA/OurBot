@@ -10,6 +10,7 @@ import discord
 from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
 from core.rpg_divination import Divinations
+from core.rpg_divination_view import DivinationView
 from core.rpg_menu import AdventureView
 from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
@@ -62,6 +63,13 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([option.value for option in select.options if option.default], [topic])
         await guide.handle(self.interaction, 'help_topic', 'unknown')
         self.assertEqual(guide.help_topic, 'advanced')
+
+    async def test_home_groups_features_and_keeps_utilities_last(self):
+        rows = {child.label: child.row for child in self.view.children
+                if isinstance(child, discord.ui.Button)}
+        self.assertEqual([rows[label] for label in ('裝備／能力', '技能', '出戰配置')], [0, 0, 0])
+        self.assertEqual([rows[label] for label in ('背包', '商店', '展示名片')], [1, 1, 1])
+        self.assertEqual([rows[label] for label in ('重新整理', '關閉')], [4, 4])
 
     async def test_help_topic_rejects_foreign_user_and_closed_panel(self):
         guide = AdventureView(self.cog, self.interaction, 'help')
@@ -148,7 +156,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.characters.inventory_counts(1, 1)['noah:unfinished'], 1)
         self.cog.painted_maze.create.assert_awaited_once_with(
             self.interaction, 'noah:unfinished')
-        notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[-1].value
+        notice = self.interaction.edit_original_response.call_args.kwargs['embed'].fields[0].value
         self.assertIn('繪境迷宮 #7', notice)
         self.assertIn('開始探索時消耗', notice)
 
@@ -156,6 +164,9 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         panel.rebuild()
         await panel.handle(self.interaction, 'select', 'maze:choice_box:archer')
         await panel.handle(self.interaction, 'choose:weapon')
+        self.assertEqual(self.characters.inventory_counts(1, 1).get(
+            'maze:choice_box:archer', 0), 1)
+        await panel.handle(self.interaction, 'confirm_choice')
         self.assertEqual(self.characters.inventory_counts(1, 1).get(
             'maze:choice_box:archer', 0), 0)
         self.assertTrue(any(entry.item_id == 'maze:archer:weapon'
@@ -190,3 +201,18 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         travel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(travel.stop)
         self.assertIn('移動', travel.embed().title)
+
+    async def test_existing_divination_requires_confirmation_before_overwrite(self):
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,1000)')
+        room = DivinationView(self.cog, self.interaction)
+        self.addCleanup(room.stop)
+        await room.handle(self.interaction, 'draw')
+        self.assertEqual(self.divinations.status(1, 1)['draws'], 1)
+
+        await room.handle(self.interaction, 'draw')
+        self.assertEqual(self.divinations.status(1, 1)['draws'], 1)
+        self.assertTrue(any(getattr(child, 'label', '').startswith('確認覆蓋')
+                            for child in room.children))
+        await room.handle(self.interaction, 'draw_confirm')
+        self.assertEqual(self.divinations.status(1, 1)['draws'], 2)

@@ -40,7 +40,7 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('料理：盛宴 Q1｜搭配 池塘鯽魚', self.view.embed().fields[-2].value)
         await self.view.handle(self.interaction, 'location', 'prison')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('農耕 Lv.20', embed.fields[-1].value)
+        self.assertIn('農耕 Lv.20', embed.fields[0].value)
         await self.view.handle(self.interaction, 'notify')
         self.assertTrue(self.farming.state(1, 1)['notify'])
         with patch('core.rpg_farming.time.time', return_value=100), \
@@ -52,19 +52,23 @@ class FarmingViewTests(unittest.IsolatedAsyncioTestCase):
             await self.view.handle(self.interaction, 'harvest')
         self.assertEqual(self.characters.inventory_counts(1, 1)['farming:potato'], 2)
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('收成 馬鈴薯 ×2', embed.fields[-1].value)
+        self.assertIn('收成 馬鈴薯 ×2', embed.fields[0].value)
 
     async def test_cancel_has_no_rewards(self):
         with patch('core.rpg_farming.time.time', return_value=100), \
              patch('core.rpg_farming_view.time.time', return_value=100):
             await self.view.handle(self.interaction, 'plant')
             await self.view.handle(self.interaction, 'cancel')
+            self.assertEqual(self.farming.state(1, 1)['sessions']['courtyard']['status'], 'active')
+            self.assertTrue(any(getattr(child, 'label', '').startswith('確認中斷')
+                                for child in self.view.children))
+            await self.view.handle(self.interaction, 'cancel_confirm')
         state = self.farming.state(1, 1)
         self.assertEqual((state['sessions']['courtyard']['status'], state['xp']), ('cancelled', 0))
         self.assertNotIn('farming:potato', self.characters.inventory_counts(1, 1))
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertEqual(embed.fields[0].value, '目前閒置')
-        self.assertIn('不會獲得作物或農耕 XP', embed.fields[-1].value)
+        self.assertIn('不會獲得作物或農耕 XP', embed.fields[0].value)
+        self.assertEqual(embed.fields[1].value, '目前閒置')
 
     async def test_defaults_to_highest_unlocked_location_and_plant(self):
         self.view.stop()

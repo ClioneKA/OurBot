@@ -35,7 +35,7 @@ class ConditionValueModal(discord.ui.Modal):
 
 class SkillView(discord.ui.View):
     def __init__(self, cog, interaction):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.job = cog.characters.job(self.guild_id, self.owner.id)
@@ -71,7 +71,7 @@ class SkillView(discord.ui.View):
             self.add_item(PanelSelect('basic_target', row=1, placeholder='選擇普通攻擊目標', options=[
                 discord.SelectOption(label=label, value=key, default=key == target)
                 for key, label in BASIC_TARGETS.items()]))
-            for button in (self.refresh, self.close_panel):
+            for button in (self.close_panel,):
                 self.add_item(button)
             add_back(self, 4)
             return
@@ -82,7 +82,7 @@ class SkillView(discord.ui.View):
                                      description=passive_description(passive)[:100],
                                      default=selected is not None and passive.id == selected.id)
                 for passive in passives]))
-            for button in (self.refresh, self.close_panel):
+            for button in (self.close_panel,):
                 self.add_item(button)
             add_back(self, 4)
             return
@@ -95,7 +95,7 @@ class SkillView(discord.ui.View):
                                      default=i == (rule.skill_id or rule.slot))
                 for i, s in enumerate(available, 1)]))
             self.change_skill.label = '返回策略設定'
-            for button in (self.change_skill, self.refresh, self.close_panel):
+            for button in (self.change_skill, self.close_panel):
                 self.add_item(button)
             add_back(self, 4)
             return
@@ -119,7 +119,7 @@ class SkillView(discord.ui.View):
             discord.SelectOption(label=label, value=key, default=key == rule.target) for key, label in targets.items()]))
         self.toggle.label = '停用自動施放' if rule.enabled else '啟用自動施放'
         self.toggle.style = discord.ButtonStyle.secondary if rule.enabled else discord.ButtonStyle.success
-        for button in (self.change_skill, self.toggle, self.refresh, self.close_panel):
+        for button in (self.change_skill, self.toggle, self.close_panel):
             self.add_item(button)
         add_back(self, 4)
 
@@ -131,7 +131,7 @@ class SkillView(discord.ui.View):
                 '沒有可施放的技能時使用普攻；優先目標不存在時，改選其他合法敵人，仍受挑釁影響。', inline=False)
             if notice:
                 embed.add_field(name='操作結果', value=notice, inline=False)
-            embed.set_footer(text='選擇後立即保存；開戰時套用。閒置 3 分鐘後關閉。')
+            embed.set_footer(text='選擇後立即保存；開戰時套用。閒置 5 分鐘後關閉。')
             return embed
         if self.setting_passive:
             selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
@@ -152,7 +152,7 @@ class SkillView(discord.ui.View):
                             '若希望先解除狀態，可把淨化設為優先 1；每回合只施放一個技能。', inline=False)
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
-        embed.set_footer(text='數值條件會開啟輸入視窗，其餘選擇後立即保存；開戰時套用。閒置 3 分鐘後關閉。')
+        embed.set_footer(text='數值條件會開啟輸入視窗，其餘選擇後立即保存；開戰時套用。閒置 5 分鐘後關閉。')
         return embed
 
     async def interaction_check(self, interaction):

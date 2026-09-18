@@ -553,6 +553,16 @@ class WitchBattleView(TotalRaidRunningView):
         self.remove_item(self.confirm)
         self.remove_item(self.takeover)
         self.choose.label = '開啟個人操作面板'
+        room = service.repo.get(room_id)
+        battle = load_total_battle(room['battle']) if room else None
+        if battle:
+            service.battle_embed(room, battle)
+        if not battle or len(field_chunks(last_round_log(battle), 900)) <= 1:
+            self.remove_item(self.previous)
+            self.remove_item(self.next_page)
+        if not room or room.get('status_page_count', 1) <= 1:
+            self.remove_item(self.previous_status)
+            self.remove_item(self.next_status)
 
     async def page(self, interaction, delta, status=False):
         await interaction.response.defer()

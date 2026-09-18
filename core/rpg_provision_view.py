@@ -26,12 +26,13 @@ class RenameRecipePresetModal(discord.ui.Modal):
 
 class ProvisionView(discord.ui.View):
     def __init__(self, cog, interaction):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.ingredients = []
         self.ingredient_page = 0
         self.preset_slot = 1
+        self.pending_action = None
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -74,6 +75,11 @@ class ProvisionView(discord.ui.View):
         self.ingredient_page = min(self.ingredient_page, page_count - 1)
         shown = available[self.ingredient_page * 25:(self.ingredient_page + 1) * 25]
         self.clear_items()
+        if self.pending_action:
+            label = '確認捐出食材' if self.pending_action == 'donate' else '確認清空配方'
+            self._button(label, 'confirm_pending', 0, style=discord.ButtonStyle.danger)
+            self._button('取消', 'cancel_pending', 0)
+            return
         options = [discord.SelectOption(
             label=ITEMS[key].name, value=key,
             description=(f'持有 {counts.get(key, 0) - selected[key]}｜'
@@ -142,6 +148,11 @@ class ProvisionView(discord.ui.View):
             title='安安大冒險｜酒館料理', color=0xF59E0B,
             description=('選擇五份魚、作物、水草、藥草、肉類或調味料完成料理。食材可以重複；'
                          '每桌最多一份調味料，品質、搭配與多樣性決定評分。'))
+        if self.pending_action:
+            warning = ('目前選擇的食材會全部捐出並從背包扣除。'
+                       if self.pending_action == 'donate' else
+                       f'「{self.current_preset()["name"]}」保存的內容會被清空。')
+            embed.insert_field_at(0, name='⚠️ 請確認', value=warning, inline=False)
         embed.add_field(name='料理技能', value=(
             f'Lv.{state["level"]}｜累積 {state["xp"]:,} XP'
             + (f'｜距離下一級 {state["next_xp"] - state["level_xp"]:,} XP'
@@ -176,7 +187,7 @@ class ProvisionView(discord.ui.View):
             except CharacterError as exc:
                 embed.add_field(name='料理預覽', value=str(exc), inline=False)
         if notice:
-            embed.add_field(name='操作結果', value=notice[:1024], inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice[:1024], inline=False)
         embed.set_footer(text='料理公開領取 30 分鐘；取得的效果保留 24 小時，每次正式開戰消耗一場。')
         return embed
 
@@ -200,7 +211,16 @@ class ProvisionView(discord.ui.View):
                 return
             notice = None
             try:
-                if action == 'ingredient' and value in INGREDIENTS:
+                confirmed = action == 'confirm_pending'
+                if confirmed:
+                    if self.pending_action not in ('donate', 'preset_clear'):
+                        raise CharacterError('沒有等待確認的操作。')
+                    action, self.pending_action = self.pending_action, None
+                elif action == 'cancel_pending':
+                    self.pending_action = None
+                if action == 'cancel_pending':
+                    pass
+                elif action == 'ingredient' and value in INGREDIENTS:
                     if len(self.ingredients) >= INGREDIENT_COUNT:
                         raise CharacterError('已經選滿五份食材。')
                     counts = self.cog.characters.inventory_counts(self.guild_id, self.owner.id)
@@ -243,16 +263,22 @@ class ProvisionView(discord.ui.View):
                         self.guild_id, self.owner.id, self.preset_slot, value)
                     notice = f'配方已重新命名為「{preset["name"]}」。'
                 elif action == 'preset_clear':
-                    name = self.current_preset()['name']
-                    self.cog.provisions.clear_preset(
-                        self.guild_id, self.owner.id, self.preset_slot)
-                    notice = f'已清空「{name}」。'
+                    if not confirmed:
+                        self.pending_action = 'preset_clear'
+                    else:
+                        name = self.current_preset()['name']
+                        self.cog.provisions.clear_preset(
+                            self.guild_id, self.owner.id, self.preset_slot)
+                        notice = f'已清空「{name}」。'
                 elif action == 'donate':
-                    result = self.cog.provisions.donate(
-                        self.guild_id, self.owner.id, self.ingredients)
-                    self.ingredients.clear()
-                    notice = (f'已將 {result["quantity"]} 份食材捐給監獄，'
-                              f'取得 {result["xp"]:,} 料理 XP。')
+                    if not confirmed:
+                        self.pending_action = 'donate'
+                    else:
+                        result = self.cog.provisions.donate(
+                            self.guild_id, self.owner.id, self.ingredients)
+                        self.ingredients.clear()
+                        notice = (f'已將 {result["quantity"]} 份食材捐給監獄，'
+                                  f'取得 {result["xp"]:,} 料理 XP。')
                 elif action == 'repeat':
                     recipe = self.cog.provisions.last_recipe(self.guild_id, self.owner.id)
                     if not recipe:

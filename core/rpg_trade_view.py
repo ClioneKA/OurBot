@@ -3,7 +3,7 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, equipment_tier, inventory_entry_label, item_sell_price, item_sellable, item_text
-from core.rpg_menu import BACKPACK_CATEGORIES, add_back, navigate
+from core.rpg_menu import BACKPACK_CATEGORIES, navigate
 from core.rpg_equipment_view import PanelSelect
 
 
@@ -114,7 +114,6 @@ class TradeView(discord.ui.View):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
-        add_back(self, 4)
         button = discord.ui.Button(label='返回背包' if self.mode == 'give' else '返回商店', row=4)
         async def back(interaction):
             await self.handle(interaction, 'back')

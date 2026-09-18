@@ -73,7 +73,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.interaction.response.defer.assert_awaited_once()
         self.tavern.serve_meal.assert_awaited_once()
         embed = self.interaction.edit_original_response.call_args.kwargs['embed']
-        self.assertIn('料理 XP', embed.fields[-1].value)
+        self.assertIn('料理 XP', embed.fields[0].value)
         self.assertEqual(view.ingredients, [])
 
     async def test_d_grade_can_open_and_selected_ingredients_can_be_donated(self):
@@ -88,10 +88,13 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
 
         view.ingredients = ['fishing:pond:common']
         await view.handle(self.interaction, 'donate')
+        self.assertEqual(self.provisions.state(1, 1)['xp'], 0)
+        self.assertEqual(view.pending_action, 'donate')
+        await view.handle(self.interaction, 'confirm_pending')
         self.assertEqual(self.provisions.state(1, 1)['xp'], 25)
         self.assertEqual(view.ingredients, [])
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('捐給監獄', embed.fields[-1].value)
+        self.assertIn('捐給監獄', embed.fields[0].value)
         load = next(child for child in view.children
                     if isinstance(child, discord.ui.Button) and child.label == '載入上一份配方')
         self.assertFalse(load.disabled)
@@ -117,7 +120,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         await view.handle(self.interaction, 'cook')
 
         embed = self.interaction.edit_original_response.call_args.kwargs['embed']
-        self.assertIn('不同客人', embed.fields[-1].value)
+        self.assertIn('不同客人', embed.fields[0].value)
 
     async def test_load_last_recipe_only_fills_selection(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
@@ -137,7 +140,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         self.tavern.serve_meal.assert_not_awaited()
         self.interaction.response.defer.assert_not_awaited()
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('已載入上一份配方', embed.fields[-1].value)
+        self.assertIn('已載入上一份配方', embed.fields[0].value)
 
     async def test_repeat_last_meal_is_disabled_when_ingredients_are_insufficient(self):
         ingredients = ['fishing:pond:common'] * 3 + ['farming:potato'] * 2
@@ -170,7 +173,7 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
         await view.handle(self.interaction, 'preset_load')
         self.assertEqual(view.ingredients, ingredients)
         self.assertIn('尚未消耗素材',
-                      self.interaction.response.edit_message.call_args.kwargs['embed'].fields[-1].value)
+                      self.interaction.response.edit_message.call_args.kwargs['embed'].fields[0].value)
 
         await view.handle(self.interaction, 'preset_slot', '2')
         self.assertEqual(view.preset_slot, 2)
@@ -178,6 +181,8 @@ class ProvisionViewTests(unittest.IsolatedAsyncioTestCase):
                              if getattr(child, 'label', '') == '載入配方').disabled)
         await view.handle(self.interaction, 'preset_slot', '1')
         await view.handle(self.interaction, 'preset_clear')
+        self.assertIsNotNone(view.current_preset()['ingredients'])
+        await view.handle(self.interaction, 'confirm_pending')
         self.assertIsNone(view.current_preset()['ingredients'])
         self.assertLessEqual(len(view.to_components()), 5)
 

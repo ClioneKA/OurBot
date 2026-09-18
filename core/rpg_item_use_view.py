@@ -4,7 +4,7 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, MAZE_CHOICE_BOXES
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import navigate
 from core.rpg_painted_maze import ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, ENTRY_ROUTES, MODE_NAME
 
 
@@ -32,6 +32,7 @@ class ItemUseView(discord.ui.View):
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.selected = 'recipe:paint_set'
+        self.pending_choice = None
         self.closed = False
         self.lock = asyncio.Lock()
         self.cog.painted_maze.rewards.release_pending_boxes(self.guild_id, self.owner.id)
@@ -57,12 +58,15 @@ class ItemUseView(discord.ui.View):
                                  description=ITEM_ACTIONS[key][1], default=key == self.selected)
             for key in self.catalog]))
         row = 1
-        actions = ([('領取武器', 'choose:weapon', discord.ButtonStyle.success),
+        actions = ([(f'確認領取{"武器" if self.pending_choice[1] == "choose:weapon" else "套裝"}',
+                     'confirm_choice', discord.ButtonStyle.danger),
+                    ('取消', 'cancel_choice', discord.ButtonStyle.secondary)]
+                   if self.pending_choice and self.pending_choice[0] == self.selected else
+                   [('領取武器', 'choose:weapon', discord.ButtonStyle.success),
                     ('領取套裝', 'choose:suit', discord.ButtonStyle.success)]
                    if self.selected in MAZE_CHOICE_BOXES else
                    [('確認使用', 'use', discord.ButtonStyle.success)])
-        actions.extend((('重新整理', 'refresh', discord.ButtonStyle.secondary),
-                        ('關閉', 'close', discord.ButtonStyle.secondary)))
+        actions.append(('關閉', 'close', discord.ButtonStyle.secondary))
         for label, action, style in actions:
             button = discord.ui.Button(label=label, row=row, style=style)
             if action == 'use' and self.selected in ENTRY_ROUTES and not ENTRY_ENABLED:
@@ -72,7 +76,6 @@ class ItemUseView(discord.ui.View):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
-        add_back(self, 2)
         back = discord.ui.Button(label='返回背包', row=2)
         async def back_callback(interaction):
             await self.handle(interaction, 'backpack')
@@ -95,8 +98,12 @@ class ItemUseView(discord.ui.View):
                          f'未完成的魔女畫作 ×{counts.get("noah:unfinished", 0)}｜'
                          f'《氣球》的畫作 ×{counts.get("painting:balloon", 0)}'),
             color=0xD65A88)
+        if self.pending_choice:
+            reward = '武器' if self.pending_choice[1] == 'choose:weapon' else '套裝'
+            embed.insert_field_at(0, name='⚠️ 請確認',
+                                  value=f'將消耗自選箱並領取{reward}；完成後不能更換。', inline=False)
         if notice:
-            embed.add_field(name='操作結果', value=notice, inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice, inline=False)
         embed.set_footer(text=(
             '按下武器或套裝即會消耗自選箱，選擇後不能更換。'
             if self.selected in MAZE_CHOICE_BOXES else
@@ -125,11 +132,29 @@ class ItemUseView(discord.ui.View):
                     await interaction.response.edit_message(embed=self.embed('這項道具操作目前不可用。'), view=self)
                     return
                 self.selected = value
+                self.pending_choice = None
                 self.rebuild()
                 await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
+            confirmed_choice = action == 'confirm_choice'
+            if action == 'cancel_choice':
+                self.pending_choice = None
+                self.rebuild()
+                await interaction.response.edit_message(embed=self.embed(), view=self)
+                return
+            if confirmed_choice:
+                if not self.pending_choice or self.pending_choice[0] != self.selected:
+                    await interaction.response.edit_message(embed=self.embed('沒有等待確認的自選箱。'), view=self)
+                    return
+                _, action = self.pending_choice
+                self.pending_choice = None
             if action != 'use':
                 if action.startswith('choose:') and self.selected in MAZE_CHOICE_BOXES:
+                    if not confirmed_choice:
+                        self.pending_choice = (self.selected, action)
+                        self.rebuild()
+                        await interaction.response.edit_message(embed=self.embed(), view=self)
+                        return
                     try:
                         item_id, _equipment_id = self.cog.painted_maze.rewards.open_choice_box(
                             self.guild_id, self.owner.id, self.selected,

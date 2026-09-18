@@ -20,6 +20,7 @@ class FarmingView(discord.ui.View):
         level = self.cog.farming.state(self.guild_id, self.owner.id)['level']
         self.location_id = next(key for key in reversed(LOCATIONS) if level >= LOCATION_LEVELS[key])
         self.plant_id = next(key for key, plant in reversed(PLANTS.items()) if level >= plant.level)
+        self.confirming_cancel = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -58,6 +59,8 @@ class FarmingView(discord.ui.View):
         session = state['sessions'].get(self.location_id)
         active = bool(session and session['status'] == 'active')
         ready = bool(active and time.time() >= session['ready_at'])
+        if not active:
+            self.confirming_cancel = False
         if state['level'] >= SPECIALIZATION_LEVEL:
             current_specialization = state['specializations'].get(self.location_id)
             self.add_item(PanelSelect('specialization', row=2, placeholder='選擇這塊田的專精',
@@ -68,10 +71,15 @@ class FarmingView(discord.ui.View):
                                  '收成 XP +10%，Lv.100 後提高為 +15%'),
                     default=key == current_specialization)
                     for key, name in SPECIALIZATIONS.items()]))
-        self._button('種植', 'plant', 3, active, discord.ButtonStyle.success)
-        self._button('收成', 'harvest', 3, not ready, discord.ButtonStyle.primary)
-        self._button('中斷種植', 'cancel', 3, not active, discord.ButtonStyle.danger)
-        self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 3)
+        if self.confirming_cancel:
+            self._button('繼續種植', 'keep', 3)
+            self._button('確認中斷並放棄本次收成', 'cancel_confirm', 3,
+                         style=discord.ButtonStyle.danger)
+        else:
+            self._button('種植', 'plant', 3, active, discord.ButtonStyle.success)
+            self._button('收成', 'harvest', 3, not ready, discord.ButtonStyle.primary)
+            self._button('中斷種植', 'cancel', 3, not active, discord.ButtonStyle.danger)
+            self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 3)
         add_help(self, 4, 'life', 'farming')
         self._button('返回生活', 'life', 4)
         self._button('重新整理', 'refresh', 4)
@@ -86,6 +94,9 @@ class FarmingView(discord.ui.View):
                    else f'{progress:,}／{required:,} XP｜累積 {state["xp"]:,} XP')
         embed = discord.Embed(title='安安大冒險｜農耕', color=0x65A30D,
                               description=f'農耕 Lv.**{level}**｜{xp_text}\n已解鎖的田地可同時耕作，且都能種植任何已解鎖植物。')
+        if self.confirming_cancel:
+            embed.insert_field_at(0, name='⚠️ 請確認',
+                                  value='中斷後這塊田不會獲得作物或農耕 XP。', inline=False)
         for location_id, location_name in LOCATIONS.items():
             session = state['sessions'].get(location_id)
             if state['level'] < LOCATION_LEVELS[location_id]:
@@ -110,7 +121,7 @@ class FarmingView(discord.ui.View):
                         f'田地專精：{SPECIALIZATIONS.get(state["specializations"].get(self.location_id), "尚未設定")}', inline=False)
         embed.add_field(name='成熟通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
-            embed.add_field(name='操作結果', value=notice[:1024], inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice[:1024], inline=False)
         embed.set_footer(text='每高於作物需求 10 級必定 +1 收成；不足 10 級的差距每級提供 10% 機率 +1，最多合計 +3。')
         return embed
 
@@ -130,6 +141,8 @@ class FarmingView(discord.ui.View):
                 await interaction.response.edit_message(content='農耕面板已關閉。', embed=None, view=None)
                 return
             notice = None
+            if self.confirming_cancel and action not in ('cancel', 'cancel_confirm', 'keep'):
+                self.confirming_cancel = False
             try:
                 if action == 'location' and value in LOCATIONS:
                     required_level = LOCATION_LEVELS[value]
@@ -172,7 +185,14 @@ class FarmingView(discord.ui.View):
                     if result['new_level'] > result['old_level']:
                         notice += f'\n農耕等級提升至 Lv.{result["new_level"]}！'
                 elif action == 'cancel':
+                    self.confirming_cancel = True
+                elif action == 'keep':
+                    self.confirming_cancel = False
+                elif action == 'cancel_confirm':
+                    if not self.confirming_cancel:
+                        raise CharacterError('請先確認要中斷的種植。')
                     result = self.cog.farming.cancel(self.guild_id, self.owner.id, self.location_id)
+                    self.confirming_cancel = False
                     notice = (f'已中斷{LOCATIONS[result["location_id"]]}的{PLANTS[result["plant_id"]].name}種植；'
                               '本次不會獲得作物或農耕 XP。')
                 elif action == 'notify':

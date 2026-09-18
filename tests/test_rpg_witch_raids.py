@@ -448,6 +448,12 @@ class WitchRoomTests(TotalRaidRoomTests):
         self.assertIn('技能', text)
         self.assertEqual('**魔女化（0 階）**', effect_status(b.witch('ema'), b)[0])
         self.assertIn('引爆最多魔女因子', text)
+        room['battle'] = dump_total_battle(b)
+        self.service.repo.save(room)
+        labels = {getattr(item, 'label', '') for item in WitchBattleView(
+            self.service, room['id']).children}
+        self.assertIn('摘要上一頁', labels)
+        self.assertIn('狀態／說明上一頁', labels)
         self.assertIn('**魔女因子 3/3 層**', text)
 
     async def test_private_buttons_target_confirmation_cooldown_and_stale_panel(self):
@@ -508,6 +514,9 @@ class WitchRoomTests(TotalRaidRoomTests):
                                       response=SimpleNamespace(defer=AsyncMock()),
                                       edit_original_response=AsyncMock())
         public = WitchBattleView(self.service, room['id'])
+        labels = {getattr(item, 'label', '') for item in public.children}
+        self.assertNotIn('摘要上一頁', labels)
+        self.assertNotIn('狀態／說明上一頁', labels)
         await public.choose.callback(interaction)
         interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
         channel.message.edit.assert_not_awaited()

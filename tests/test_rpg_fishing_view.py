@@ -77,14 +77,14 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
             await self.view.handle(self.interaction, 'claim')
         self.assertEqual(self.fishing.state(1, 1)['xp'], 130)
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('共捕獲 2 次', embed.fields[-1].value)
+        self.assertIn('共捕獲 2 次', embed.fields[0].value)
         await self.view.handle(self.interaction, 'notify')
         self.assertTrue(self.fishing.state(1, 1)['notify'])
 
     async def test_level_gate_crafting_and_foreign_user(self):
         await self.view.handle(self.interaction, 'spot', 'lake')
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('Lv.20', embed.fields[-1].value)
+        self.assertIn('Lv.20', embed.fields[0].value)
         with self.store.db:
             for key in ('fishing:pond:rod', 'fishing:pond:line', 'fishing:pond:hook'):
                 self.store.db.execute('INSERT INTO rpg_inventory VALUES (1,1,?,1)', (key,))
@@ -100,10 +100,14 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
              patch('core.rpg_fishing_view.time.time', return_value=100):
             await self.view.handle(self.interaction, 'start')
             await self.view.handle(self.interaction, 'cancel')
+            self.assertEqual(self.fishing.state(1, 1)['session']['status'], 'active')
+            self.assertTrue(any(getattr(child, 'label', '').startswith('確認中斷')
+                                for child in self.view.children))
+            await self.view.handle(self.interaction, 'cancel_confirm')
         state = self.fishing.state(1, 1)
         self.assertEqual((state['session']['status'], state['xp']), ('cancelled', 0))
         embed = self.interaction.response.edit_message.call_args.kwargs['embed']
-        self.assertIn('不會獲得任何物品或釣魚 XP', embed.fields[-1].value)
+        self.assertIn('不會獲得任何物品或釣魚 XP', embed.fields[0].value)
 
     async def test_defaults_to_highest_unlocked_spot(self):
         self.view.stop()

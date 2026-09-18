@@ -32,7 +32,7 @@ def paint_effect(color, slot):
 
 class TailorView(discord.ui.View):
     def __init__(self, cog, interaction):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.mode, self.selected, self.option, self.page = 'dye', None, 'red', 0

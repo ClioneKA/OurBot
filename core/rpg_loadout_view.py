@@ -25,10 +25,11 @@ class RenameLoadoutModal(discord.ui.Modal):
 
 class LoadoutView(discord.ui.View):
     def __init__(self, cog, interaction):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.slot = 1
+        self.pending_action = None
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -45,18 +46,21 @@ class LoadoutView(discord.ui.View):
                                  default=profile['slot'] == self.slot)
             for profile in profiles]))
         empty = self.current()['data'] is None
-        for label, action, style, disabled in (
-                ('保存目前配置', 'save', discord.ButtonStyle.success, False),
-                ('套用配置', 'apply', discord.ButtonStyle.primary, empty),
-                ('重新命名', 'rename', discord.ButtonStyle.secondary, False),
-                ('清空配置', 'clear', discord.ButtonStyle.danger, empty)):
+        actions = ((f'確認{"覆寫" if self.pending_action == "save" else "清空"}配置', 'confirm_pending',
+                    discord.ButtonStyle.danger, False),
+                   ('取消', 'cancel_pending', discord.ButtonStyle.secondary, False)) if self.pending_action else (
+                    ('保存目前配置', 'save', discord.ButtonStyle.success, False),
+                    ('套用配置', 'apply', discord.ButtonStyle.primary, empty),
+                    ('重新命名', 'rename', discord.ButtonStyle.secondary, False),
+                    ('清空配置', 'clear', discord.ButtonStyle.danger, empty))
+        for label, action, style, disabled in actions:
             button = discord.ui.Button(label=label, row=1, style=style, disabled=disabled)
             async def callback(interaction, action=action):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
         add_back(self, 4)
-        for label, action in (('重新整理', 'refresh'), ('關閉', 'close')):
+        for label, action in (('關閉', 'close'),):
             button = discord.ui.Button(label=label, row=4)
             async def callback(interaction, action=action):
                 await self.handle(interaction, action)
@@ -93,8 +97,12 @@ class LoadoutView(discord.ui.View):
                            f'\n普通攻擊目標：{TARGETS.get(data.get("basic_target", "lowest"), "無效目標")}' +
                            f'\n\n**職業被動**\n{passive_line}')
         embed = discord.Embed(title=f'出戰配置｜{profile["name"]}', description=description, color=0x8B5CF6)
+        if self.pending_action:
+            warning = ('目前保存的內容會被職業、裝備與技能現況取代。'
+                       if self.pending_action == 'save' else '這個配置的內容將被清空。')
+            embed.insert_field_at(0, name='⚠️ 請確認', value=warning, inline=False)
         if notice:
-            embed.add_field(name='操作結果', value=notice, inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice, inline=False)
         embed.set_footer(text='配置不包含料理與藥水；遺失的裝備會略過並留空，其他套用錯誤不會改動目前配置。')
         return embed
 
@@ -124,14 +132,27 @@ class LoadoutView(discord.ui.View):
                 return
             notice = None
             try:
-                if action == 'slot':
+                confirmed = action == 'confirm_pending'
+                if confirmed:
+                    if self.pending_action not in ('save', 'clear'):
+                        raise CharacterError('沒有等待確認的操作。')
+                    action, self.pending_action = self.pending_action, None
+                elif action == 'cancel_pending':
+                    self.pending_action = None
+                if action == 'cancel_pending':
+                    pass
+                elif action == 'slot':
                     if value not in {str(profile['slot']) for profile in
                                      self.cog.loadouts.all(self.guild_id, self.owner.id)}:
                         raise CharacterError('無效的出戰配置格。')
                     self.slot = int(value)
+                    self.pending_action = None
                 elif action == 'save':
-                    profile = self.cog.loadouts.save(self.guild_id, self.owner.id, self.slot)
-                    notice = f'已將目前的職業、裝備與技能保存至「{profile["name"]}」。'
+                    if not confirmed and self.current()['data'] is not None:
+                        self.pending_action = 'save'
+                    else:
+                        profile = self.cog.loadouts.save(self.guild_id, self.owner.id, self.slot)
+                        notice = f'已將目前的職業、裝備與技能保存至「{profile["name"]}」。'
                 elif action == 'apply':
                     profile = self.current()
                     state = self.cog.loadouts.apply(self.guild_id, self.owner.id, self.slot)
@@ -145,9 +166,12 @@ class LoadoutView(discord.ui.View):
                     profile = self.cog.loadouts.rename(self.guild_id, self.owner.id, self.slot, value)
                     notice = f'配置已重新命名為「{profile["name"]}」。'
                 elif action == 'clear':
-                    name = self.current()['name']
-                    self.cog.loadouts.clear(self.guild_id, self.owner.id, self.slot)
-                    notice = f'已清空「{name}」。'
+                    if not confirmed:
+                        self.pending_action = 'clear'
+                    else:
+                        name = self.current()['name']
+                        self.cog.loadouts.clear(self.guild_id, self.owner.id, self.slot)
+                        notice = f'已清空「{name}」。'
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

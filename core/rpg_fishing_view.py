@@ -22,6 +22,7 @@ class FishingView(discord.ui.View):
         self.spot_id = next(key for key, spot in reversed(SPOTS.items()) if level >= spot.level)
         self.duration_id = 'short'
         self.showing_records = False
+        self.confirming_cancel = False
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -73,13 +74,20 @@ class FishingView(discord.ui.View):
         session = state['session']
         active = session and session['status'] == 'active'
         ready = active and time.time() >= session['ready_at']
+        if not active:
+            self.confirming_cancel = False
         current = state['rod_id']
         target = next_rod(current)
-        self._button('開始釣魚', 'start', 3, bool(active), discord.ButtonStyle.success)
-        self._button('收竿', 'claim', 3, not ready, discord.ButtonStyle.primary)
-        self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
-        self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
-        self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
+        if self.confirming_cancel:
+            self._button('繼續釣魚', 'keep', 3)
+            self._button('確認中斷並放棄本次收穫', 'cancel_confirm', 3,
+                         style=discord.ButtonStyle.danger)
+        else:
+            self._button('開始釣魚', 'start', 3, bool(active), discord.ButtonStyle.success)
+            self._button('收竿', 'claim', 3, not ready, discord.ButtonStyle.primary)
+            self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
+            self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
+            self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
         add_help(self, 4, 'life', 'fishing')
         self._button('返回生活', 'life', 4)
         self._button('大魚圖鑑', 'records', 4)
@@ -121,6 +129,9 @@ class FishingView(discord.ui.View):
             xp_text = f'{progress:,}／{required:,} XP｜累積 {state["xp"]:,} XP'
         embed = discord.Embed(title='安安大冒險｜釣魚', color=0x38BDF8,
             description=f'釣魚 Lv.**{level}**｜{xp_text}\n目前釣竿：**{ITEMS[state["rod_id"]].name}**\n{ITEMS[state["rod_id"]].description}')
+        if self.confirming_cancel:
+            embed.insert_field_at(0, name='⚠️ 請確認',
+                                  value='中斷後本次不會獲得物品或釣魚 XP。', inline=False)
         session = state['session']
         if session and session['status'] == 'active':
             ready = time.time() >= session['ready_at']
@@ -147,7 +158,7 @@ class FishingView(discord.ui.View):
             '每次捕獲另有 0.1% 機率釣出特殊討伐 Boss，每趟最多一隻。'), inline=False)
         embed.add_field(name='完成通知', value='私訊通知已開啟' if state['notify'] else '私訊通知已關閉')
         if notice:
-            embed.add_field(name='操作結果', value=notice[:1024], inline=False)
+            embed.insert_field_at(0, name='最新狀態', value=notice[:1024], inline=False)
         embed.set_footer(text='釣完後不會自動重新開始；必須收竿後再次開始釣魚。')
         return embed
 
@@ -195,6 +206,8 @@ class FishingView(discord.ui.View):
                 await interaction.response.edit_message(content='釣魚面板已關閉。', embed=None, view=None)
                 return
             notice = None
+            if self.confirming_cancel and action not in ('cancel', 'cancel_confirm', 'keep'):
+                self.confirming_cancel = False
             try:
                 if action == 'spot' and value in SPOTS:
                     if self.cog.fishing.state(self.guild_id, self.owner.id)['level'] < SPOTS[value].level:
@@ -213,7 +226,14 @@ class FishingView(discord.ui.View):
                 elif action == 'claim':
                     notice = self._claim_notice(self.cog.fishing.claim(self.guild_id, self.owner.id))
                 elif action == 'cancel':
+                    self.confirming_cancel = True
+                elif action == 'keep':
+                    self.confirming_cancel = False
+                elif action == 'cancel_confirm':
+                    if not self.confirming_cancel:
+                        raise CharacterError('請先確認要中斷的釣魚行程。')
                     result = self.cog.fishing.cancel(self.guild_id, self.owner.id)
+                    self.confirming_cancel = False
                     notice = (f'已中斷在{SPOTS[result["spot_id"]].name}的釣魚行程；'
                               '本次不會獲得任何物品或釣魚 XP。')
                 elif action == 'craft':
