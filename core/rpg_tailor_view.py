@@ -130,7 +130,7 @@ class TailorView(discord.ui.View):
         self._button('下一頁', 'next', 4,
                      disabled=self.page == pages - 1 or self.mode not in ('dye', 'embroidery'))
         self._button('返回移動', 'travel', 4)
-        self._button('重新整理', 'refresh', 4)
+        self._button('魔女裝備', 'witch_rest', 4)
         self._button('關閉', 'close', 4)
 
     def current_embroidery(self, reference):
@@ -229,6 +229,13 @@ class TailorView(discord.ui.View):
                 return
             if action == 'crystals':
                 await navigate(self, interaction, 'crystals')
+                return
+            if action == 'witch_rest':
+                from core.rpg_witch_rest_workshop import WitchRestWorkshopView
+                view = WitchRestWorkshopView(
+                    self.cog, self.owner, self.guild_id, origin=self.origin)
+                await interaction.response.edit_message(embed=view.embed(), view=view)
+                self.stop()
                 return
             if action == 'close':
                 self.closed = True

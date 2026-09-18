@@ -19,7 +19,9 @@ from core.rpg_witch_rest import (
 )
 from core.rpg_total_battle import dump_total_battle, load_total_battle
 from core.rpg_witch_rest_battle import (
+    WitchRestAutoBattle,
     WitchRestManualBattle,
+    auto_battle_from_participants,
     manual_battle_from_participants,
     manual_stats,
     run_auto_battle,
@@ -82,6 +84,15 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertEqual(battle.result, '勝利')
         self.assertTrue(battle.mechanics['hiro_rewound'])
         self.assertLessEqual(battle.round, 30)
+
+    def test_auto_battle_survives_between_rounds(self):
+        battle = auto_battle_from_participants(
+            [self.participant(attack=100)], 'ema', 99, seed=7)
+        battle.step()
+        loaded = load_total_battle(dump_total_battle(battle))
+        self.assertIsInstance(loaded, WitchRestAutoBattle)
+        self.assertEqual(loaded.round, 1)
+        self.assertEqual(loaded.rng.getstate(), battle.rng.getstate())
 
     def test_manual_stats_interpolate_approved_anchors(self):
         self.assertEqual(manual_stats('ema', 1000), (90_000, 1_625, 500))
@@ -363,6 +374,18 @@ class WitchRestStoreTests(unittest.TestCase):
         self.assertEqual(self.rest.progress(1, 10, 'ema')['total_wins'], 0)
         self.assertEqual(self.quantity(10, 'proof:raid'), 0)
 
+    def test_completed_room_is_archived_after_one_day(self):
+        room = self.rest.create_room(1, 10, 'ema', 99, practice=True, now=100)
+        running = self.rest.start_room(
+            room['id'], 10, [WitchRestRulesTests.participant(10)], now=101)
+        finished = self.rest.finish_room(
+            running['id'], '勝利', {'rounds': 1, 'log': []}, now=102)
+        self.assertEqual(finished['archive_at'], 86_502)
+        self.assertEqual(self.rest.archives_due(now=86_501), [])
+        self.assertEqual([item['id'] for item in self.rest.archives_due(now=86_502)], [room['id']])
+        self.rest.mark_archived(room['id'])
+        self.assertEqual(self.rest.archives_due(now=90_000), [])
+
     def test_formal_room_charges_when_battle_starts_not_when_created(self):
         with self.store.db:
             add_owned_item(self.store.db, 1, 10, 'proof:raid', 10)
@@ -473,6 +496,24 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.parent.create_thread.assert_awaited_once()
         self.thread.add_user.assert_awaited_once_with(self.host)
         self.thread.send.assert_awaited_once()
+
+    async def test_auto_battle_advances_one_round_and_keeps_thread_open(self):
+        participant = WitchRestRulesTests.participant(10)
+        room = self.rest.create_room(1, 10, 'ema', 99, practice=True, now=100)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        room = self.rest.start_room(room['id'], 10, [participant], now=101)
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        room.update(battle=dump_total_battle(battle), round_deadline=102)
+        self.rest.save(room)
+        self.bot.channels[self.thread.id] = self.thread
+        with patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            await self.service._step_auto(room, battle)
+        saved = self.rest.get(room['id'])
+        self.assertEqual(saved['status'], 'completed')
+        self.assertEqual(saved['battle']['rounds'], 1)
+        self.assertGreater(saved['archive_at'], saved['finished_at'])
+        self.thread.edit.assert_not_awaited()
+        self.thread.message.edit.assert_awaited_once()
 
 
 if __name__ == '__main__':

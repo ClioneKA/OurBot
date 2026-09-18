@@ -17,7 +17,7 @@ from core.rpg_total_raids import (
     WITCH_ROUND_SECONDS,
 )
 from core.rpg_witch_rest import MIN_LEVEL, WITCHES
-from core.rpg_witch_rest_battle import manual_battle_from_participants, run_auto_battle
+from core.rpg_witch_rest_battle import auto_battle_from_participants, manual_battle_from_participants
 from core.rpg_room_occupancy import occupied_room, room_lock
 
 
@@ -54,7 +54,8 @@ class WitchRestLobbyView(discord.ui.View):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
         self.stop()
-        message = (f'已開始{"練習" if room["practice"] else "正式"}手動戰鬥。'
+        mode = '自動' if room['enrage'] < 100 else '手動'
+        message = (f'已開始{"練習" if room["practice"] else "正式"}{mode}戰鬥。'
                    if room['status'] == 'running' else
                    f'已結算{"練習" if room["practice"] else "正式"}戰鬥：{room["result"]}。')
         await interaction.followup.send(message, ephemeral=True)
@@ -86,7 +87,8 @@ class WitchRestService:
                 view = WitchRestLobbyView(self, room['id'])
                 self.views[room['id']] = view
                 self.bot.add_view(view, message_id=room.get('index_message_id') or room['message_id'])
-            elif room['status'] == 'running' and room.get('message_id') and room.get('battle'):
+            elif (room['status'] == 'running' and room.get('message_id') and room.get('battle')
+                  and room['battle'].get('mode') != 'witch_rest_auto'):
                 view = WitchBattleView(self, room['id'])
                 self.views[(room['id'], 'running')] = view
                 self.bot.add_view(view, message_id=room['message_id'])
@@ -99,7 +101,7 @@ class WitchRestService:
         for panel in self.private_panels.values():
             panel['view'].stop()
 
-    @tasks.loop(seconds=60)
+    @tasks.loop(seconds=1)
     async def tick(self):
         now = time.time()
         for current in self.repo.active_rooms():
@@ -110,6 +112,10 @@ class WitchRestService:
                 if not room or room['status'] != 'running':
                     continue
                 battle = load_total_battle(room['battle'])
+                if room['battle'].get('mode') == 'witch_rest_auto':
+                    if room.get('round_deadline') and now >= room['round_deadline']:
+                        await self._step_auto(room, battle)
+                    continue
                 channel = self.bot.get_channel(room['channel_id'])
                 guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
                 changed = False
@@ -134,6 +140,9 @@ class WitchRestService:
                     pass
             await self._close_index(room, '魔女安息儀式房間已逾時關閉。')
             await self._archive_thread(room, '魔女安息儀式房間已逾時')
+        for room in self.repo.archives_due(now=now):
+            await self._archive_thread(room, '魔女安息儀式結束後已保留一天')
+            self.repo.mark_archived(room['id'])
 
     @tick.before_loop
     async def before_tick(self):
@@ -232,6 +241,9 @@ class WitchRestService:
                     'basic_target': self.cog.tactics.basic_target(room['guild_id'], user_id, state['job'])})
             room = self.repo.start_room(room_id, member.id, participants)
             await self._close_index(room, '魔女安息儀式已開始。')
+            old = self.views.pop(room_id, None)
+            if old:
+                old.stop()
             if room['enrage'] >= 100:
                 battle = manual_battle_from_participants(
                     participants, room['witch_id'], room['enrage'], random.randrange(2**31))
@@ -239,26 +251,13 @@ class WitchRestService:
                             round_deadline=time.time() + WITCH_ROUND_SECONDS,
                             action_drafts={}, surrender_votes=[], log_page=0, status_page=0)
                 self.repo.save(room)
-                old = self.views.pop(room_id, None)
-                if old:
-                    old.stop()
                 await self._edit_public(room, battle)
                 return room
-            battle = run_auto_battle(participants, room['witch_id'], room['enrage'], random.randrange(2**31))
-            result = battle.result
-            summary = {'rounds': battle.round, 'result': result, 'log': battle.log[-30:]}
-            room = self.repo.finish_room(room_id, result, summary)
-            rewards = []
-            if result == '勝利' and not room['practice']:
-                for index, participant in enumerate(participants):
-                    reward = self.repo.settle(
-                        room['id'], room['guild_id'], participant['id'], room['witch_id'],
-                        participant['state']['job'], room['enrage'], seed=f'{room["id"]}:{index}')
-                    rewards.append((participant['id'], reward))
-            await channel.get_partial_message(room['message_id']).edit(
-                embed=self.result_embed(room, rewards), view=None,
-                allowed_mentions=discord.AllowedMentions.none())
-            await self._archive_thread(room, '魔女安息儀式已結束')
+            battle = auto_battle_from_participants(
+                participants, room['witch_id'], room['enrage'], random.randrange(2**31))
+            room.update(battle=dump_total_battle(battle), round_deadline=time.time() + 2)
+            self.repo.save(room)
+            await self._edit_auto(room, battle)
             return room
 
     running_battle = TotalRaidService.running_battle
@@ -278,25 +277,46 @@ class WitchRestService:
             self.views[key] = WitchBattleView(self, room['id'])
         return self.views[key]
 
+    def _settle_rewards(self, room):
+        if room['result'] != '勝利' or room['practice']:
+            return []
+        channel = self.bot.get_channel(room['channel_id'])
+        guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
+        rewards = []
+        for index, participant in enumerate(room['participants']):
+            member = guild.get_member(participant['id']) if guild else None
+            if member is None or member.bot or member.status == discord.Status.offline:
+                continue
+            reward = self.repo.settle(
+                room['id'], room['guild_id'], participant['id'], room['witch_id'],
+                participant['state']['job'], room['enrage'], seed=f'{room["id"]}:{index}')
+            rewards.append((participant['id'], reward))
+        return rewards
+
+    async def _step_auto(self, room, battle):
+        battle.step()
+        if not battle.result:
+            room.update(battle=dump_total_battle(battle), round_deadline=time.time() + 2)
+            self.repo.save(room)
+            await self._edit_auto(room, battle)
+            return
+        summary = {'mode': 'witch_rest_auto', 'rounds': battle.round,
+                   'result': battle.result, 'log': battle.log[-30:]}
+        room = self.repo.finish_room(room['id'], battle.result, summary)
+        room['rewards'] = self._settle_rewards(room)
+        self.repo.save(room)
+        await self._edit_auto(room, battle)
+
     async def _resolve(self, room, battle, timeout=False):
         battle.resolve(use_defaults=timeout)
         room.update(battle=dump_total_battle(battle), action_drafts={}, surrender_votes=[],
                     log_page=0, status_page=0)
-        rewards = []
         if battle.result:
-            room.update(status='completed', result=battle.result, finished_at=time.time(),
-                        expires_at=time.time(), round_deadline=None)
-            if battle.result == '勝利' and not room['practice']:
-                channel = self.bot.get_channel(room['channel_id'])
-                guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
-                for index, participant in enumerate(room['participants']):
-                    member = guild.get_member(participant['id']) if guild else None
-                    if member is None or member.bot or member.status == discord.Status.offline:
-                        continue
-                    reward = self.repo.settle(
-                        room['id'], room['guild_id'], participant['id'], room['witch_id'],
-                        participant['state']['job'], room['enrage'], seed=f'{room["id"]}:{index}')
-                    rewards.append((participant['id'], reward))
+            now = time.time()
+            room.update(status='completed', result=battle.result, finished_at=now,
+                        archive_at=now + 86_400, expires_at=now + 86_400,
+                        thread_archived=False, round_deadline=None)
+            rewards = self._settle_rewards(room)
             room['rewards'] = rewards
             view = self.views.pop((room['id'], 'running'), None)
             if view:
@@ -308,8 +328,14 @@ class WitchRestService:
             await self._edit_public(room, battle)
         finally:
             await self.refresh_private_panels(room)
-        if battle.result:
-            await self._archive_thread(room, '魔女安息儀式已結束')
+    async def _edit_auto(self, room, battle):
+        channel = self.bot.get_channel(room['channel_id'])
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return
+        embed = (self.result_embed(room, room.get('rewards', [])) if battle.result
+                 else self.auto_battle_embed(room, battle))
+        await channel.get_partial_message(room['message_id']).edit(
+            embed=embed, view=None, allowed_mentions=discord.AllowedMentions.none())
 
     async def _edit_public(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
@@ -334,11 +360,21 @@ class WitchRestService:
 
     async def _archive_thread(self, room, reason):
         channel = self.bot.get_channel(room.get('channel_id'))
-        if isinstance(channel, discord.Thread):
-            try:
-                await channel.edit(archived=True, locked=True, reason=reason)
-            except discord.HTTPException:
-                pass
+        if not isinstance(channel, discord.Thread):
+            guild = self.bot.get_guild(room['guild_id']) if hasattr(self.bot, 'get_guild') else None
+            if guild and room.get('channel_id'):
+                try:
+                    channel = await guild.fetch_channel(room['channel_id'])
+                except (discord.HTTPException, discord.NotFound):
+                    return
+        if not isinstance(channel, discord.Thread):
+            return
+        try:
+            if getattr(channel, 'archived', False):
+                await channel.edit(archived=False, reason=reason)
+            await channel.edit(archived=True, locked=True, reason=reason)
+        except discord.HTTPException:
+            pass
 
     def thread_lobby_embed(self, room):
         return discord.Embed(
@@ -359,6 +395,20 @@ class WitchRestService:
             embed.add_field(name='公開歷史', value='\n'.join(lines)[:1024], inline=False)
         elif battle.mechanics.get('rest_boss_shield'):
             embed.add_field(name='判決護盾', value=f'{battle.mechanics["rest_boss_shield"]:,}', inline=False)
+        return embed
+
+    def auto_battle_embed(self, room, battle):
+        boss = next((fighter for fighter in battle.fighters if fighter.team == 1), None)
+        party = '\n'.join(
+            f'{fighter.name}：{max(0, fighter.hp):,}/{fighter.stats["HP"]:,} HP'
+            for fighter in battle.fighters if fighter.team == 0)
+        embed = discord.Embed(title='魔女安息儀式｜自動戰鬥', color=0xA855F7,
+            description=f'{WITCHES[room["witch_id"]].name}・魔女化 {room["enrage"]:,}%｜第 {battle.round} 回合')
+        if boss:
+            embed.add_field(name='Boss HP', value=f'{max(0, boss.hp):,}/{boss.stats["HP"]:,}', inline=False)
+        embed.add_field(name='隊伍狀態', value=party or '無存活隊員', inline=False)
+        embed.add_field(name='最近戰況', value='\n'.join(battle.log[-6:])[-1024:] or '準備交戰。', inline=False)
+        embed.set_footer(text='自動戰鬥每 2 秒推進一回合，可留在討論串觀看過程。')
         return embed
 
     async def close_room(self, room_id, member):
@@ -397,4 +447,7 @@ class WitchRestService:
                 lines.append(f'<@{user_id}>：' + '、'.join(drops or ('無額外掉落',)))
             embed.add_field(name='個人獎勵', value='\n'.join(lines)[:1024], inline=False)
         embed.add_field(name='戰鬥摘要', value='\n'.join(room['battle'].get('log', [])[-8:])[-1024:] or '無。', inline=False)
+        if room.get('archive_at'):
+            embed.add_field(name='討論串封存時間', value=f'<t:{int(room["archive_at"])}:R>', inline=False)
+        embed.set_footer(text='戰鬥結束後討論串保留 24 小時供隊員聊天，之後鎖定並封存。')
         return embed

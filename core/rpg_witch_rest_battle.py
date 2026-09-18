@@ -757,6 +757,16 @@ def run_auto_battle(participants, witch_id, enrage=0, seed=None):
     return battle
 
 
+def load_auto_battle(data):
+    from core.rpg_battle import load_battle
+    base = load_battle(data)
+    battle = WitchRestAutoBattle(base.fighters, data['witch_id'])
+    battle.round, battle.result, battle.log = base.round, base.result, base.log
+    battle.max_rounds, battle.mechanics = base.max_rounds, base.mechanics
+    battle.rng.setstate(base.rng.getstate())
+    return battle
+
+
 def manual_battle_from_participants(participants, witch_id, enrage, seed=None):
     if witch_id not in WITCHES or not 100 <= enrage <= 4_000 or not 3 <= len(participants) <= 6:
         raise CharacterError('無效的魔女安息儀式手動戰鬥。')

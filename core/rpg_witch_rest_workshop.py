@@ -119,9 +119,9 @@ class DismantleConfirmView(discord.ui.View):
 
 
 class WitchRestWorkshopView(discord.ui.View):
-    def __init__(self, cog, owner, guild_id):
+    def __init__(self, cog, owner, guild_id, *, origin):
         super().__init__(timeout=180)
-        self.cog, self.owner, self.guild_id = cog, owner, guild_id
+        self.cog, self.owner, self.guild_id, self.origin = cog, owner, guild_id, origin
         self.selected = None
         self.page = 0
         self.lock = asyncio.Lock()
@@ -217,8 +217,8 @@ class WitchRestWorkshopView(discord.ui.View):
                 await interaction.response.edit_message(embed=self.embed(), view=self)
                 return
             if action == 'back':
-                from core.rpg_raid_hub import RaidHubView
-                view = RaidHubView(self.cog, interaction)
+                from core.rpg_tailor_view import TailorView
+                view = TailorView(self.cog, self.origin)
                 await interaction.response.edit_message(embed=view.embed(), view=view)
                 self.stop()
                 return

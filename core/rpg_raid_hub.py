@@ -71,7 +71,6 @@ class RaidHubView(discord.ui.View):
         self.button('建立安息儀式', 'create_rest', 2, style=discord.ButtonStyle.danger)
         self.button('開啟魔女試煉', 'witch_trial', 3, style=discord.ButtonStyle.primary)
         self.button('繪境／特殊召喚', 'items', 3)
-        self.button('魔女裝備工坊', 'workshop', 3)
         self.button('返回主選單', 'back', 4)
         self.button('關閉', 'close', 4)
 
@@ -146,12 +145,6 @@ class RaidHubView(discord.ui.View):
             elif action == 'items':
                 from core.rpg_menu import navigate
                 await navigate(self, interaction, 'use_items')
-                return
-            elif action == 'workshop':
-                from core.rpg_witch_rest_workshop import WitchRestWorkshopView
-                view = WitchRestWorkshopView(self.cog, self.owner, self.guild_id)
-                await interaction.response.edit_message(embed=view.embed(), view=view)
-                self.stop()
                 return
             elif action == 'back':
                 from core.rpg_menu import navigate

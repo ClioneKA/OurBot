@@ -436,9 +436,26 @@ class WitchRestStore:
             room = self.room(room_id)
             if not room or room['status'] != 'running':
                 raise CharacterError('這場戰鬥已經結算。')
+            archive_at = now + 86_400
             room.update(status='completed', result=result, battle=battle_summary,
-                        finished_at=now, expires_at=now)
+                        finished_at=now, archive_at=archive_at, expires_at=archive_at,
+                        thread_archived=False)
             self._save_room(room)
+            return room
+
+    def archives_due(self, *, now=None):
+        now = time.time() if now is None else now
+        rows = self.db.execute(
+            "SELECT data FROM rpg_witch_rest_rooms WHERE status='completed' AND expires_at<=?",
+            (now,)).fetchall()
+        return [room for row in rows if not (room := json.loads(row[0])).get('thread_archived')]
+
+    def mark_archived(self, room_id):
+        with self.db:
+            room = self.room(room_id)
+            if room and room['status'] == 'completed':
+                room['thread_archived'] = True
+                self._save_room(room)
             return room
 
     def close_room(self, room_id, actor_id, *, now=None):

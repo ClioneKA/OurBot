@@ -41,6 +41,11 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         self.view = TailorView(self.cog, self.interaction)
         self.addCleanup(self.view.stop)
 
+    async def test_witch_equipment_workshop_is_entered_from_tailor(self):
+        labels = [getattr(child, 'label', '') for child in self.view.children]
+        self.assertIn('魔女裝備', labels)
+        self.assertNotIn('重新整理', labels)
+
     async def test_dye_and_embroidery_are_paid_instance_operations(self):
         noah = f'instance:{self.noah_id}'
         await self.view.handle(self.interaction, 'item', noah)
