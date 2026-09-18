@@ -5,9 +5,9 @@ import time
 
 import discord
 
-from core.rpg_alchemy import (COMBAT_SKILLS, CORE_ITEM, LIFE_SKILLS, RARITIES,
+from core.rpg_alchemy import (COMBAT_SKILLS, CORE_ITEM, LIFE_SKILLS, LIFE_WORK_UNLOCKS, RARITIES,
                               STAT_NAMES, FUEL_CAPACITY, body_acceleration_cost,
-                              fuel_value, material_profile, parse_stone)
+                              fuel_value, life_skill_unlocks, material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
@@ -332,7 +332,12 @@ class AlchemyView(discord.ui.View):
                     if saved:
                         skill = self.cog.alchemy.life_skill(
                             self.guild_id, self.owner.id, saved['key'])
-                        result = f'工作力 {skill["work"]:,}' if skill else '需安裝素體'
+                        if skill:
+                            unlocks = life_skill_unlocks(saved['key'], skill['work'])
+                            unlocked = '、'.join(unlocks) if unlocks else '尚無'
+                            result = f'工作力 {skill["work"]:,}｜已解鎖：{unlocked}'
+                        else:
+                            result = '需安裝素體'
                         life_lines.append(
                             f'{saved["rarity"]}・{LIFE_SKILLS[saved["key"]]}｜{result}')
                 if combat_lines:
@@ -403,9 +408,13 @@ class AlchemyView(discord.ui.View):
                             f'**已選**　{len(self.decompose_items)} 種／{quantity} 顆\n'
                             f'**預計取得**　{powder} 鍊金粉塵')
         elif self.page == 'automation':
+            farming_thresholds = '｜'.join(
+                f'{label} {threshold}' for threshold, label in LIFE_WORK_UNLOCKS['farming'])
             embed = discord.Embed(title='煉金人偶｜自動化設定', color=0xB8864B,
                 description='生活技能必須已刻入目前核心才會執行。釣魚與農耕會持續到燃料不足；'
-                            '自動備餐與討伐響應另外使用討伐觸發條件。')
+                            '自動備餐與討伐響應另外使用討伐觸發條件。\n\n'
+                            f'**農耕工作力門檻**　{farming_thresholds}。\n'
+                            '每塊田的收成與重種都會獨立檢查該門檻。')
         elif self.page == 'stats':
             embed = discord.Embed(title='煉金人偶｜能力說明', color=0xB8864B,
                 description=('**構造**　每點 +10 最大 HP；農耕、討伐響應的副能力。\n'

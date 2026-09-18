@@ -8,7 +8,7 @@ import time
 from core.rpg import record_gold
 from core.rpg_character import (CharacterError, GROWTH, ITEMS, Item, add_owned_item,
                                 item_sell_price, item_sellable)
-from core.rpg_farming import PLANTS
+from core.rpg_farming import LOCATIONS, PLANTS
 from core.rpg_fishing import SPOTS
 from core.settings import RPGSettings
 
@@ -37,6 +37,13 @@ COMBAT_SKILLS = {
 }
 LIFE_SKILLS = {'fishing': '自律釣魚', 'farming': '自律農耕',
                'cooking': '自動備餐', 'raid_signup': '討伐響應'}
+FARMING_WORK_THRESHOLDS = {'courtyard': 19, 'prison': 47, 'greenhouse': 94, 'ruins': 145}
+LIFE_WORK_UNLOCKS = {
+    'fishing': ((19, '30 分鐘'), (65, '2 小時'), (133, '8 小時')),
+    'farming': tuple((threshold, LOCATIONS[location_id])
+                     for location_id, threshold in FARMING_WORK_THRESHOLDS.items()),
+    'raid_signup': ((19, '一般討伐'), (70, '中階討伐'), (122, '高階討伐')),
+}
 POWDER_COSTS = {'普通': 10, '稀有': 30, '史詩': 100}
 CORE_ITEM = {level: f'alchemy:core:{level}' for level in (1, 2, 3)}
 POWDER_ITEM = 'alchemy:powder'
@@ -61,6 +68,14 @@ def parse_stone(item_id):
         return None
     pool = COMBAT_SKILLS if domain == 'combat' else LIFE_SKILLS if domain == 'life' else {}
     return (domain, skill, rarity) if skill in pool else None
+
+
+def life_skill_unlocks(key, work):
+    """Return the automation capabilities unlocked by an effective work score."""
+    if key == 'cooking':
+        return (f'美味度 {work} 以下的保存配方',)
+    return tuple(label for threshold, label in LIFE_WORK_UNLOCKS.get(key, ())
+                 if work >= threshold)
 
 
 def _register_items():
@@ -768,7 +783,8 @@ class AlchemyDolls:
         state = self.state(guild, user)
         config = state['config'].get('farming', {})
         skill = self.life_skill(guild, user, 'farming')
-        if not config.get('enabled') or not skill or skill['work'] < 19:
+        threshold = FARMING_WORK_THRESHOLDS.get(location_id, 10**9)
+        if not config.get('enabled') or not skill or skill['work'] < threshold:
             return None
         replant = state['fuel'] >= self._fuel_cost(state['active_body'], 2)
         source = f'{location_id}:{float(planted_at)}'
@@ -844,4 +860,5 @@ class AlchemyDolls:
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'LIFE_SKILLS', 'RARITIES',
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
-           'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY']
+           'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
+           'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks']

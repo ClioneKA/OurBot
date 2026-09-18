@@ -5,10 +5,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-from core.rpg import RPGStore
+from core.rpg import RPGStore, level_floor
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM,
                               RARITY_ORDER, body_acceleration_cost, fuel_value,
-                              material_profile, parse_stone, stat_caps, stone_id)
+                              life_skill_unlocks, material_profile, parse_stone,
+                              stat_caps, stone_id)
 from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
@@ -176,11 +177,56 @@ class AlchemyDollTests(unittest.TestCase):
         expected_work = self.alchemy.life_skill(1, 10, 'fishing')['work']
         self.assertIn(f'史詩・自律釣魚｜工作力 {expected_work:,}',
                       fields['生活技能石｜稀有度計算後'])
+        self.assertIn('已解鎖：30 分鐘', fields['生活技能石｜稀有度計算後'])
 
         view.page = 'gacha'
         self.assertIn('**目前金幣**\u30004,321', view.embed().description)
         self.assertEqual(combat_stone_effect('cleanse', '傳說', body),
                          '移除全部負面狀態')
+        self.assertEqual(life_skill_unlocks('farming', 93), ('中庭花圃', '監獄菜園'))
+        self.assertEqual(life_skill_unlocks('farming', 94),
+                         ('中庭花圃', '監獄菜園', '廢棄溫室'))
+
+    def test_auto_farming_checks_each_plots_work_unlock(self):
+        self.make_body()
+        body = self.alchemy.state(1, 10)['active_body']
+        body['stats'] = [30, 30, 30, 30, 30]
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET active_body=?,fuel=500 '
+                                  'WHERE guild_id=1 AND user_id=10',
+                                  (__import__('json').dumps(body),))
+        self.characters.grant_item(1, 10, CORE_ITEM[1])
+        core_id = self.alchemy.orient_core(1, 10, 1, '生活')
+        item_id = stone_id('life', 'farming', '普通')
+        self.characters.grant_item(1, 10, item_id)
+        self.alchemy.engrave(1, 10, core_id, 'life', 1, item_id)
+        self.alchemy.configure_life(1, 10, 'farming', enabled=True)
+
+        farming = Farming(self.store, rng=FixedRng(.99), material_rng=FixedRng(.99),
+                          specialization_rng=FixedRng(.99))
+        farming.state(1, 10)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_farming_players SET xp=? '
+                                  'WHERE guild_id=1 AND user_id=10', (level_floor(60),))
+        courtyard = farming.plant(1, 10, 'courtyard', 'potato', now=0)
+        prison = farming.plant(1, 10, 'prison', 'potato', now=0)
+
+        first = self.alchemy.auto_farm(
+            farming, 1, 10, 'courtyard', 'potato', 0, now=courtyard['ready_at'])
+        locked = self.alchemy.auto_farm(
+            farming, 1, 10, 'prison', 'potato', 0, now=prison['ready_at'])
+        self.assertTrue(first['replanted'])
+        self.assertIsNone(locked)
+        self.assertEqual(farming.state(1, 10)['sessions']['prison']['status'], 'active')
+
+        body['stats'] = [70, 70, 30, 30, 30]  # 普通石農耕工作力 49，解鎖監獄菜園。
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET active_body=? '
+                                  'WHERE guild_id=1 AND user_id=10',
+                                  (__import__('json').dumps(body),))
+        unlocked = self.alchemy.auto_farm(
+            farming, 1, 10, 'prison', 'potato', 0, now=prison['ready_at'])
+        self.assertTrue(unlocked['replanted'])
 
     def test_batch_decompose_uses_all_selected_stone_quantities(self):
         common = stone_id('life', 'fishing', '普通')
