@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 
 from core.rpg import RPGStore
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM,
-                              RARITY_ORDER, body_acceleration_cost, material_profile,
-                              parse_stone, stat_caps, stone_id)
-from core.rpg_character import Characters, CharacterError
+                              RARITY_ORDER, body_acceleration_cost, fuel_value,
+                              material_profile, parse_stone, stat_caps, stone_id)
+from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
 from core.rpg_battle import raid_battle
@@ -77,6 +77,11 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(body['tier'], 10)
 
     def test_core_page_builds_without_a_core_and_triggers_explain_missing_doll(self):
+        self.make_body()
+        self.characters.grant_item(1, 10, 'farming:wheat', 10)
+        craft = self.alchemy.start_body(1, 10, ['farming:wheat'] * 10, now=100)
+        self.alchemy.finish_body(1, 10, now=craft['ready_at'])
+
         async def check():
             provisions = SimpleNamespace(presets=lambda guild, user: [])
             cog = SimpleNamespace(alchemy=self.alchemy, characters=self.characters,
@@ -88,12 +93,22 @@ class AlchemyDollTests(unittest.TestCase):
             view.page = 'cores'
             view.rebuild()
             self.assertGreater(len(view.children), 0)
+            await view.handle(interaction, 'triggers')
+            interaction.response.send_message.assert_awaited_once()
             self.characters.grant_item(1, 10, CORE_ITEM[1])
+            self.characters.grant_item(1, 10, stone_id('life', 'fishing', '普通'), 2)
+            self.characters.grant_item(1, 10, 'farming:wheat', 2)
             view.core_id = self.alchemy.orient_core(1, 10, 1, '生活')
             view.rebuild()
             self.assertGreater(len(view.children), 0)
-            await view.handle(interaction, 'triggers')
-            interaction.response.send_message.assert_awaited_once()
+            for page in ('overview', 'automation', 'stats', 'decompose', 'fuel'):
+                view.page = page
+                view.rebuild()
+                self.assertGreater(len(view.children), 0)
+            view.page = 'body'
+            body_embed = view.embed()
+            self.assertEqual([field.name for field in body_embed.fields],
+                             ['當前素體 T10', '候選素體 T10'])
 
         asyncio.run(check())
 
@@ -136,12 +151,29 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(powder, 1)
         self.assertEqual(self.inventory()[POWDER_ITEM], 1)
 
+    def test_batch_decompose_uses_all_selected_stone_quantities(self):
+        common = stone_id('life', 'fishing', '普通')
+        rare = stone_id('life', 'farming', '稀有')
+        self.characters.grant_item(1, 10, common, 2)
+        self.characters.grant_item(1, 10, rare, 3)
+        quantity, powder = self.alchemy.decompose_many(1, 10, [common, rare, common])
+        self.assertEqual((quantity, powder), (5, 11))
+        self.assertEqual(self.inventory()[POWDER_ITEM], 11)
+        self.assertNotIn(common, self.inventory())
+        self.assertNotIn(rare, self.inventory())
+
     def test_fuel_conversion_uses_sell_value(self):
         self.characters.grant_item(1, 10, 'farming:wheat', 2)
-        gained = self.alchemy.convert_fuel(1, 10, 'farming:wheat', 1)
-        self.assertGreater(gained, 0)
+        gained = self.alchemy.convert_fuel(1, 10, 'farming:wheat', 2)
+        self.assertEqual(gained, fuel_value(ITEMS['farming:wheat']) * 2)
         self.assertEqual(self.alchemy.state(1, 10)['fuel'], gained)
-        self.assertEqual(self.inventory()['farming:wheat'], 1)
+        self.assertNotIn('farming:wheat', self.inventory())
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=1000 '
+                                  'WHERE guild_id=1 AND user_id=10')
+        self.characters.grant_item(1, 10, 'farming:wheat')
+        with self.assertRaisesRegex(CharacterError, '上限'):
+            self.alchemy.convert_fuel(1, 10, 'farming:wheat', 1)
 
     def test_life_automation_restarts_until_only_collection_fuel_remains(self):
         self.make_body()
@@ -173,8 +205,9 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(self.alchemy.auto_signup_candidates(raid), [10])
         raid['pool'] = 'mid'
         self.assertEqual(self.alchemy.auto_signup_candidates(raid), [])
-        self.characters.grant_item(1, 10, 'farming:wheat', 2)
-        self.alchemy.convert_fuel(1, 10, 'farming:wheat', 2)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=400 '
+                                  'WHERE guild_id=1 AND user_id=10')
 
         fishing = Fishing(self.store, rng=FixedRng(.99), boss_rng=FixedRng(.99),
                           material_rng=FixedRng(.99))

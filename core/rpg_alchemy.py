@@ -43,6 +43,7 @@ POWDER_ITEM = 'alchemy:powder'
 GACHA_PRICE = 500
 CORE1_PROOF_COST = 15
 BODY_ACCEL_GOLD_PER_HOUR = 500
+FUEL_CAPACITY = 1000
 
 
 def stone_id(domain, skill, rarity):
@@ -90,6 +91,10 @@ def body_acceleration_cost(craft, now=None):
         return 0
     now = time.time() if now is None else now
     return math.ceil(max(0, craft['ready_at'] - now) * BODY_ACCEL_GOLD_PER_HOUR / 3600)
+
+
+def fuel_value(item):
+    return max(1, item_sell_price(item))
 
 
 def material_profile(item_id):
@@ -455,6 +460,27 @@ class AlchemyDolls:
             add_owned_item(self.db, guild, user, POWDER_ITEM, powder)
         return powder
 
+    def decompose_many(self, guild, user, item_ids):
+        keys = tuple(dict.fromkeys(item_ids))
+        if not keys or any(not parse_stone(key) for key in keys):
+            raise CharacterError('請選擇要分解的技能石。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            rows = dict(self.db.execute(
+                f'''SELECT item_id,quantity FROM rpg_inventory
+                    WHERE guild_id=? AND user_id=? AND item_id IN ({','.join('?' * len(keys))})''',
+                (guild, user, *keys)).fetchall())
+            if not rows:
+                raise CharacterError('已沒有可分解的技能石。')
+            powder = sum(RARITIES[parse_stone(key)[2]][2] * quantity
+                         for key, quantity in rows.items())
+            quantity = sum(rows.values())
+            self.db.executemany('''DELETE FROM rpg_inventory
+                WHERE guild_id=? AND user_id=? AND item_id=?''',
+                                ((guild, user, key) for key in rows))
+            add_owned_item(self.db, guild, user, POWDER_ITEM, powder)
+        return quantity, powder
+
     def exchange_stone(self, guild, user, domain, skill, rarity):
         pool = COMBAT_SKILLS if domain == 'combat' else LIFE_SKILLS if domain == 'life' else {}
         if skill not in pool or rarity not in POWDER_COSTS:
@@ -475,14 +501,18 @@ class AlchemyDolls:
 
     def convert_fuel(self, guild, user, item_id, quantity):
         item = ITEMS.get(item_id)
-        if (not item or quantity < 1 or item_id.startswith('alchemy:')
+        if (not item or type(quantity) is not int or quantity < 1 or item_id.startswith('alchemy:')
                 or item.category in ('裝備', '釣竿')
                 or not item_sellable(item)):
             raise CharacterError('這項物品不能轉換為鍊金燃料。')
-        fuel = item_sell_price(item) * quantity * 4
+        fuel = fuel_value(item) * quantity
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self._ensure(guild, user)
+            current = self.db.execute('SELECT fuel FROM rpg_alchemy_dolls '
+                                      'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()[0]
+            if current + fuel > FUEL_CAPACITY:
+                raise CharacterError(f'燃料上限為 {FUEL_CAPACITY:,}，本次轉換會超過上限。')
             paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
                 WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=?''',
                                    (quantity, guild, user, item_id, quantity))
@@ -814,4 +844,4 @@ class AlchemyDolls:
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'LIFE_SKILLS', 'RARITIES',
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
-           'body_acceleration_cost']
+           'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY']
