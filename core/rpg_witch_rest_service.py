@@ -123,8 +123,9 @@ class WitchRestService:
                     if room.get('round_deadline') and now >= room['round_deadline']:
                         await self._step_auto(room, battle)
                     continue
-                if room.get('round_deadline') and now >= room['round_deadline']:
-                    await self._resolve(room, battle, timeout=True)
+                ready = battle.ready_to_resolve()
+                if ready or (room.get('round_deadline') and now >= room['round_deadline']):
+                    await self._resolve(room, battle, timeout=not ready)
         for room in self.repo.expire_rooms():
             channel = self.bot.get_channel(room.get('channel_id'))
             if isinstance(channel, (discord.TextChannel, discord.Thread)) and room.get('message_id'):

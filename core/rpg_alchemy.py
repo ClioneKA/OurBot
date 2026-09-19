@@ -73,6 +73,7 @@ LEGEND_PITY = 100
 CORE1_PROOF_COST = 15
 BODY_ACCEL_GOLD_PER_HOUR = 500
 FUEL_CAPACITY = 1000
+LOW_FUEL_OPERATION_THRESHOLD = 5
 
 
 def raid_signup_pool(raid):
@@ -636,11 +637,13 @@ class AlchemyDolls:
                             'AND item_id=? AND quantity=0', (guild, user, item_id))
             updated = current + gained
             next_cost = operation_fuel_cost(json.loads(body_raw)) if body_raw else 100
+            low_fuel_threshold = next_cost * LOW_FUEL_OPERATION_THRESHOLD
             self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel=?,
                 fuel_low_notified=CASE WHEN ?>= ? THEN 0 ELSE fuel_low_notified END,
                 fuel_low_pending=CASE WHEN ?>= ? THEN 0 ELSE fuel_low_pending END
                 WHERE guild_id=? AND user_id=?''',
-                (updated, updated, next_cost, updated, next_cost, guild, user))
+                (updated, updated, low_fuel_threshold,
+                 updated, low_fuel_threshold, guild, user))
         return gained
 
     def life_skill(self, guild, user, key):
@@ -730,7 +733,7 @@ class AlchemyDolls:
             if body_row[1] < cost:
                 raise CharacterError(f'鍊金燃料不足，需要 {cost}。')
             remaining = body_row[1] - cost
-            alert = remaining < cost and not body_row[2]
+            alert = remaining < cost * LOW_FUEL_OPERATION_THRESHOLD and not body_row[2]
             self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel=?,
                 fuel_low_notified=CASE WHEN ? THEN 1 ELSE fuel_low_notified END,
                 fuel_low_pending=CASE WHEN ? THEN 1 ELSE fuel_low_pending END
@@ -762,7 +765,7 @@ class AlchemyDolls:
                                        'WHERE guild_id=? AND user_id=?',
                                        (guild, user)).fetchone()
                 next_cost = operation_fuel_cost(json.loads(doll[0])) if doll[0] else 100
-                if doll[1] >= next_cost:
+                if doll[1] >= next_cost * LOW_FUEL_OPERATION_THRESHOLD:
                     self.db.execute('''UPDATE rpg_alchemy_dolls SET
                         fuel_low_notified=0,fuel_low_pending=0
                         WHERE guild_id=? AND user_id=?''', (guild, user))

@@ -170,27 +170,20 @@ class RPG(commands.Cog):
                 guild_name = discord.utils.escape_markdown(
                     guild.name if guild else str(guild_id))
                 await asyncio.wait_for(user.send(
-                    f'安安大冒險｜煉金人偶燃料不足\n'
+                    f'安安大冒險｜煉金人偶燃料偏低\n'
                     f'你在 **{guild_name}** 的人偶目前剩餘 **{fuel}** 燃料，'
-                    f'下一次操作需要 **{next_cost}**。戰鬥支援與生活自動化會在燃料不足時停止。',
+                    f'每次操作需要 **{next_cost}**，已不足 5 次操作。'
+                    f'戰鬥支援與生活自動化會在燃料不足時停止。',
                     allowed_mentions=discord.AllowedMentions.none()), timeout=20)
             except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
                 logging.info('Alchemy low-fuel DM could not be delivered for guild %s user %s',
                              guild_id, user_id)
         for guild_id, user_id, spot_id, duration_id, started_at in self.alchemy.auto_fishing_due():
             try:
-                summary = self.alchemy.auto_fish(
+                self.alchemy.auto_fish(
                     self.fishing, guild_id, user_id, spot_id, duration_id, started_at)
-                if summary:
-                    user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-                    suffix = '，並已沿用原設定再次出發' if summary['restarted'] else ''
-                    await asyncio.wait_for(user.send(
-                        f'煉金人偶已自動收竿{suffix}，消耗 {summary["fuel"]} 燃料。'), timeout=20)
             except CharacterError:
                 pass
-            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
-                logging.info('Alchemy fishing DM could not be delivered for guild %s user %s',
-                             guild_id, user_id)
         for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notifications_due():
             if not self.fishing.reserve_notification(guild_id, user_id):
                 continue
@@ -228,16 +221,8 @@ class RPG(commands.Cog):
                     self.farming, guild_id, user_id, location_id, plant_id, planted_at)
                 if summary:
                     processed[key] = processed.get(key, 0) + 1
-                    user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-                    suffix = '，並已重新種植原植物' if summary['replanted'] else ''
-                    await asyncio.wait_for(user.send(
-                        f'煉金人偶已自動收成 {LOCATIONS[location_id]}{suffix}，'
-                        f'消耗 {summary["fuel"]} 燃料。'), timeout=20)
             except CharacterError:
                 pass
-            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
-                logging.info('Alchemy farming DM could not be delivered for guild %s user %s',
-                             guild_id, user_id)
         for guild_id, user_id, location_id, plant_id, planted_at in self.farming.notifications_due():
             if not self.farming.reserve_notification(guild_id, user_id, location_id):
                 continue

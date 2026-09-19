@@ -723,11 +723,6 @@ class RaidService:
                                settings.max_participants)
                 alchemy.finish_signup(raid['guild_id'], user_id, raid['id'], receipt['fuel'])
                 joined.append(user_id)
-                try:
-                    await member.send(f'煉金人偶已替你報名【{monster_name(raid["monster"])}】，'
-                                      f'消耗 {receipt["fuel"]} 燃料。')
-                except discord.HTTPException:
-                    pass
             except CharacterError:
                 if receipt and receipt['status'] == 'reserved':
                     alchemy.cancel_signup(raid['guild_id'], user_id, raid['id'])

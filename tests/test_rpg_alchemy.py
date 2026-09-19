@@ -407,12 +407,12 @@ class AlchemyDollTests(unittest.TestCase):
         cost = operation_fuel_cost(body)
         with self.store.db:
             self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
-                                  'WHERE guild_id=1 AND user_id=10', (cost * 2,))
+                                  'WHERE guild_id=1 AND user_id=10', (cost * 6,))
 
         self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:first', now=1))
         self.assertEqual(self.alchemy.fuel_alerts_due(), [])
         self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:second', now=2))
-        self.assertEqual(self.alchemy.fuel_alerts_due(), [(1, 10, 0, cost)])
+        self.assertEqual(self.alchemy.fuel_alerts_due(), [(1, 10, cost * 4, cost)])
         self.assertTrue(self.alchemy.reserve_fuel_alert(1, 10))
         self.assertFalse(self.alchemy.reserve_fuel_alert(1, 10))
         self.assertEqual(self.alchemy.fuel_alerts_due(), [])
@@ -422,7 +422,7 @@ class AlchemyDollTests(unittest.TestCase):
         self.characters.grant_item(1, 10, 'farming:wheat', quantity)
         self.alchemy.convert_fuel(1, 10, 'farming:wheat', quantity)
         self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:third', now=3))
-        remaining = per_item * quantity - cost
+        remaining = cost * 3 + per_item * quantity
         self.assertEqual(self.alchemy.fuel_alerts_due(), [(1, 10, remaining, cost)])
 
     def test_life_automation_collection_and_restart_cost_one_operation(self):

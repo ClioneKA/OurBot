@@ -1,5 +1,6 @@
 import random
 import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
@@ -568,6 +569,33 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         saved = load_total_battle(self.rest.get(room['id'])['battle'])
         self.assertEqual(saved.auto_players, set())
         self.assertEqual(saved.waiting_player_ids(), {10, 11, 12})
+
+    async def test_all_auto_manual_battle_advances_before_deadline(self):
+        participants = [WitchRestRulesTests.participant(user_id, attack=100)
+                        for user_id in (10, 11, 12)]
+        room = self.rest.create_room(1, 10, 'ema', 100, practice=True)
+        self.rest.change_member(room['id'], 11, 80)
+        self.rest.change_member(room['id'], 12, 80)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        room = self.rest.start_room(room['id'], 10, participants)
+        battle = manual_battle_from_participants(participants, 'ema', 100, seed=7)
+        for fighter in battle.living(0):
+            fighter.hp = fighter.stats['HP'] = 1_000_000
+            battle.enable_auto(fighter.user_id)
+        room.update(boss='魔女試煉', battle=dump_total_battle(battle),
+                    round_deadline=time.time() + 120, action_drafts={}, surrender_votes=[])
+        self.rest.save(room)
+        self.bot.channels[self.thread.id] = self.thread
+
+        with patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            await self.service.tick()
+            await self.service.tick()
+
+        saved = self.rest.get(room['id'])
+        battle = load_total_battle(saved['battle'])
+        self.assertEqual(battle.round, 2)
+        self.assertEqual(battle.auto_players, {10, 11, 12})
+        self.assertGreater(saved['round_deadline'], time.time())
 
     async def test_offline_players_still_receive_victory_rewards(self):
         Characters(self.store, SimpleNamespace(stage_levels=(1, 10, 20, 50)))
