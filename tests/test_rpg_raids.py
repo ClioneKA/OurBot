@@ -147,7 +147,10 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(raid['preserve_schedule'])
             self.assertEqual(service.repo.next_at(3), 12345)
             self.assertEqual(self.characters.inventory_counts(1, 1).get('paint:set', 0), 0)
-            service.apply_alchemy_signups.assert_awaited_once_with(raid, channel)
+            service.apply_alchemy_signups.assert_awaited_once()
+            signup_raid, signup_channel = service.apply_alchemy_signups.await_args.args
+            self.assertEqual(signup_raid['id'], raid['id'])
+            self.assertIs(signup_channel, channel)
             self.characters.grant_item(1, 1, 'paint:set')
             with self.assertRaises(CharacterError):
                 await service.summon_noah(channel.guild, user)
@@ -174,6 +177,47 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.characters.inventory_counts(1, 1)['paint:set'], 1)
         self.assertFalse(any(raid['status'] in ('posting', 'lobby', 'running')
                              for raid in service.repo.pending()))
+        await service.close()
+
+    async def test_noah_auto_signup_failure_keeps_published_lobby_startable(self):
+        class FakeGuild:
+            id = 1
+            unavailable = False
+
+            @staticmethod
+            def get_member(user_id):
+                return SimpleNamespace(id=user_id, display_name='玩家', bot=False)
+
+        class FakeChannel:
+            id = 3
+            mention = '<#3>'
+            guild = FakeGuild()
+
+        message = SimpleNamespace(id=9, edit=AsyncMock())
+        channel = FakeChannel()
+        channel.send = AsyncMock(return_value=message)
+        channel.get_partial_message = lambda _message_id: message
+        self.cog.bot.get_channel = lambda cid: channel if cid == 3 else None
+        self.store.award_voice([(1, 1, level_floor(30))])
+        self.characters.grant_item(1, 1, 'paint:set')
+        with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2',
+                                       'RPG_MID_RAID_CHANNEL_IDS': '3'}):
+            service = RaidService(self.cog)
+        service.notifications.ensure = AsyncMock(return_value=None)
+        service.apply_alchemy_signups = AsyncMock(side_effect=RuntimeError('automation failed'))
+        with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
+                patch('core.rpg_raids.random.choice', return_value='blue'), \
+                patch('core.rpg_raids.logger.exception') as logged:
+            _, _, raid = await service.summon_noah(channel.guild,
+                                                   SimpleNamespace(id=1, bot=False))
+        self.assertEqual(self.characters.inventory_counts(1, 1).get('paint:set', 0), 0)
+        self.assertEqual(self.repo.get(raid['id'])['status'], 'lobby')
+        logged.assert_called_once()
+
+        await service.advance(self.repo.get(raid['id']), channel, raid['deadline'])
+        started = self.repo.get(raid['id'])
+        self.assertEqual(started['status'], 'running')
+        self.assertEqual([participant['id'] for participant in started['participants']], [1])
         await service.close()
 
     async def test_mid_tier_channel_pool_rewards_and_fixed_paint_drop(self):

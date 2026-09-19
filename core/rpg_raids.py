@@ -864,10 +864,19 @@ class RaidService:
                                                                                  roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
-            joined = await self.apply_alchemy_signups(raid, channel)
+            joined = []
+            try:
+                joined = await self.apply_alchemy_signups(raid, channel)
+            except Exception:
+                # The announcement is already durable.  Optional doll automation
+                # must never turn a visible lobby into a cancelled orphan.
+                logger.exception('Alchemy auto-signup failed for paint-set raid %s', raid['id'])
+            raid = self.repo.get(raid['id'])
             if joined:
-                raid = self.repo.get(raid['id'])
-                await message.edit(embed=self.lobby_embed(raid), view=self.signup(raid))
+                try:
+                    await message.edit(embed=self.lobby_embed(raid), view=self.signup(raid))
+                except discord.HTTPException:
+                    logger.exception('Paint-set raid roster refresh failed: %s', raid['id'])
             return channel, message, raid
         except (Exception, asyncio.CancelledError):
             if consumed:

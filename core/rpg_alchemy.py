@@ -75,8 +75,8 @@ BODY_ACCEL_GOLD_PER_HOUR = 500
 FUEL_CAPACITY = 1000
 
 
-def raid_automation_pool(raid):
-    """Apply mid-tier automation filters to paint-set Noah summons."""
+def raid_signup_pool(raid):
+    """Apply mid-tier signup filters to paint-set Noah summons."""
     return 'mid' if raid.get('pool') == 'special' else raid.get('pool')
 
 
@@ -784,7 +784,7 @@ class AlchemyDolls:
         return bool(changed.rowcount)
 
     def auto_signup_candidates(self, raid):
-        pool = raid_automation_pool(raid)
+        pool = raid_signup_pool(raid)
         if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
             return []
         threshold = {'regular': 19, 'mid': 70, 'high': 122}[pool]
@@ -809,7 +809,7 @@ class AlchemyDolls:
 
     def auto_cooking_candidates(self, raid, provisions, now=None):
         now = time.time() if now is None else now
-        pool = raid_automation_pool(raid)
+        pool = raid.get('pool')
         if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
             return []
         result = []
@@ -1011,4 +1011,4 @@ __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAIL
            'body_acceleration_cost', 'fuel_value', 'fuel_discount', 'operation_fuel_cost',
            'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
            'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work',
-           'raid_automation_pool']
+           'raid_signup_pool']
