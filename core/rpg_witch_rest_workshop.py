@@ -65,9 +65,10 @@ class EquipmentSelect(discord.ui.Select):
             for item in equipment[:25]])
 
     async def callback(self, interaction):
-        self.view.selected = int(self.values[0])
-        self.view.rebuild()
-        await interaction.response.edit_message(embed=self.view.embed(), view=self.view)
+        view = self.view
+        view.selected = int(self.values[0])
+        view.rebuild()
+        await interaction.response.edit_message(embed=view.embed(), view=view)
 
 
 class DirectAffixModal(discord.ui.Modal, title='使用定向詞條記憶'):
