@@ -292,6 +292,7 @@ class TotalRaidBattle(Battle):
                 if self.check_end():
                     break
                 continue
+            ema_suit_guard_was_active = self._ema_suit_guard_active(actor)
             if actor.team == 0:
                 if choices[actor.user_id].action != ACTION_CANVAS:
                     self._resolve_player(actor, choices[actor.user_id])
@@ -304,6 +305,7 @@ class TotalRaidBattle(Battle):
                     self._resolve_noah(actor, intent)
             else:
                 self.act(actor)
+            self._finish_actor_action(actor, ema_suit_guard_was_active)
             if self.check_end():
                 break
         if not self.result:
@@ -319,6 +321,7 @@ class TotalRaidBattle(Battle):
                 self._prepare_noah_intent()
         if not self.result and self.round >= self.max_rounds:
             self.result = '平手（達回合上限）'
+        self._record_round_end_hp()
         self.mechanics['last_round_log'] = self.log[round_log_start:]
         return self.result
 
@@ -330,21 +333,14 @@ class TotalRaidBattle(Battle):
         if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
             actor.status_stacks.pop('corruption', None)
             damage = max(1, actor.stats['HP'] * 12 // 100)
-            actual = min(actor.hp, damage)
-            actor.hp -= actual
-            actor.combat_stats['damage_taken'] += actual
-            if actual and actor.hp == 0:
-                actor.combat_stats['deaths'] += 1
-            self.log.append(f'{actor.name} 的【腐敗爆裂】：自身損失 {actual} HP，腐敗歸零。')
+            actual, _, shared = self.apply_damage(actor, damage)
+            self.log.append(
+                f'{actor.name} 的【腐敗爆裂】：自身損失 {actual + shared} HP，腐敗歸零。')
             self.maybe_eat(actor)
             for ally in [fighter for fighter in self.living(0) if fighter is not actor]:
                 splash = max(1, ally.stats['HP'] * 3 // 100)
-                taken = min(ally.hp, splash)
-                ally.hp -= taken
-                ally.combat_stats['damage_taken'] += taken
-                if taken and ally.hp == 0:
-                    ally.combat_stats['deaths'] += 1
-                self.log.append(f'{ally.name} 受到腐敗波及，損失 {taken} HP。')
+                taken, _, shared = self.apply_damage(ally, splash)
+                self.log.append(f'{ally.name} 受到腐敗波及，損失 {taken + shared} HP。')
                 self.maybe_eat(ally)
             if actor.hp <= 0:
                 return False
@@ -352,18 +348,17 @@ class TotalRaidBattle(Battle):
             return False
         if actor.has('poison', self.round):
             damage = max(1, actor.stats['HP'] // (20 if actor.team == 0 else 50))
-            actual = min(actor.hp, damage)
-            actor.hp -= actual
-            actor.combat_stats['damage_taken'] += actual
+            actual, partner, partner_actual = self.apply_damage(actor, damage)
+            total_damage = actual + partner_actual
             source = self.effect_source(actor, 'poison')
             if source is not None and source is not actor:
-                source.combat_stats['damage_dealt'] += actual
-                source.combat_stats['support_damage'] += actual
-            if actual and actor.hp == 0:
-                actor.combat_stats['deaths'] += 1
-                if source is not None and source is not actor:
-                    source.combat_stats['knockouts'] += 1
-            self.log.append(f'{actor.name} 中毒，損失 {damage} HP')
+                source.combat_stats['damage_dealt'] += total_damage
+                source.combat_stats['support_damage'] += total_damage
+                source.combat_stats['knockouts'] += int(actual and actor.hp == 0)
+                if partner is not None:
+                    source.combat_stats['knockouts'] += int(
+                        partner_actual and partner.hp == 0)
+            self.log.append(f'{actor.name} 中毒，損失 {total_damage} HP')
             self.maybe_eat(actor)
             if actor.hp <= 0:
                 return False

@@ -775,6 +775,21 @@ class Battle:
             percent -= 25
         return max(0, 100 + percent) / 100
 
+    @staticmethod
+    def _ema_suit_guard_active(actor):
+        return bool(actor.status_stacks.get('witch_ema_suit_guard'))
+
+    @staticmethod
+    def _finish_actor_action(actor, ema_suit_guard_was_active=False):
+        """Expire Ema's suit guard after the wearer's next completed action."""
+        if ema_suit_guard_was_active:
+            actor.status_stacks.pop('witch_ema_suit_guard', None)
+
+    def _record_round_end_hp(self):
+        for fighter in self.living(0):
+            if fighter.status_stacks.get('witch_hiro_suit'):
+                fighter.passive_state['witch_hiro_suit_previous_hp'] = fighter.hp
+
     def healing_done_multiplier(self, actor):
         return 1.0
 
@@ -793,6 +808,11 @@ class Battle:
                        critical_hits=0,
                        cleansed=0, hymn_bless=False, suppress_insight=False,
                        chain_broken=set())
+        if damaging and actor.status_stacks.get('witch_ema_weapon'):
+            context['witch_ema_weapon_targets'] = {
+                id(enemy) for enemy in self.living(1 - actor.team)
+                if enemy.hp * 100 <= enemy.stats['HP'] * 35
+            }
         state = actor.passive_state
 
         def crystal(effect_name):
@@ -1229,6 +1249,8 @@ class Battle:
         def apply_one(victim, requested):
             before = victim.hp
             requested = maze_traits.before_damage(self, victim, requested, direct)
+            if victim.status_stacks.get('witch_ema_suit_guard'):
+                requested = int(requested * .75)
             crystal_shield = victim.status_stacks.get('crystal_shield', 0)
             if crystal_shield > 0:
                 absorbed = min(crystal_shield, max(0, int(requested)))
@@ -1259,12 +1281,39 @@ class Battle:
                 actual = max(0, before - 1)
                 victim.effects['fortune_judgement_used'] = True
                 self.log.append(f'{victim.name} 的【審判】生效，在致死傷害中保留 1 HP。')
+            if (direct and actual >= before and before > 0
+                    and before * 100 > victim.stats['HP'] * 35
+                    and victim.status_stacks.get('witch_hiro_accessory')
+                    and not victim.status_stacks.get('witch_hiro_accessory_used')):
+                actual = max(0, before - 1)
+                victim.status_stacks['witch_hiro_accessory_used'] = 1
+                self.log.append(f'{victim.name} 的【黎明時計】保留 1 HP。')
+            if (actual >= before and before > 0
+                    and victim.status_stacks.get('witch_ema_suit')
+                    and not victim.status_stacks.get('witch_ema_suit_used')):
+                actual = max(0, before - 1)
+                victim.status_stacks['witch_ema_suit_used'] = 1
+                victim.status_stacks['witch_ema_suit_guard'] = 1
+                self.log.append(f'{victim.name} 的【絕不放棄】保留 1 HP，至下次行動結束前受到傷害 -25%。')
             actual = maze_traits.survive(self, victim, actual, direct)
             from core import rpg_witch_embroideries
             actual = rpg_witch_embroideries.survive(self, victim, actual, direct)
             victim.hp -= actual
             maze_traits.after_damage(self, victim)
             victim.combat_stats['damage_taken'] += actual
+            if (before * 100 > victim.stats['HP'] * 40
+                    and victim.hp * 100 <= victim.stats['HP'] * 40
+                    and victim.status_stacks.get('witch_hiro_suit')
+                    and not victim.status_stacks.get('witch_hiro_suit_used')):
+                victim.status_stacks['witch_hiro_suit_used'] = 1
+                previous_hp = victim.passive_state.get(
+                    'witch_hiro_suit_previous_hp', victim.stats['HP'])
+                restored = self.restore(victim, min(
+                    max(0, previous_hp - victim.hp), victim.stats['HP'] * 15 // 100))
+                cleansed = self.clear_negative_effects(victim, 1)
+                cleanse_text = '，並解除 1 個負面狀態' if cleansed else ''
+                self.log.append(
+                    f'{victim.name} 的【昨日殘像】恢復 {restored} HP{cleanse_text}。')
             if actual and victim.hp == 0:
                 victim.combat_stats['deaths'] += 1
             if (before * 100 > victim.stats['HP'] * 40
@@ -1593,6 +1642,11 @@ class Battle:
         embroidery_multiplier, embroidery_accuracy = rpg_witch_embroideries.direct_modifiers(
             self, actor, target, context, attack_scope)
         passive_multiplier *= embroidery_multiplier
+        if context and id(target) in context.get('witch_ema_weapon_targets', ()):
+            passive_multiplier *= 1.24
+        if (actor.status_stacks.get('witch_ema_accessory')
+                and target.hp * 100 < target.stats['HP'] * 30):
+            passive_multiplier *= 1.08
         force_hit = bool(context and context.get('force_hit'))
         tempo = None
         if passive_trigger and self.passive(actor, '弓兵', 1):
@@ -2467,6 +2521,23 @@ class Battle:
                             f'{actor.first_skill_cooldown_reduction} 回合。')
         # The casting round counts toward cooldown; CD 1 is ready next round.
         actor.ready[rule.slot] = self.round + cooldown
+        if actor.status_stacks.get('witch_hiro_weapon'):
+            state = actor.passive_state
+            casts = state.get('witch_hiro_weapon_casts', 0) + 1
+            state['witch_hiro_weapon_casts'] = casts
+            procs = state.get('witch_hiro_weapon_procs', 0)
+            if casts % 2 == 0 and procs < 6:
+                state['witch_hiro_weapon_procs'] = procs + 1
+                shortened = []
+                for other_rule in actor.rules:
+                    if (other_rule.enabled and other_rule.slot != rule.slot
+                            and actor.ready.get(other_rule.slot, 0) > self.round):
+                        actor.ready[other_rule.slot] = max(
+                            self.round + 1, actor.ready[other_rule.slot] - 1)
+                        shortened.append(rule_skill(actor.job, other_rule).name)
+                detail = f'，使【{"、".join(shortened)}】冷卻縮短 1 回合' if shortened else ''
+                self.log.append(
+                    f'{actor.name} 的【黎明回刻】第 {procs + 1}/6 次生效{detail}。')
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
         potency = skill.potency_percent
@@ -2703,7 +2774,9 @@ class Battle:
                 actor.effects.pop('stun', None)
                 self.log.append(f'{actor.name} 因暈眩跳過本次行動。')
                 continue
+            ema_suit_guard_was_active = self._ema_suit_guard_active(actor)
             self.act(actor)
+            self._finish_actor_action(actor, ema_suit_guard_was_active)
             if self.check_end():
                 break
         self._maze_final_round_end()
@@ -2728,6 +2801,7 @@ class Battle:
                     self.log.append(f'{fighter.name} 的【{fighter.food_name}】緩補恢復 {amount} HP。')
         if not self.result and self.round >= self.max_rounds:
             self.result = '平手（達回合上限）'
+        self._record_round_end_hp()
 
 
 
@@ -2762,6 +2836,24 @@ def participant_fighters(participants, balance_version=3):
                         user_id=p.get('id')) for p in participants]
     for fighter, participant in zip(fighters, participants):
         fighter.doll_support = participant.get('doll_support')
+        equipped = participant['state'].get('equipped', {}).values()
+        if any(item_id.startswith('witch_rest:ema:t') and item_id.endswith(':weapon')
+               for item_id in equipped):
+            fighter.status_stacks['witch_ema_weapon'] = 1
+        if any(item_id.startswith('witch_rest:ema:t') and item_id.endswith(':suit')
+               for item_id in equipped):
+            fighter.status_stacks['witch_ema_suit'] = 1
+        if any(item_id.startswith('witch_rest:hiro:t') and item_id.endswith(':weapon')
+               for item_id in equipped):
+            fighter.status_stacks['witch_hiro_weapon'] = 1
+        if any(item_id.startswith('witch_rest:hiro:t') and item_id.endswith(':suit')
+               for item_id in equipped):
+            fighter.status_stacks['witch_hiro_suit'] = 1
+            fighter.passive_state['witch_hiro_suit_previous_hp'] = fighter.hp
+        if 'witch_rest:ema:accessory' in equipped:
+            fighter.status_stacks['witch_ema_accessory'] = 1
+        if 'witch_rest:hiro:accessory' in equipped:
+            fighter.status_stacks['witch_hiro_accessory'] = 1
         for embroidery in participant['state'].get('embroideries', ()):
             fighter.status_stacks['embroidery_' + embroidery] = 1
         for crystal in participant['state'].get('crystal_effects', ()):

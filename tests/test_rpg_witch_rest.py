@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import discord
 
 from core.rpg import RPGStore
+from core.rpg_battle import rule_skill
 from core.rpg_character import Characters, ITEMS, add_owned_item
 from core.rpg_witch_rest import (
     ENTRY_PROOFS,
@@ -96,6 +97,171 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertIsInstance(loaded, WitchRestAutoBattle)
         self.assertEqual(loaded.round, 1)
         self.assertEqual(loaded.rng.getstate(), battle.rng.getstate())
+
+    def test_ema_suit_survives_fatal_damage_once_and_guards_until_next_action(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['套裝'] = equipment_id(
+            'ema', '裝甲步兵', 'suit', 80)
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player = battle.living(0)[0]
+
+        actual, _, _ = battle.apply_damage(player, player.hp + 1, direct=True)
+
+        self.assertEqual(actual, player.stats['HP'] - 1)
+        self.assertEqual(player.hp, 1)
+        self.assertTrue(player.status_stacks['witch_ema_suit_used'])
+        self.assertTrue(player.status_stacks['witch_ema_suit_guard'])
+        self.assertTrue(any('【絕不放棄】保留 1 HP' in line for line in battle.log))
+
+        player.hp = 1_000
+        actual, _, _ = battle.apply_damage(player, 400, direct=True)
+        self.assertEqual(actual, 300)
+
+        battle.act(player)
+        battle._finish_actor_action(player, ema_suit_guard_was_active=True)
+        self.assertNotIn('witch_ema_suit_guard', player.status_stacks)
+
+        player.hp = 100
+        actual, _, _ = battle.apply_damage(player, 200, direct=True)
+        self.assertEqual(actual, 100)
+        self.assertEqual(player.hp, 0)
+
+    def test_non_witch_suit_does_not_grant_never_give_up(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['套裝'] = 'test'
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player = battle.living(0)[0]
+
+        actual, _, _ = battle.apply_damage(player, player.hp + 1, direct=True)
+
+        self.assertEqual(actual, player.stats['HP'])
+        self.assertEqual(player.hp, 0)
+
+    def test_t80_and_t90_witch_weapons_and_suits_enable_their_effects(self):
+        for tier in (80, 90):
+            for witch_id in ('ema', 'hiro'):
+                participant = self.participant(attack=100)
+                participant['state']['equipped'] = {
+                    '武器': equipment_id(witch_id, '裝甲步兵', 'weapon', tier),
+                    '套裝': equipment_id(witch_id, '裝甲步兵', 'suit', tier),
+                }
+                battle = auto_battle_from_participants(
+                    [participant], 'ema', 99, seed=7)
+                player = battle.living(0)[0]
+
+                self.assertTrue(player.status_stacks[f'witch_{witch_id}_weapon'])
+                self.assertTrue(player.status_stacks[f'witch_{witch_id}_suit'])
+
+    def test_ema_weapon_boosts_direct_damage_against_low_hp_target(self):
+        participant = self.participant(attack=1_000)
+        participant['state']['equipped']['武器'] = equipment_id(
+            'ema', '裝甲步兵', 'weapon', 80)
+        boosted = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        boosted_player, boosted_boss = boosted.living(0)[0], boosted.living(1)[0]
+        boosted_boss.hp = boosted_boss.stats['HP'] * 35 // 100
+        before = boosted_boss.hp
+        boosted.basic_attack(boosted_player, boosted_boss)
+        boosted_damage = before - boosted_boss.hp
+
+        participant['state']['equipped']['武器'] = 'test'
+        normal = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        normal_player, normal_boss = normal.living(0)[0], normal.living(1)[0]
+        normal_boss.hp = normal_boss.stats['HP'] * 35 // 100
+        before = normal_boss.hp
+        normal.basic_attack(normal_player, normal_boss)
+        normal_damage = before - normal_boss.hp
+
+        self.assertEqual(boosted_damage, int(normal_damage * 1.24))
+
+    def test_hiro_weapon_reduces_other_cooldowns_every_second_skill(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['武器'] = equipment_id(
+            'hiro', '裝甲步兵', 'weapon', 80)
+        participant['rules'] = [
+            {'slot': 1, 'priority': 1, 'enabled': True, 'condition': 'always',
+             'target': 'lowest', 'skill_id': 1},
+            {'slot': 2, 'priority': 2, 'enabled': True, 'condition': 'always',
+             'target': 'lowest', 'skill_id': 2},
+            {'slot': 3, 'priority': 3, 'enabled': True, 'condition': 'always',
+             'target': 'lowest', 'skill_id': 3},
+        ]
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player, boss = battle.living(0)[0], battle.living(1)[0]
+        player.ready.update({2: 5, 3: 6})
+        rule = player.rules[0]
+
+        for turn in (1, 2):
+            battle.round = turn
+            battle.use_skill(player, rule, rule_skill(player.job, rule), boss)
+
+        self.assertEqual(player.ready[2], 4)
+        self.assertEqual(player.ready[3], 5)
+        self.assertEqual(player.passive_state['witch_hiro_weapon_procs'], 1)
+
+    def test_hiro_suit_restores_previous_round_hp_and_cleanses_once(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['套裝'] = equipment_id(
+            'hiro', '裝甲步兵', 'suit', 80)
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player = battle.living(0)[0]
+        player.passive_state['witch_hiro_suit_previous_hp'] = 8_000
+        player.hp = 5_000
+        player.effects['weak'] = 10
+
+        battle.apply_damage(player, 2_000, direct=True)
+
+        self.assertEqual(player.hp, 4_500)
+        self.assertNotIn('weak', player.effects)
+        self.assertTrue(player.status_stacks['witch_hiro_suit_used'])
+        battle.apply_damage(player, 1_000, direct=True)
+        self.assertEqual(player.hp, 3_500)
+
+    def test_ema_accessory_boosts_direct_damage_below_thirty_percent(self):
+        participant = self.participant(attack=1_000)
+        participant['state']['equipped']['飾品1'] = 'witch_rest:ema:accessory'
+        boosted = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        boosted_player, boosted_boss = boosted.living(0)[0], boosted.living(1)[0]
+        boosted_boss.hp = boosted_boss.stats['HP'] * 30 // 100 - 1
+        before = boosted_boss.hp
+        boosted.basic_attack(boosted_player, boosted_boss)
+        boosted_damage = before - boosted_boss.hp
+
+        participant['state']['equipped'].pop('飾品1')
+        normal = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        normal_player, normal_boss = normal.living(0)[0], normal.living(1)[0]
+        normal_boss.hp = normal_boss.stats['HP'] * 30 // 100 - 1
+        before = normal_boss.hp
+        normal.basic_attack(normal_player, normal_boss)
+        normal_damage = before - normal_boss.hp
+
+        self.assertEqual(boosted_damage, int(normal_damage * 1.08))
+
+    def test_hiro_accessory_survives_one_high_hp_fatal_direct_hit(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['飾品1'] = 'witch_rest:hiro:accessory'
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player = battle.living(0)[0]
+
+        actual, _, _ = battle.apply_damage(player, player.hp + 1, direct=True)
+
+        self.assertEqual(actual, player.stats['HP'] - 1)
+        self.assertEqual(player.hp, 1)
+        self.assertTrue(player.status_stacks['witch_hiro_accessory_used'])
+        player.hp = player.stats['HP']
+        battle.apply_damage(player, player.hp + 1, direct=True)
+        self.assertEqual(player.hp, 0)
+
+    def test_hiro_accessory_requires_direct_damage_above_thirty_five_percent(self):
+        participant = self.participant(attack=100)
+        participant['state']['equipped']['飾品1'] = 'witch_rest:hiro:accessory'
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        player = battle.living(0)[0]
+        player.hp = player.stats['HP'] * 35 // 100
+
+        battle.apply_damage(player, player.hp + 1, direct=True)
+
+        self.assertEqual(player.hp, 0)
+        self.assertNotIn('witch_hiro_accessory_used', player.status_stacks)
 
     def test_manual_stats_interpolate_approved_anchors(self):
         self.assertEqual(manual_stats('ema', 1000), (90_000, 1_625, 500))
