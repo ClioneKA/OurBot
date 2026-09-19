@@ -173,6 +173,14 @@ class TotalRaidBattle(Battle):
         self.choices[user_id] = choice
         return choice
 
+    def submit_doll(self, user_id, slot, target=None):
+        if self.result:
+            raise TotalRaidError('總力戰已經結束。')
+        try:
+            return super().submit_doll(user_id, slot, target)
+        except ValueError as exc:
+            raise TotalRaidError(str(exc)) from exc
+
     def submit_paint_gift(self, user_id, target):
         if self.noah_phase() != 2:
             raise TotalRaidError('只有第二階段可以給予顏料。')
@@ -275,6 +283,11 @@ class TotalRaidBattle(Battle):
         for actor in order:
             if actor.hp <= 0:
                 continue
+            if actor.team == 0:
+                choice = choices.get(actor.user_id)
+                self.activate_doll(actor, automatic=bool(choice and choice.automatic))
+                if self.check_end():
+                    break
             if not self._begin_actor_turn(actor):
                 if self.check_end():
                     break

@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from core.rpg_battle import Fighter, Rule, default_rules
+from core.rpg_battle import DOLL_SKILL_IDS, Fighter, Rule, default_rules
 from core.rpg_total_battle import (
     ACTION_ATTACK,
     ACTION_CANVAS,
@@ -27,6 +27,37 @@ def player(user_id, name=None, job='民兵', hp=300, attack=80, dex=30, rules=No
 
 
 class TotalRaidBattleTests(unittest.TestCase):
+    def test_doll_support_uses_rarity_charges_and_two_round_gap(self):
+        adventurer = player(1, attack=1)
+        adventurer.doll_support = {
+            'name': '測試人偶',
+            'stats': {'HP': 500, '攻擊': 100, '防禦': 50, '治療量': 50,
+                      '命中率': 200, '閃避率': 0, '暴擊率': 0},
+            'speed': 50,
+            'ready_round': 1,
+            'skills': [{
+                'slot': 1, 'key': 'power_strike', 'rarity': '傳說',
+                'skill_id': DOLL_SKILL_IDS['power_strike', '傳說'],
+                'condition': 'always', 'target': 'lowest',
+                'maximum': 3, 'remaining': 3,
+            }],
+        }
+        battle = training_dummy_battle([adventurer], seed=1, max_rounds=10)
+        target = battle.key(battle.fighters[-1])
+        battle.submit_doll(1, 1, target)
+        battle.submit(1, ACTION_ATTACK, target)
+        battle.resolve()
+        self.assertEqual(adventurer.doll_support['skills'][0]['remaining'], 2)
+        self.assertEqual(adventurer.doll_support['ready_round'], 4)
+        self.assertTrue(any('測試人偶 使用【傳說・動力重擊】' in line for line in battle.log))
+        with self.assertRaisesRegex(TotalRaidError, '冷卻'):
+            battle.submit_doll(1, 1, target)
+
+        loaded = load_total_battle(json.loads(json.dumps(dump_total_battle(battle))))
+        loaded_support = loaded.fighters[0].doll_support
+        self.assertEqual(loaded_support['skills'][0]['remaining'], 2)
+        self.assertEqual(loaded_support['ready_round'], 4)
+
     def test_noah_uses_fixed_stats_scaled_hp_and_thirty_round_limit(self):
         battle = noah_total_battle([player(index, hp=5000) for index in range(1, 7)], seed=1)
         noah = battle.noah()

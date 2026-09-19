@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from core.rpg import RPGStore, level_floor
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM,
                               RARITY_ORDER, body_acceleration_cost, fuel_value,
+                              fuel_discount, operation_fuel_cost,
                               life_skill_unlocks, material_profile, parse_stone,
                               stat_caps, stone_id)
 from core.rpg_character import Characters, CharacterError, ITEMS
@@ -113,7 +114,7 @@ class AlchemyDollTests(unittest.TestCase):
 
         asyncio.run(check())
 
-    def test_core_orientation_engraving_and_participant_snapshot(self):
+    def test_core_orientation_engraving_and_support_snapshot(self):
         body = self.make_body()
         self.characters.grant_item(1, 10, CORE_ITEM[1])
         core_id = self.alchemy.orient_core(1, 10, 1, '戰鬥')
@@ -126,22 +127,19 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(self.inventory()[skill_item], 1)
         with self.assertRaisesRegex(CharacterError, '不能重複'):
             self.alchemy.engrave(1, 10, core_id, 'combat', 2, skill_item)
-        self.alchemy.set_registered(1, 10, True)
-        participant = self.alchemy.participant(1, 10, '測試者')
-        self.assertTrue(participant['is_doll'])
-        self.assertEqual(participant['owner_id'], 10)
-        self.assertEqual(participant['state']['level'], body['tier'])
-        self.assertEqual(len(participant['rules']), 3)
-        self.assertIsNotNone(participant['rules'][0]['skill_id'])
-        self.assertIsNone(participant['rules'][1]['skill_id'])
+        support = self.alchemy.support(1, 10)
+        self.assertEqual(support['stats']['HP'], 50 + body['stats'][0] * 10)
+        self.assertEqual(len(support['skills']), 1)
+        self.assertEqual((support['skills'][0]['maximum'], support['skills'][0]['remaining']),
+                         (3, 3))
 
-        human = dict(participant)
-        human.update(id=99, is_doll=False, name='同能力真人')
+        human = dict(id=99, name='測試者', state=self.characters.snapshot(1, 10),
+                     rules=[], basic_target='lowest', doll_support=support)
         monster = prepare_monster({'kind': '巨獸', 'name': '測試怪物'}, '普通')
-        two_humans = raid_battle([human, dict(human, id=98)], monster, 1)
-        human_and_doll = raid_battle([human, participant], monster, 1)
-        self.assertEqual(two_humans.fighters[-1].stats['HP'],
-                         human_and_doll.fighters[-1].stats['HP'])
+        with_support = raid_battle([human], monster, 1)
+        without_support = raid_battle([{**human, 'doll_support': None}], monster, 1)
+        self.assertEqual(with_support.fighters[-1].stats['HP'],
+                         without_support.fighters[-1].stats['HP'])
 
     def test_gacha_pity_ten_pull_guarantee_and_powder(self):
         with self.store.db:
@@ -189,7 +187,7 @@ class AlchemyDollTests(unittest.TestCase):
         view = AlchemyView(cog, interaction)
         overview = view.embed()
         fields = {field.name: field.value for field in overview.fields}
-        self.assertIn('稀有・動力重擊｜128% 攻擊',
+        self.assertIn('稀有・動力重擊｜160% 攻擊',
                       fields['戰鬥技能石｜稀有度計算後'])
         expected_work = self.alchemy.life_skill(1, 10, 'fishing')['work']
         self.assertIn(f'史詩・自律釣魚｜工作力 {expected_work:,}',
@@ -199,7 +197,7 @@ class AlchemyDollTests(unittest.TestCase):
         view.page = 'gacha'
         self.assertIn('**目前金幣**\u30004,321', view.embed().description)
         self.assertEqual(combat_stone_effect('cleanse', '傳說', body),
-                         '移除全部負面狀態')
+                         '移除 3 個負面狀態')
         self.assertEqual(life_skill_unlocks('farming', 93), ('中庭花圃', '監獄菜園'))
         self.assertEqual(life_skill_unlocks('farming', 94),
                          ('中庭花圃', '監獄菜園', '廢棄溫室'))
@@ -216,7 +214,7 @@ class AlchemyDollTests(unittest.TestCase):
                               if getattr(child, 'label', None) == '刻入技能石')
         self.assertTrue(engrave_button.disabled)
         core_fields = {field.name: field.value for field in view.embed().fields}
-        self.assertIn('128% 攻擊', core_fields[f'核心 #{core_id}｜戰鬥迴路'])
+        self.assertIn('160% 攻擊', core_fields[f'核心 #{core_id}｜戰鬥迴路'])
         self.assertIn('稀有・動力重擊', core_fields['待刻印技能石'])
 
         legendary_life = stone_id('life', 'fishing', '傳說')
@@ -294,18 +292,49 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertNotIn(common, self.inventory())
         self.assertNotIn(rare, self.inventory())
 
+    def test_dismantle_core_turns_engraved_stones_into_powder(self):
+        self.make_body()
+        self.characters.grant_item(1, 10, CORE_ITEM[1])
+        core_id = self.alchemy.orient_core(1, 10, 1, '生活')
+        common = stone_id('life', 'fishing', '普通')
+        epic = stone_id('life', 'farming', '史詩')
+        self.characters.grant_item(1, 10, common)
+        self.characters.grant_item(1, 10, epic)
+        self.alchemy.engrave(1, 10, core_id, 'life', 1, common)
+        self.alchemy.engrave(1, 10, core_id, 'life', 2, epic)
+        result = self.alchemy.dismantle_core(1, 10, core_id)
+
+        self.assertEqual(result, {'stones': 2, 'powder': 11, 'equipped': True})
+        self.assertEqual(self.alchemy.cores(1, 10), [])
+        self.assertEqual(self.inventory()[POWDER_ITEM], 11)
+        with self.assertRaisesRegex(CharacterError, '找不到'):
+            self.alchemy.dismantle_core(1, 10, core_id)
+
     def test_fuel_conversion_uses_sell_value(self):
         self.characters.grant_item(1, 10, 'farming:wheat', 2)
         gained = self.alchemy.convert_fuel(1, 10, 'farming:wheat', 2)
         self.assertEqual(gained, fuel_value(ITEMS['farming:wheat']) * 2)
         self.assertEqual(self.alchemy.state(1, 10)['fuel'], gained)
         self.assertNotIn('farming:wheat', self.inventory())
+        per_item = fuel_value(ITEMS['farming:wheat'])
         with self.store.db:
-            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=1000 '
-                                  'WHERE guild_id=1 AND user_id=10')
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
+                                  'WHERE guild_id=1 AND user_id=10', (1000 - per_item,))
+        self.characters.grant_item(1, 10, 'farming:wheat', 2)
+        self.assertEqual(self.alchemy.convert_fuel(1, 10, 'farming:wheat', 2), per_item)
+        self.assertEqual(self.alchemy.state(1, 10)['fuel'], 1000)
+        self.assertNotIn('farming:wheat', self.inventory())
         self.characters.grant_item(1, 10, 'farming:wheat')
-        with self.assertRaisesRegex(CharacterError, '上限'):
+        with self.assertRaisesRegex(CharacterError, '已達上限'):
             self.alchemy.convert_fuel(1, 10, 'farming:wheat', 1)
+
+    def test_durability_uses_smooth_fuel_discount_capped_at_seventy_percent(self):
+        body = {'stats': [0, 0, 30, 0, 0]}
+        self.assertEqual(fuel_discount(0), 0)
+        self.assertEqual(fuel_discount(30), 23)
+        self.assertEqual(operation_fuel_cost(body), 77)
+        self.assertEqual(fuel_discount(234), 70)
+        self.assertEqual(fuel_discount(10000), 70)
 
     def test_life_automation_collection_and_restart_cost_one_operation(self):
         self.make_body()
@@ -353,13 +382,13 @@ class AlchemyDollTests(unittest.TestCase):
             farming, 1, 10, 'courtyard', 'potato', 0, now=crop['ready_at'])
         self.assertTrue(fish_result['restarted'])
         self.assertTrue(farm_result['replanted'])
-        self.assertEqual((fish_result['fuel'], farm_result['fuel']), (94, 94))
-        self.assertEqual(self.alchemy.state(1, 10)['fuel'], 212)
+        self.assertEqual((fish_result['fuel'], farm_result['fuel']), (77, 77))
+        self.assertEqual(self.alchemy.state(1, 10)['fuel'], 246)
         self.assertEqual(fishing.state(1, 10)['session']['status'], 'active')
         self.assertEqual(farming.state(1, 10)['sessions']['courtyard']['status'], 'active')
 
         with self.store.db:
-            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=94 '
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=77 '
                                   'WHERE guild_id=1 AND user_id=10')
         fish = fishing.state(1, 10)['session']
         fish_result = self.alchemy.auto_fish(
@@ -369,7 +398,7 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(fishing.state(1, 10)['session']['status'], 'active')
 
         with self.store.db:
-            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=94 '
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=77 '
                                   'WHERE guild_id=1 AND user_id=10')
         crop = farming.state(1, 10)['sessions']['courtyard']
         farm_result = self.alchemy.auto_farm(
@@ -380,7 +409,7 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(farming.state(1, 10)['sessions']['courtyard']['status'], 'active')
 
         with self.store.db:
-            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=93 '
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=76 '
                                   'WHERE guild_id=1 AND user_id=10')
         crop = farming.state(1, 10)['sessions']['courtyard']
         with self.assertRaisesRegex(CharacterError, '燃料不足'):

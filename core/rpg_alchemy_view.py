@@ -5,10 +5,12 @@ import time
 
 import discord
 
-from core.rpg_alchemy import (COMBAT_SKILLS, COMBAT_SKILL_DETAILS, CORE_ITEM, LIFE_SKILLS,
+from core.rpg_alchemy import (COMBAT_RARITY_STATS, COMBAT_SKILLS, COMBAT_SKILL_DETAILS,
+                              CORE_ITEM, LIFE_SKILLS,
                               LIFE_WORK_UNLOCKS, RARITIES,
                               STAT_NAMES, FUEL_CAPACITY, body_acceleration_cost,
-                              fuel_value, life_skill_unlocks, life_work,
+                              fuel_discount, fuel_value, life_skill_unlocks, life_work,
+                              operation_fuel_cost,
                               material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
@@ -17,7 +19,8 @@ from core.rpg_menu import navigate
 
 def combat_stone_effect(skill_key, rarity, body):
     """Describe a combat stone after applying rarity and installed body stats."""
-    multiplier = RARITIES[rarity][1]
+    rarity_stats = COMBAT_RARITY_STATS[rarity]
+    multiplier = rarity_stats['multiplier']
     stats = body['stats'] if body else (0,) * 5
     structure, power, durability, _, spirit = stats
     attack, defense = power * 3, durability * 3
@@ -32,11 +35,11 @@ def combat_stone_effect(skill_key, rarity, body):
     if skill_key == 'overload':
         return f'{percent(220)}% 攻擊（基礎 {int(attack * 2.2 * multiplier):,}）'
     if skill_key == 'counter':
-        return f'反擊 {percent(100)}% 攻擊'
+        return f'指定隊友誘敵，反擊 {percent(100)}% 人偶攻擊'
     if skill_key == 'barrier':
         return f'全隊防禦 +{max(1, int(defense * multiplier)):,}'
     if skill_key == 'rally':
-        return f'自身恢復 {int((hp // 2) * multiplier):,} HP'
+        return f'修復主人 {int((hp // 2) * multiplier):,} HP'
     if skill_key == 'repair':
         return f'恢復 {int(healing * multiplier):,} HP'
     if skill_key == 'group_repair':
@@ -44,9 +47,7 @@ def combat_stone_effect(skill_key, rarity, body):
     if skill_key == 'amplify':
         return f'攻擊 +{percent(40)}%'
     if skill_key == 'cleanse':
-        count = {'普通': '1', '稀有': '2', '史詩': '3', '傳說': '全部'}[rarity]
-        return ('移除全部負面狀態' if count == '全部'
-                else f'移除 {count} 個負面狀態')
+        return f'移除 {rarity_stats["cleanse"]} 個負面狀態'
     if skill_key == 'interrupt':
         return f'{percent(120)}% 攻擊，命中後打斷'
     return f'效果 {multiplier:.0%}'
@@ -59,6 +60,19 @@ def life_work_state(skill_key, rarity, body):
         return '無素體，無法計算'
     unlocks = '、'.join(life_skill_unlocks(skill_key, work)) or '尚無'
     return f'工作力 {work:,}｜解鎖：{unlocks}'
+
+
+def duration_text(seconds):
+    if not seconds:
+        return '0 小時'
+    if seconds % 86400 == 0:
+        return f'{seconds // 86400} 天'
+    if seconds >= 86400:
+        days, remainder = divmod(seconds, 86400)
+        return f'{days} 天 {remainder // 3600:g} 小時'
+    if seconds % 3600 == 0:
+        return f'{seconds // 3600} 小時'
+    return f'{seconds / 3600:g} 小時'
 
 
 class RenameDollModal(discord.ui.Modal, title='替煉金人偶命名'):
@@ -104,6 +118,7 @@ class AlchemyView(discord.ui.View):
         self.fuel_quantity = 1
         self.decompose_items = []
         self.confirm_decompose = False
+        self.confirm_core_dismantle = False
         self.confirm_fuel = False
         self.trigger_skill = 'cooking'
         self.exchange_domain = 'combat'
@@ -137,8 +152,6 @@ class AlchemyView(discord.ui.View):
                                   ('自動化設定', 'automation')):
                 self.button(label, action, 0)
             self.button('命名', 'rename', 1)
-            self.button('取消補位' if state['registered'] else '登錄討伐補位',
-                        'toggle_register', 1, style=discord.ButtonStyle.primary)
             self.button('分享人偶配置', 'share', 1)
             self.button('能力說明', 'stats', 1)
         elif self.page == 'automation':
@@ -208,7 +221,10 @@ class AlchemyView(discord.ui.View):
                 self.button('裝備核心', 'equip_core', 1)
                 self.button('刻入技能石', 'engrave', 1,
                             disabled=not self.slot or not self.item_id or same_stone)
-                self.button('分解技能石', 'decompose', 1, disabled=not self.item_id)
+                dismantle_label = ('確認拆解核心' if self.confirm_core_dismantle
+                                   else '拆解核心')
+                self.button(dismantle_label, 'dismantle_core', 1,
+                            style=discord.ButtonStyle.danger)
                 slots = []
                 for domain, skills in chosen['skills'].items():
                     for index, saved in enumerate(skills, 1):
@@ -286,18 +302,23 @@ class AlchemyView(discord.ui.View):
                     discord.SelectOption(label='沒有可轉換素材', value='empty')]))
             owned = inventory.get(self.fuel_item_id, 0)
             per_item = fuel_value(ITEMS[self.fuel_item_id]) if self.fuel_item_id in ITEMS else 0
-            maximum = min(owned, (FUEL_CAPACITY - state['fuel']) // per_item) if per_item else 0
+            maximum = owned if per_item else 0
+            remaining_capacity = max(0, FUEL_CAPACITY - state['fuel'])
             quantities = sorted({amount for amount in (1, 5, 10, maximum) if amount <= maximum})
             if self.fuel_quantity not in quantities:
                 self.fuel_quantity = quantities[0] if quantities else 1
             self.add_item(PanelSelect('fuel_quantity', row=1, placeholder='選擇轉換數量',
                 disabled=not quantities, options=[discord.SelectOption(
-                    label=('最大可轉換數量' if amount == maximum else f'{amount} 個'),
-                    value=str(amount), description=f'取得 {amount * per_item} 燃料',
+                    label=('全部持有數量' if amount == maximum else f'{amount} 個'),
+                    value=str(amount), description=(
+                        f'實際增加 {min(amount * per_item, remaining_capacity)} 燃料' +
+                        (f'｜溢出 {amount * per_item - remaining_capacity}'
+                         if amount * per_item > remaining_capacity else ''))[:100],
                     default=amount == self.fuel_quantity) for amount in quantities] or [
                         discord.SelectOption(label='無可轉換數量', value='empty')]))
             label = '確認不可逆轉換' if self.confirm_fuel else f'轉換 {self.fuel_quantity} 個'
-            self.button(label, 'convert_fuel', 2, disabled=not self.fuel_item_id or not maximum,
+            self.button(label, 'convert_fuel', 2,
+                        disabled=(not self.fuel_item_id or not maximum or not remaining_capacity),
                         style=discord.ButtonStyle.danger if self.confirm_fuel else discord.ButtonStyle.secondary)
         elif self.page == 'triggers':
             self.add_item(PanelSelect('trigger_skill', row=0, placeholder='選擇要設定的技能', options=[
@@ -337,17 +358,18 @@ class AlchemyView(discord.ui.View):
                          f'Lv.{core["level"]} {core["orientation"]}｜核心 #{core["id"]}')
             embed = discord.Embed(title=f'煉金人偶｜{state["name"]}', color=0xB8864B,
                 description=f'**素體**　{body_text}\n**思考核心**　{core_text}\n'
-                            f'**燃料**　{state["fuel"]:,}\n**討伐補位**　'
-                            f'{"已登錄" if state["registered"] else "未登錄"}')
+                            f'**燃料**　{state["fuel"]:,}\n'
+                            '**戰鬥支援**　參戰時自動攜帶，不占隊伍名額')
             if core:
                 combat_lines = []
                 for saved in core['skills']['combat']:
                     if saved:
                         result = (combat_stone_effect(saved['key'], saved['rarity'], body)
                                   if body else '需安裝素體')
+                        uses = COMBAT_RARITY_STATS[saved['rarity']]['uses']
                         combat_lines.append(
                             f'{saved["rarity"]}・{COMBAT_SKILLS[saved["key"]]}｜'
-                            f'{result}')
+                            f'{result}｜每場 {uses} 次')
                 life_lines = []
                 for saved in core['skills']['life']:
                     if saved:
@@ -371,7 +393,7 @@ class AlchemyView(discord.ui.View):
                             value='製作並安裝素體 → 定向並裝備思考核心 → '
                                   '取得技能石並刻入對應迴路。\n'
                                   '生活技能還需在「自動化設定」開啟；'
-                                  '戰鬥技能會在人偶補位討伐時使用。', inline=False)
+                                  '戰鬥技能可在戰鬥中有限次數發動。', inline=False)
         elif self.page == 'body':
             counts = Counter(self.materials)
             selection = '、'.join(f'{ITEMS[key].name}×{amount}' for key, amount in counts.items()) or '尚未選擇'
@@ -414,7 +436,8 @@ class AlchemyView(discord.ui.View):
                              f'{"【已裝備】" if saved["equipped"] else ""}｜已刻印 {len(skills)} 格')
             embed = discord.Embed(title='煉金人偶｜思考核心', color=0xB8864B,
                 description=('核心定向後會綁定，並決定戰鬥／生活刻印格數。'
-                             '先選核心、再選刻印格與對應技能石；覆蓋不返還舊石。\n\n'
+                             '先選核心、再選刻印格與對應技能石；覆蓋不返還舊石。'
+                             '拆解核心時，已刻印技能石會一併轉為鍊金粉塵。\n\n'
                              + ('\n'.join(lines) if lines else
                                 '尚無已定向核心。Lv.1 胚可用 15 枚討伐之證購買。')))
             chosen = next((saved for saved in cores if saved['id'] == self.core_id), None)
@@ -428,8 +451,10 @@ class AlchemyView(discord.ui.View):
                         elif domain == 'combat':
                             effect = (combat_stone_effect(saved['key'], saved['rarity'], body)
                                       if body else COMBAT_SKILL_DETAILS[saved['key']])
+                            uses = COMBAT_RARITY_STATS[saved['rarity']]['uses']
                             details.append(
-                                f'{index}. {saved["rarity"]}・{pool[saved["key"]]}｜{effect}')
+                                f'{index}. {saved["rarity"]}・{pool[saved["key"]]}｜'
+                                f'{effect}｜每場 {uses} 次')
                         else:
                             skill = self.cog.alchemy.life_skill(
                                 self.guild_id, self.owner.id, saved['key'])
@@ -444,6 +469,8 @@ class AlchemyView(discord.ui.View):
                 detail = (combat_stone_effect(key, rarity, body) if domain == 'combat' and body
                           else COMBAT_SKILL_DETAILS[key] if domain == 'combat'
                           else f'效果倍率 {RARITIES[rarity][1]:.0%}')
+                if domain == 'combat':
+                    detail += f'｜每場 {COMBAT_RARITY_STATS[rarity]["uses"]} 次'
                 embed.add_field(name='待刻印技能石',
                                 value=f'{rarity}・{(COMBAT_SKILLS if domain == "combat" else LIFE_SKILLS)[key]}\n{detail}',
                                 inline=False)
@@ -465,8 +492,9 @@ class AlchemyView(discord.ui.View):
                 description=f'**目前金幣**　{gold:,}\n'
                             '**價格**　單抽 500｜十連 5,000\n\n'
                             '**基礎機率**　普通 70%｜稀有 24%｜史詩 5%｜傳說 1%\n'
-                            '**稀有度效果**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%\n'
-                            '戰鬥石會套用到技能強度；生活石會套用到最終工作力。\n\n'
+                            '**戰鬥石**　普通 90%・1 次｜稀有 100%・1 次｜'
+                            '史詩 110%・2 次｜傳說 120%・3 次\n'
+                            '**生活石效果**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%\n\n'
                             '**保底**　十連至少一顆稀有；'
                             '50 抽未出史詩時保底史詩以上，100 抽未出傳說時保底傳說。\n'
                             f'**目前進度**　史詩以上保底剩 **{pity["epic_remaining"]}** 抽｜'
@@ -487,22 +515,28 @@ class AlchemyView(discord.ui.View):
                             f'**已選**　{len(self.decompose_items)} 種／{quantity} 顆\n'
                             f'**預計取得**　{powder} 鍊金粉塵')
         elif self.page == 'automation':
+            cost = operation_fuel_cost(body) if body else 100
+            discount = fuel_discount(body['stats'][2]) if body else 0
             embed = discord.Embed(title='煉金人偶｜自動化設定', color=0xB8864B,
                 description='生活技能必須已刻入目前核心才會執行。釣魚與農耕會持續到燃料不足；'
                             '自動備餐與討伐響應另外使用討伐觸發條件。\n\n'
                             '每次「收竿＋再出發」、「收成＋重種」、備餐或討伐響應'
-                            '皆為基礎 100 燃料，並套用耐久折扣。')
+                            f'皆為基礎 100 燃料。目前耐久減免 {discount}%，'
+                            f'每次實際消耗 **{cost}** 燃料。')
         elif self.page == 'stats':
             farming_thresholds = '｜'.join(
                 f'{label} {threshold}' for threshold, label in LIFE_WORK_UNLOCKS['farming'])
             embed = discord.Embed(title='煉金人偶｜能力說明', color=0xB8864B,
                 description=('**構造**　每點 +10 最大 HP；農耕、討伐響應的副能力。\n'
                              '**動力**　每點 +3 攻擊；自律農耕的主能力。\n'
-                             '**耐久**　每點 +3 防禦；每 5 點降低 1% 燃料消耗，上限 40%；'
+                             '**耐久**　每點 +3 防禦；燃料減免 = 耐久÷（耐久＋100），'
+                             '最高 70%；'
                              '自律釣魚的副能力。\n'
                              '**精密**　速度 = 35 + 精密÷10（上限 100）；釣魚、備餐與討伐響應的主能力。\n'
                              '**靈質**　每點 +3 治療量，並影響治療、護盾與輔助技能；備餐的副能力。\n\n'
-                             '**技能石稀有度**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%。\n'
+                             '**戰鬥技能石**　普通 90%・1 次｜稀有 100%・1 次｜'
+                             '史詩 110%・2 次｜傳說 120%・3 次；支援後間隔兩回合。\n'
+                             '**生活技能石**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%。\n'
                              '生活工作力 = ⌊（主能力×2＋副能力）÷3×稀有度倍率⌋；'
                              '計算後數值會顯示在人偶主介面。\n'
                              f'**農耕工作力門檻**　{farming_thresholds}；'
@@ -514,8 +548,18 @@ class AlchemyView(discord.ui.View):
                 description='勾選討伐池、品質與來源。條件全部符合時才會嘗試操作；'
                             '檢查失敗不消耗燃料。')
         else:
+            cost = operation_fuel_cost(body) if body else 100
+            discount = fuel_discount(body['stats'][2]) if body else 0
+            cycles = state['fuel'] // cost
+            endurance = '｜'.join(
+                f'{label}約 {duration_text(cycles * seconds)}'
+                for label, seconds in (('30 分鐘釣魚', 1800), ('2 小時釣魚', 7200),
+                                       ('8 小時釣魚', 28800)))
             embed = discord.Embed(title='煉金人偶｜燃料', color=0xB8864B,
                 description=f'目前燃料：**{state["fuel"]:,}／{FUEL_CAPACITY:,}**\n'
+                            f'目前耐久減免：**{discount}%**｜每次自動操作：**{cost}** 燃料\n'
+                            f'剩餘可執行：**{cycles} 次**（收竿、收成、備餐或討伐響應）\n'
+                            f'{endurance}\n\n'
                             '每件素材取得等同該物品出售價的燃料，最低 1。')
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
@@ -537,16 +581,7 @@ class AlchemyView(discord.ui.View):
                          for index, entry in enumerate(core['skills'][domain], 1)]
                 embed.add_field(name=f'Lv.{core["level"]} {core["orientation"]}｜{label}',
                                 value='\n'.join(lines), inline=False)
-        history = self.cog.store.db.execute('''SELECT p.direct_damage,p.damage_taken,p.healing_done,
-            p.support_taken FROM rpg_battle_participants p JOIN rpg_battle_results r
-            ON r.raid_id=p.raid_id WHERE r.guild_id=? AND p.user_id=?
-            ORDER BY r.completed_at DESC LIMIT 5''', (self.guild_id, -self.owner.id)).fetchall()
-        if history:
-            totals = tuple(sum(row[index] for row in history) for index in range(4))
-            embed.add_field(name=f'最近 {len(history)} 場',
-                            value=(f'傷害 {totals[0]:,}｜承傷 {totals[1]:,}｜'
-                                   f'治療 {totals[2]:,}｜輔助承傷 {totals[3]:,}'), inline=False)
-        embed.set_footer(text='討伐補位：' + ('已開啟' if state['registered'] else '未開啟'))
+        embed.set_footer(text='人偶戰鬥技能不占玩家原本的回合行動。')
         return embed
 
     async def handle(self, interaction, action, value=None):
@@ -554,6 +589,8 @@ class AlchemyView(discord.ui.View):
             return
         async with self.lock:
             try:
+                if action != 'dismantle_core':
+                    self.confirm_core_dismantle = False
                 if action in ('automation', 'triggers'):
                     state = self.cog.alchemy.state(self.guild_id, self.owner.id)
                     if not state['active_body'] or not state['core']:
@@ -617,6 +654,7 @@ class AlchemyView(discord.ui.View):
                 elif action == 'core':
                     self.core_id = None if value == 'new' else int(value)
                     self.slot, self.item_id = None, None
+                    self.confirm_core_dismantle = False
                 elif action == 'slot' and value != 'empty':
                     self.slot, self.item_id = value, None
                 elif action == 'stone' and value != 'empty':
@@ -628,6 +666,24 @@ class AlchemyView(discord.ui.View):
                 elif action == 'equip_core':
                     self.cog.alchemy.equip_core(self.guild_id, self.owner.id, self.core_id)
                     notice = '已裝備思考核心。'
+                elif action == 'dismantle_core':
+                    if not self.confirm_core_dismantle:
+                        core = next(saved for saved in self.cog.alchemy.cores(
+                            self.guild_id, self.owner.id) if saved['id'] == self.core_id)
+                        stones = [stone for domain in core['skills'].values()
+                                  for stone in domain if stone]
+                        powder = sum(RARITIES[stone['rarity']][2] for stone in stones)
+                        self.confirm_core_dismantle = True
+                        notice = (f'將永久拆解核心 #{self.core_id}；其中 {len(stones)} 顆技能石'
+                                  f'會一併分解為 {powder} 份鍊金粉塵。請再次確認。')
+                    else:
+                        result = self.cog.alchemy.dismantle_core(
+                            self.guild_id, self.owner.id, self.core_id)
+                        self.core_id = None
+                        self.slot, self.item_id = None, None
+                        self.confirm_core_dismantle = False
+                        notice = (f'已拆解思考核心與 {result["stones"]} 顆技能石，'
+                                  f'取得 {result["powder"]} 份鍊金粉塵。')
                 elif action == 'engrave':
                     domain, slot = self.slot.split(':')
                     self.cog.alchemy.engrave(self.guild_id, self.owner.id, self.core_id,
@@ -669,23 +725,25 @@ class AlchemyView(discord.ui.View):
                     self.fuel_quantity = int(value)
                     self.confirm_fuel = False
                 elif action == 'convert_fuel':
+                    raw_fuel = fuel_value(ITEMS[self.fuel_item_id]) * self.fuel_quantity
+                    current_fuel = self.cog.alchemy.state(
+                        self.guild_id, self.owner.id)['fuel']
+                    actual_fuel = min(raw_fuel, max(0, FUEL_CAPACITY - current_fuel))
+                    overflow = raw_fuel - actual_fuel
                     if not self.confirm_fuel:
                         self.confirm_fuel = True
                         warning = ('；這是常用的幸運／盛宴食材' if any(
                             word in ITEMS[self.fuel_item_id].description for word in ('幸運', '盛宴')) else '')
                         notice = (f'將消耗 {self.fuel_quantity} 個 {ITEMS[self.fuel_item_id].name}{warning}，'
-                                  f'取得 {fuel_value(ITEMS[self.fuel_item_id]) * self.fuel_quantity} 燃料。'
+                                  f'實際增加 {actual_fuel} 燃料並補至最多 {FUEL_CAPACITY:,}。'
+                                  + (f'其中 {overflow} 燃料會溢出消失。' if overflow else '') +
                                   '此操作不可逆，請再次確認。')
                     else:
                         fuel = self.cog.alchemy.convert_fuel(
                             self.guild_id, self.owner.id, self.fuel_item_id, self.fuel_quantity)
                         self.confirm_fuel = False
-                        notice = f'已轉換 {fuel} 燃料。'
-                elif action == 'toggle_register':
-                    enabled = not self.cog.alchemy.state(
-                        self.guild_id, self.owner.id)['registered']
-                    self.cog.alchemy.set_registered(self.guild_id, self.owner.id, enabled)
-                    notice = '已登錄討伐補位。' if enabled else '已取消討伐補位。'
+                        notice = (f'已增加 {fuel} 燃料，目前最多為 {FUEL_CAPACITY:,}。' +
+                                  (f'另有 {overflow} 燃料溢出。' if overflow else ''))
                 elif action.startswith('toggle_life:'):
                     _, key, field = action.split(':')
                     current = self.cog.alchemy.state(

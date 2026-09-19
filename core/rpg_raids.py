@@ -518,18 +518,11 @@ class RaidService:
                         if participant['id'] in prepared:
                             participant['meal'] = prepared[participant['id']]
                 alchemy = getattr(self.cog, 'alchemy', None)
-                if (alchemy is not None and 0 < len(participants) < 4
-                        and raid.get('source') is None
-                        and raid.get('pool', 'regular') in ('regular', 'mid', 'high')):
-                    candidates = []
-                    for order, owner in enumerate(participants):
-                        doll = alchemy.participant(raid['guild_id'], owner['id'], owner['name'])
-                        if doll and doll['state']['level'] >= raid_min_level(raid):
-                            selected_at = alchemy.state(raid['guild_id'], owner['id'])['last_selected']
-                            candidates.append((selected_at, order, doll))
-                    dolls = [entry[2] for entry in sorted(candidates)[:4 - len(participants)]]
-                    participants.extend(dolls)
-                    alchemy.mark_selected(raid['guild_id'], [doll['owner_id'] for doll in dolls])
+                if alchemy is not None:
+                    for participant in participants:
+                        support = alchemy.support(raid['guild_id'], participant['id'])
+                        if support:
+                            participant['doll_support'] = support
                 raid['participants'] = participants
                 if not participants:
                     raid.update(status='cancelled', reason='沒有人參與，魔物離開了。')

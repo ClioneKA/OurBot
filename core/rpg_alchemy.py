@@ -28,6 +28,12 @@ CORE_SLOTS = {
 }
 RARITIES = {'普通': (70, .70, 1), '稀有': (24, .80, 3),
             '史詩': (5, .90, 10), '傳說': (1, 1.00, 30)}
+COMBAT_RARITY_STATS = {
+    '普通': {'multiplier': .90, 'cleanse': 1, 'uses': 1},
+    '稀有': {'multiplier': 1.00, 'cleanse': 2, 'uses': 1},
+    '史詩': {'multiplier': 1.10, 'cleanse': 2, 'uses': 2},
+    '傳說': {'multiplier': 1.20, 'cleanse': 3, 'uses': 3},
+}
 RARITY_ORDER = tuple(RARITIES)
 COMBAT_SKILLS = {
     'power_strike': '動力重擊', 'armor_break': '裂甲鑿擊', 'sweep': '廣域掃蕩',
@@ -40,9 +46,9 @@ COMBAT_SKILL_DETAILS = {
     'armor_break': '造成 100% 攻擊傷害，並降低目標 80% 防禦',
     'sweep': '對全體敵人造成 120% 攻擊傷害',
     'overload': '對單一敵人造成 220% 攻擊傷害',
-    'counter': '吸引單體攻擊，受到直接攻擊後反擊 100% 攻擊傷害',
+    'counter': '使一名隊友吸引單體攻擊，受到直接攻擊後以人偶攻擊反擊',
     'barrier': '依自身防禦提高全隊防禦',
-    'rally': '恢復自身 50% 最大 HP',
+    'rally': '依人偶構造修復主人',
     'repair': '依自身治療量恢復一名隊友',
     'group_repair': '恢復全體隊友各 65% 自身治療量',
     'amplify': '提高一名隊友 40% 攻擊',
@@ -118,9 +124,14 @@ def _register_items():
             for rarity, (_, multiplier, _) in RARITIES.items():
                 detail = (COMBAT_SKILL_DETAILS[key] if domain == 'combat'
                           else '最終工作力由素體能力與稀有度共同決定')
-                cleanse_count = {'普通': '1 個', '稀有': '2 個', '史詩': '3 個', '傳說': '全部'}[rarity]
-                rarity_effect = (f'可移除 {cleanse_count} 負面狀態' if key == 'cleanse'
-                                 else f'效果倍率 {multiplier:.0%}')
+                if domain == 'combat':
+                    combat_rarity = COMBAT_RARITY_STATS[rarity]
+                    rarity_effect = (f'每次可移除 {combat_rarity["cleanse"]} 個負面狀態'
+                                     if key == 'cleanse' else
+                                     f'效果倍率 {combat_rarity["multiplier"]:.0%}')
+                    rarity_effect += f'；每場可用 {combat_rarity["uses"]} 次'
+                else:
+                    rarity_effect = f'效果倍率 {multiplier:.0%}'
                 ITEMS[stone_id(domain, key, rarity)] = Item(
                     f'{rarity}・{name}技能石', '', '', 0, (0,) * 5, category='製作材料',
                     description=f'{detail}；{rarity_effect}。')
@@ -142,6 +153,19 @@ def body_acceleration_cost(craft, now=None):
 
 def fuel_value(item):
     return max(1, item_sell_price(item))
+
+
+def fuel_discount(durability):
+    """Return the durability fuel discount, with smooth diminishing returns."""
+    durability = max(0, int(durability))
+    return min(70, round(100 * durability / (durability + 100)))
+
+
+def operation_fuel_cost(body, operations=1):
+    if not body or type(operations) is not int or operations < 1:
+        raise ValueError('body and a positive operation count are required')
+    discount = fuel_discount(body['stats'][2])
+    return math.ceil(100 * operations * (100 - discount) / 100)
 
 
 def material_profile(item_id):
@@ -250,15 +274,15 @@ class AlchemyDolls:
                 self._ensure(guild, user)
         else:
             self._ensure(guild, user)
-        row = self.db.execute('''SELECT name,active_body,candidate_body,crafting,fuel,registered,
-            last_selected,life_config FROM rpg_alchemy_dolls WHERE guild_id=? AND user_id=?''',
+        row = self.db.execute('''SELECT name,active_body,candidate_body,crafting,fuel,life_config
+            FROM rpg_alchemy_dolls WHERE guild_id=? AND user_id=?''',
                               (guild, user)).fetchone()
         core = self.db.execute('''SELECT id,level,orientation,skills FROM rpg_alchemy_cores
             WHERE guild_id=? AND user_id=? AND equipped=1''', (guild, user)).fetchone()
         return dict(name=row[0], active_body=json.loads(row[1]) if row[1] else None,
                     candidate_body=json.loads(row[2]) if row[2] else None,
                     crafting=json.loads(row[3]) if row[3] else None, fuel=row[4],
-                    registered=bool(row[5]), last_selected=row[6], config=json.loads(row[7]),
+                    config=json.loads(row[5]),
                     core=(dict(id=core[0], level=core[1], orientation=core[2],
                                skills=json.loads(core[3])) if core else None))
 
@@ -418,6 +442,22 @@ class AlchemyDolls:
                             (guild, user))
             self.db.execute('UPDATE rpg_alchemy_cores SET equipped=1 WHERE id=?', (core_id,))
 
+    def dismantle_core(self, guild, user, core_id):
+        """Destroy one oriented core and turn all of its engraved stones into powder."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            row = self.db.execute('''SELECT skills,equipped FROM rpg_alchemy_cores
+                WHERE id=? AND guild_id=? AND user_id=?''', (core_id, guild, user)).fetchone()
+            if not row:
+                raise CharacterError('找不到這枚思考核心。')
+            skills = json.loads(row[0])
+            engraved = [stone for domain in skills.values() for stone in domain if stone]
+            powder = sum(RARITIES[stone['rarity']][2] for stone in engraved)
+            self.db.execute('DELETE FROM rpg_alchemy_cores WHERE id=?', (core_id,))
+            if powder:
+                add_owned_item(self.db, guild, user, POWDER_ITEM, powder)
+        return dict(stones=len(engraved), powder=powder, equipped=bool(row[1]))
+
     def engrave(self, guild, user, core_id, domain, slot, item_id):
         stone = parse_stone(item_id)
         if not stone or stone[0] != domain or type(slot) is not int:
@@ -568,8 +608,9 @@ class AlchemyDolls:
             self._ensure(guild, user)
             current = self.db.execute('SELECT fuel FROM rpg_alchemy_dolls '
                                       'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()[0]
-            if current + fuel > FUEL_CAPACITY:
-                raise CharacterError(f'燃料上限為 {FUEL_CAPACITY:,}，本次轉換會超過上限。')
+            if current >= FUEL_CAPACITY:
+                raise CharacterError(f'燃料已達上限 {FUEL_CAPACITY:,}。')
+            gained = min(fuel, FUEL_CAPACITY - current)
             paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
                 WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=?''',
                                    (quantity, guild, user, item_id, quantity))
@@ -577,21 +618,10 @@ class AlchemyDolls:
                 raise CharacterError('素材數量不足。')
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
                             'AND item_id=? AND quantity=0', (guild, user, item_id))
-            self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=fuel+? '
-                            'WHERE guild_id=? AND user_id=?', (fuel, guild, user))
-        return fuel
-
-    def set_registered(self, guild, user, enabled):
-        if type(enabled) is not bool:
-            raise CharacterError('無效的補位設定。')
-        if enabled:
-            state = self.state(guild, user)
-            if not state['active_body'] or not state['core']:
-                raise CharacterError('必須先安裝素體與思考核心。')
-        with self.db:
-            self._ensure(guild, user)
-            self.db.execute('UPDATE rpg_alchemy_dolls SET registered=? '
-                            'WHERE guild_id=? AND user_id=?', (int(enabled), guild, user))
+            self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
+                            'WHERE guild_id=? AND user_id=?',
+                            (current + gained, guild, user))
+        return gained
 
     def life_skill(self, guild, user, key):
         """Return the equipped life skill and its effective work score."""
@@ -637,8 +667,7 @@ class AlchemyDolls:
         return saved
 
     def _fuel_cost(self, body, operations):
-        discount = min(40, body['stats'][2] // 5)
-        return math.ceil(100 * operations * (100 - discount) / 100)
+        return operation_fuel_cost(body, operations)
 
     def _reserve_operation(self, guild, user, kind, source, operations, now):
         """Idempotently reserve fuel before an automated state change."""
@@ -845,42 +874,41 @@ class AlchemyDolls:
             self.db.execute('UPDATE rpg_alchemy_dolls SET name=? WHERE guild_id=? AND user_id=?',
                             (name, guild, user))
 
-    def participant(self, guild, user, owner_name='主人'):
+    def support(self, guild, user):
+        """Build a per-battle support snapshot without adding another participant."""
         state = self.state(guild, user)
         body, core = state['active_body'], state['core']
-        if not state['registered'] or not body or not core:
+        if not body or not core:
+            return None
+        from core.rpg_battle import DOLL_RARITY_STATS, DOLL_SKILL_IDS
+        conditions = {'rally': ('self40', 'self'), 'repair': ('ally50', 'lowest'),
+                      'group_repair': ('ally50', 'lowest'),
+                      'cleanse': ('ally_debuff', 'debuffed'),
+                      'barrier': ('ally50', 'lowest'), 'amplify': ('always', 'strongest'),
+                      'interrupt': ('enemy_charging', 'boss'),
+                      'counter': ('ally50', 'lowest')}
+        skills = []
+        for slot, saved in enumerate(core['skills']['combat'], 1):
+            if not saved:
+                continue
+            rarity = DOLL_RARITY_STATS[saved['rarity']]
+            condition, target = conditions.get(saved['key'], ('always', 'lowest'))
+            skills.append(dict(slot=slot, key=saved['key'], rarity=saved['rarity'],
+                               skill_id=DOLL_SKILL_IDS[saved['key'], saved['rarity']],
+                               condition=condition, target=target,
+                               maximum=rarity['uses'], remaining=rarity['uses']))
+        if not skills:
             return None
         structure, power, durability, precision, spirit = body['stats']
-        from core.rpg_battle import DOLL_SKILL_IDS, Rule
-        conditions = {'rally': ('self40', 'self'), 'repair': ('ally50', 'lowest'),
-                      'group_repair': ('ally50', 'lowest'), 'cleanse': ('ally_debuff', 'debuffed'),
-                      'barrier': ('ally50', 'lowest'), 'amplify': ('always', 'strongest'),
-                      'interrupt': ('enemy_charging', 'boss'), 'counter': ('always', 'self')}
-        rules = []
-        for slot, saved in enumerate(core['skills']['combat'], 1):
-            condition, target = conditions.get(saved['key'] if saved else '', ('always', 'lowest'))
-            skill_id = DOLL_SKILL_IDS.get((saved['key'], saved['rarity'])) if saved else None
-            rules.append(Rule(slot, slot, True, condition, target, skill_id).__dict__)
         combat = {'HP': 50 + structure * 10, '攻擊': power * 3, '防禦': durability * 3,
                   '治療量': spirit * 3, '命中率': 95 + ACCURACY_BONUS[body['tier']],
                   '閃避率': 0, '暴擊率': 10}
-        return dict(id=-user, owner_id=user, is_doll=True,
-                    name=f'{state["name"]}（{owner_name}）', rules=rules, basic_target='lowest',
-                    state=dict(level=body['tier'], job='煉金人偶', total=body['stats'], combat=combat,
-                               speed=min(100, 35 + precision // 10), stability=(100, 100),
-                               equipped={'武器': '__alchemy_doll__'}))
-
-    def mark_selected(self, guild, users, now=None):
-        if not users:
-            return
-        now = time.time() if now is None else now
-        with self.db:
-            self.db.executemany('''UPDATE rpg_alchemy_dolls SET last_selected=?
-                WHERE guild_id=? AND user_id=?''', ((now, guild, user) for user in users))
-
+        return dict(name=state['name'], stats=combat,
+                    speed=min(100, 35 + precision // 10), skills=skills, ready_round=1)
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
-           'LIFE_SKILLS', 'RARITIES',
+           'LIFE_SKILLS', 'RARITIES', 'COMBAT_RARITY_STATS',
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
-           'body_acceleration_cost', 'fuel_value', 'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
+           'body_acceleration_cost', 'fuel_value', 'fuel_discount', 'operation_fuel_cost',
+           'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
            'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work']

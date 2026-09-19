@@ -145,26 +145,32 @@ DOLL_SKILL_SPECS = {
     'armor_break': ('裂甲鑿擊', 'break', 4, '造成傷害並降低防禦', 'always', 'normal'),
     'sweep': ('廣域掃蕩', 'cleave', 5, '對全體敵人造成 120% 傷害', 'always', 'normal'),
     'overload': ('超載猛擊', 'crush', 5, '對單體造成 220% 傷害', 'always', 'normal'),
-    'counter': ('誘敵反擊', 'taunt', 4, '吸引單體攻擊並反擊', 'always', 'normal'),
+    'counter': ('誘敵反擊', 'doll_counter', 4, '使一名隊友吸引單體攻擊並以人偶攻擊反擊', 'ally50', 'normal'),
     'barrier': ('防護力場', 'guard', 4, '增加全隊防禦', 'ally50', 'normal'),
-    'rally': ('緊急修復', 'rally', 5, '恢復自身最大 HP', 'self40', 'normal'),
+    'rally': ('緊急修復', 'doll_rally', 5, '依人偶構造修復主人', 'self40', 'normal'),
     'repair': ('修復射線', 'heal', 3, '恢復一名隊友生命', 'ally50', 'normal'),
     'group_repair': ('廣域修復', 'group_heal', 5, '恢復全體隊友生命', 'ally50', 'normal'),
     'amplify': ('動力增幅', 'bless', 4, '提高一名隊友攻擊', 'always', 'normal'),
     'cleanse': ('清除程序', 'cleanse', 3, '移除隊友負面狀態', 'ally_debuff', 'normal'),
     'interrupt': ('妨害射擊', 'hindering_shot', 4, '命中後打斷蓄力', 'enemy_charging', 'normal'),
 }
-DOLL_RARITIES = (('普通', 70, 1), ('稀有', 80, 2), ('史詩', 90, 3), ('傳說', 100, 99))
+DOLL_RARITIES = (('普通', 90, 1, 1), ('稀有', 100, 2, 1),
+                 ('史詩', 110, 2, 2), ('傳說', 120, 3, 3))
+DOLL_RARITY_STATS = {
+    rarity: {'potency': potency, 'cleanse': cleanse, 'uses': uses}
+    for rarity, potency, cleanse, uses in DOLL_RARITIES
+}
 DOLL_SKILL_IDS = {}
 _doll_skills = []
 for key, spec in DOLL_SKILL_SPECS.items():
     name, effect, cooldown, description, condition, timing = spec
-    for rarity, potency, cleanse_count in DOLL_RARITIES:
+    for rarity, potency, cleanse_count, _uses in DOLL_RARITIES:
         DOLL_SKILL_IDS[key, rarity] = len(_doll_skills) + 1
         _doll_skills.append(Skill(f'{rarity}・{name}', effect, cooldown, description,
                                   condition, timing, potency, cleanse_count, False))
 SKILLS['煉金人偶'] = tuple(_doll_skills)
-ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light'}
+ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light',
+                'doll_counter', 'doll_rally'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
                  'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
 # Defense is a role property of the target. Monsters and non-tank professions
@@ -415,6 +421,7 @@ class Fighter:
     mechanic_priority: int = 0
     basic_target: str = 'lowest'
     cycle_index: int = 0
+    doll_support: dict | None = None
 
     def __post_init__(self):
         # Upgrade persisted battles from the former physical/magic stat split.
@@ -461,6 +468,154 @@ class Battle:
     def record_skill(actor, name):
         used = actor.combat_stats['skills_used']
         used[name] = used.get(name, 0) + 1
+
+    def _doll_actor(self, owner):
+        support = owner.doll_support
+        if not support:
+            return None
+        actor = Fighter(support['name'], owner.team, '煉金人偶', support['stats'],
+                        support.get('speed', 35), [], user_id=owner.user_id)
+        # Attribute support damage, healing and utility to the owning participant.
+        actor.combat_stats = owner.combat_stats
+        actor.linked_user_id = owner.user_id
+        return actor
+
+    def _doll_entry(self, owner, slot):
+        support = owner.doll_support or {}
+        return next((entry for entry in support.get('skills', ())
+                     if entry['slot'] == slot), None)
+
+    def doll_actions(self, user_id):
+        owner = next((fighter for fighter in self.living(0)
+                      if fighter.user_id == user_id), None)
+        if owner is None or not owner.doll_support:
+            return []
+        support = owner.doll_support
+        current = getattr(self, 'planning_round', self.round)
+        cooldown = max(0, support.get('ready_round', 1) - current)
+        actions = []
+        for entry in support.get('skills', ()):
+            skill = SKILLS['煉金人偶'][entry['skill_id'] - 1]
+            actions.append(dict(slot=entry['slot'], name=skill.name,
+                                description=skill.description,
+                                remaining=entry['remaining'], maximum=entry['maximum'],
+                                cooldown_remaining=cooldown,
+                                fixed_target=(skill.effect in FIXED_TARGETS
+                                              or skill.effect == 'doll_rally')))
+        return actions
+
+    def doll_valid_targets(self, user_id, slot):
+        owner = next((fighter for fighter in self.living(0)
+                      if fighter.user_id == user_id), None)
+        if owner is None:
+            return []
+        entry = self._doll_entry(owner, slot)
+        if not entry:
+            return []
+        skill = SKILLS['煉金人偶'][entry['skill_id'] - 1]
+        if skill.effect in FIXED_TARGETS or skill.effect == 'doll_rally':
+            return []
+        team = owner.team if skill.effect in ALLY_EFFECTS else 1 - owner.team
+        return [self.key(target) for target in self.living(team)] if hasattr(self, 'key') else []
+
+    def submit_doll(self, user_id, slot, target=None):
+        owner = next((fighter for fighter in self.living(0)
+                      if fighter.user_id == user_id), None)
+        if owner is None or not owner.doll_support:
+            raise ValueError('你沒有可用的人偶戰鬥支援。')
+        support = owner.doll_support
+        current = getattr(self, 'planning_round', self.round + 1)
+        if current < support.get('ready_round', 1):
+            raise ValueError('人偶支援仍在冷卻中。')
+        entry = self._doll_entry(owner, slot)
+        if not entry or entry['remaining'] < 1:
+            raise ValueError('這顆技能石本場已無可用次數。')
+        valid = self.doll_valid_targets(user_id, slot)
+        if valid and target not in valid:
+            raise ValueError('請選擇有效的人偶技能目標。')
+        support['pending'] = {'slot': slot, 'target': target if valid else None}
+        return support['pending']
+
+    def _doll_target(self, owner, actor, entry, skill, target_key=None,
+                     enforce_condition=False):
+        condition = entry.get('condition', 'always')
+        allies, enemies = self.living(owner.team), self.living(1 - owner.team)
+        if enforce_condition:
+            if condition == 'self40' and owner.hp * 100 > owner.stats['HP'] * 40:
+                return None
+            if condition == 'ally50' and not any(
+                    candidate.hp * 2 <= candidate.stats['HP'] for candidate in allies):
+                return None
+            if condition == 'ally_debuff' and not any(
+                    any(candidate.has(effect, self.round)
+                        for effect in ('poison', 'break', 'stun', 'weak'))
+                    or candidate.status_stacks.get('corruption', 0)
+                    or candidate.status_stacks.get('drowning_mark', 0)
+                    or candidate.status_stacks.get('poison_arrows') for candidate in allies):
+                return None
+            if condition == 'enemy_charging' and not any(
+                    self.is_charging(candidate) for candidate in enemies):
+                return None
+        if skill.effect == 'doll_rally':
+            return owner
+        if skill.effect in FIXED_TARGETS:
+            return actor
+        team = owner.team if skill.effect in ALLY_EFFECTS else 1 - owner.team
+        candidates = self.living(team)
+        if target_key is not None and hasattr(self, 'fighter_for_key'):
+            target = self.fighter_for_key(target_key)
+            if target in candidates:
+                return target
+        if condition == 'ally50':
+            candidates = [candidate for candidate in candidates
+                          if candidate.hp * 2 <= candidate.stats['HP']]
+        elif condition == 'ally_debuff':
+            candidates = [candidate for candidate in candidates
+                          if any(candidate.has(effect, self.round)
+                                 for effect in ('poison', 'break', 'stun', 'weak'))
+                          or candidate.status_stacks.get('corruption', 0)
+                          or candidate.status_stacks.get('drowning_mark', 0)
+                          or candidate.status_stacks.get('poison_arrows')]
+        elif condition == 'enemy_charging':
+            candidates = [candidate for candidate in candidates if self.is_charging(candidate)]
+        if not candidates:
+            return None
+        rule = Rule(entry['slot'], entry['slot'], True, condition,
+                    entry.get('target', 'lowest'), entry['skill_id'])
+        return self.target(actor, candidates, rule, skill.effect not in ALLY_EFFECTS)
+
+    def activate_doll(self, owner, *, automatic=False):
+        support = owner.doll_support
+        if not support:
+            return False
+        current = self.round
+        if current < support.get('ready_round', 1):
+            return False
+        pending = support.pop('pending', None)
+        entries = support.get('skills', ())
+        if pending:
+            entries = [entry for entry in entries if entry['slot'] == pending['slot']]
+        elif not automatic:
+            return False
+        actor = self._doll_actor(owner)
+        for entry in entries:
+            if entry['remaining'] < 1:
+                continue
+            skill = SKILLS['煉金人偶'][entry['skill_id'] - 1]
+            target = self._doll_target(
+                owner, actor, entry, skill, pending.get('target') if pending else None,
+                enforce_condition=automatic and not pending)
+            if target is None:
+                continue
+            rule = Rule(entry['slot'], entry['slot'], True, entry.get('condition', 'always'),
+                        entry.get('target', 'lowest'), entry['skill_id'])
+            prefix = '自動' if automatic and not pending else ''
+            self.log.append(f'{owner.name} 的人偶{prefix}支援發動。')
+            self.use_skill(actor, rule, skill, target)
+            entry['remaining'] -= 1
+            support['ready_round'] = self.round + 3
+            return True
+        return False
 
     def accuracy_bonus(self, actor):
         return 0
@@ -1664,11 +1819,21 @@ class Battle:
         healing = self.heal(actor, actor, actual_damage * drain // 100, maze_trigger=False)
         if healing > 0 and actor.hp > 0:
             self.log.append(f'{actor.name} 吸血恢復 {healing} HP')
-        if (counterable and target.job in ('騎士', '煉金人偶') and target.hp > 0 and actor.hp > 0
+        doll_counter_attack = target.status_stacks.get('doll_counter_attack')
+        if (counterable and (target.job in ('騎士', '煉金人偶') or doll_counter_attack)
+                and target.hp > 0 and actor.hp > 0
                 and target.has('taunt', self.round)
                 and target.team != actor.team):
             self.log.append(f'{target.name} 發動【挑釁反擊】！')
-            self.hit(target, actor, target.status_stacks.get('doll_counter_percent', 100) / 100,
+            counter_actor = target
+            if doll_counter_attack:
+                source_user_id = target.status_stacks.get('doll_counter_source_user_id')
+                counter_actor = next((fighter for fighter in self.fighters
+                                      if fighter.team == target.team
+                                      and fighter.user_id == source_user_id), target)
+            self.hit(counter_actor, actor,
+                     target.status_stacks.get('doll_counter_percent', 100) / 100,
+                     attack_override=doll_counter_attack,
                      counterable=False)
         if passive_trigger and tempo is not None:
             if tempo >= 6:
@@ -2305,9 +2470,11 @@ class Battle:
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
         potency = skill.potency_percent
-        if effect in ('group_heal', 'rally'):
-            targets = self.living(actor.team) if effect == 'group_heal' else [actor]
-            healing = actor.stats['治療量'] * 65 // 100 if effect == 'group_heal' else actor.stats['HP'] // 2
+        if effect in ('group_heal', 'rally', 'doll_rally'):
+            targets = (self.living(actor.team) if effect == 'group_heal'
+                       else [target if effect == 'doll_rally' else actor])
+            healing = (actor.stats['治療量'] * 65 // 100 if effect == 'group_heal'
+                       else actor.stats['HP'] // 2)
             healing = healing * potency // 100
             for ally in targets:
                 amount = self.heal(actor, ally, healing)
@@ -2346,8 +2513,9 @@ class Battle:
                         ally.effect_sources['guard'] = actor.user_id
                     immunity = ' 並免疫負面狀態' if skill.guard_immunity else ''
                     self.log.append(f'{ally.name} 防禦 +{bonus}{immunity}至第 {self.round + 1} 回合結束')
-        elif effect in ('bless', 'stance', 'taunt'):
-            target.effects[effect] = self.round + (2 if effect == 'bless' else 1)
+        elif effect in ('bless', 'stance', 'taunt', 'doll_counter'):
+            saved_effect = 'taunt' if effect == 'doll_counter' else effect
+            target.effects[saved_effect] = self.round + (2 if effect == 'bless' else 1)
             if effect == 'bless':
                 target.status_stacks['bless_attack_percent'] = 40 * potency // 100
                 target.effect_sources['bless'] = actor.user_id
@@ -2355,7 +2523,11 @@ class Battle:
                     self._passive_action['hymn_bless'] = True
             elif effect == 'taunt' and actor.job == '煉金人偶':
                 target.status_stacks['doll_counter_percent'] = potency
-            self.log.append(f'{target.name} 獲得效果，持續至第 {target.effects[effect]} 回合結束')
+            elif effect == 'doll_counter':
+                target.status_stacks['doll_counter_percent'] = potency
+                target.status_stacks['doll_counter_attack'] = actor.stats['攻擊']
+                target.status_stacks['doll_counter_source_user_id'] = actor.user_id
+            self.log.append(f'{target.name} 獲得效果，持續至第 {target.effects[saved_effect]} 回合結束')
         elif effect == 'knight_charge':
             self.hit(actor, target, 0.5, attack_override=actor.stats['HP'])
         elif effect in ('area', 'cleave'):
@@ -2471,6 +2643,10 @@ class Battle:
         for actor in order:
             if actor.hp <= 0:
                 continue
+            if actor.team == 0:
+                self.activate_doll(actor, automatic=True)
+                if self.check_end():
+                    break
             if actor.team == 0 and actor.status_stacks.get('corruption', 0) >= 3:
                 actor.status_stacks.pop('corruption', None)
                 damage = max(1, actor.stats['HP'] * 12 // 100)
@@ -2585,6 +2761,7 @@ def participant_fighters(participants, balance_version=3):
                         passive_id=p.get('passive_id'),
                         user_id=p.get('id')) for p in participants]
     for fighter, participant in zip(fighters, participants):
+        fighter.doll_support = participant.get('doll_support')
         for embroidery in participant['state'].get('embroideries', ()):
             fighter.status_stacks['embroidery_' + embroidery] = 1
         for crystal in participant['state'].get('crystal_effects', ()):
@@ -2957,6 +3134,7 @@ def load_battle(data):
         f.is_boss = data_f.get('is_boss', False)
         f.mechanic_priority = data_f.get('mechanic_priority', 0)
         f.cycle_index = data_f.get('cycle_index', 0)
+        f.doll_support = data_f.get('doll_support')
         saved_stats = data_f.get('combat_stats', {})
         f.combat_stats = empty_combat_stats()
         for key in f.combat_stats:

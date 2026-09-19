@@ -635,6 +635,77 @@ class WitchPrivateTargetSelect(discord.ui.Select):
             await interaction.followup.send(str(exc), ephemeral=True)
 
 
+class DollSupportTargetSelect(discord.ui.Select):
+    def __init__(self, parent, battle, slot, targets):
+        self.parent_view, self.slot = parent, slot
+        super().__init__(placeholder='選擇人偶支援目標', row=0, options=[
+            discord.SelectOption(label=battle.fighter_for_key(key).name[:100], value=key,
+                                 description=f'HP {battle.fighter_for_key(key).hp:,}')
+            for key in targets])
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        try:
+            await self.parent_view.service.submit_doll_support(
+                self.parent_view.room_id, self.parent_view.user_id, self.slot,
+                self.values[0], expected_round=self.parent_view.planning_round)
+            await interaction.edit_original_response(
+                content='人偶支援已登記；本回合結算時會在你的行動前發動。', view=None)
+        except (CharacterError, TotalRaidError) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+
+
+class DollSupportTargetView(discord.ui.View):
+    def __init__(self, parent, battle, slot, targets):
+        super().__init__(timeout=120)
+        self.service, self.room_id = parent.service, parent.room_id
+        self.user_id, self.planning_round = parent.user_id, parent.planning_round
+        self.add_item(DollSupportTargetSelect(self, battle, slot, targets))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id == self.user_id:
+            return True
+        await interaction.response.send_message('這不是你的人偶支援面板。', ephemeral=True)
+        return False
+
+
+class DollSupportSelect(discord.ui.Select):
+    def __init__(self, parent, battle, row=2):
+        self.parent_view = parent
+        actions = [action for action in battle.doll_actions(parent.user_id)
+                   if action['remaining'] and not action['cooldown_remaining']]
+        super().__init__(placeholder='額外操作：發動人偶戰鬥技能', row=row, options=[
+            discord.SelectOption(
+                label=f'{action["name"]}（{action["remaining"]}/{action["maximum"]}）'[:100],
+                value=str(action['slot']), description=action['description'][:100])
+            for action in actions])
+
+    async def callback(self, interaction):
+        slot = int(self.values[0])
+        try:
+            _room, battle = self.parent_view.service.running_battle(
+                self.parent_view.room_id, interaction.user.id)
+            if battle.planning_round != self.parent_view.planning_round:
+                raise TotalRaidError('此面板的回合已結束，請重新開啟行動面板。')
+            targets = battle.doll_valid_targets(interaction.user.id, slot)
+            if targets:
+                await interaction.response.edit_message(
+                    content='請選擇人偶支援目標。',
+                    view=DollSupportTargetView(self.parent_view, battle, slot, targets))
+                return
+            await interaction.response.defer()
+            await self.parent_view.service.submit_doll_support(
+                self.parent_view.room_id, self.parent_view.user_id, slot,
+                expected_round=self.parent_view.planning_round)
+            await interaction.edit_original_response(
+                content='人偶支援已登記；本回合結算時會在你的行動前發動。', view=None)
+        except (CharacterError, TotalRaidError) as exc:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(content=str(exc), view=None)
+            else:
+                await interaction.response.edit_message(content=str(exc), view=None)
+
+
 class WitchPrivateActionView(discord.ui.View):
     def __init__(self, service, room_id, user_id, battle):
         super().__init__(timeout=900)
@@ -648,6 +719,9 @@ class WitchPrivateActionView(discord.ui.View):
             targets = battle.valid_targets(user_id, draft['action'], draft['slot'])
             if targets:
                 self.add_item(WitchPrivateTargetSelect(battle, draft, targets))
+        elif any(action['remaining'] and not action['cooldown_remaining']
+                 for action in battle.doll_actions(user_id)):
+            self.add_item(DollSupportSelect(self, battle, row=2))
         self.confirm.disabled = user_id not in battle.choices or bool(draft)
         self.takeover.disabled = user_id not in battle.auto_players
         self.autoplay.disabled = user_id in battle.auto_players
@@ -769,6 +843,9 @@ class TotalRaidActionChoiceView(discord.ui.View):
         self.service, self.room_id, self.user_id = service, room_id, user_id
         self.planning_round = battle.planning_round
         self.add_item(TotalRaidActionSelect(self, battle))
+        if any(action['remaining'] and not action['cooldown_remaining']
+               for action in battle.doll_actions(user_id)):
+            self.add_item(DollSupportSelect(self, battle, row=2))
         actor = next(fighter for fighter in battle.living(0) if fighter.user_id == user_id)
         if battle.noah_phase() == 2 and battle.paint_mask(actor) and len(battle.living(0)) > 1:
             self.add_item(TotalRaidPaintGiftSelect(self, battle))
@@ -1139,6 +1216,12 @@ class TotalRaidService:
                 ))
             if not participants:
                 raise TotalRaidError('隊伍中沒有可參戰的玩家。')
+            alchemy = getattr(self.cog, 'alchemy', None)
+            if alchemy is not None:
+                for participant in participants:
+                    support = alchemy.support(room['guild_id'], participant['id'])
+                    if support:
+                        participant['doll_support'] = support
             provisions = getattr(self.cog, 'provisions', None)
             if provisions is not None:
                 prepared = provisions.prepare_for_raid(
@@ -1204,6 +1287,20 @@ class TotalRaidService:
             cooldown = action['cooldown_remaining']
             state = '可使用' if cooldown == 0 else f'CD {cooldown} 回合'
             lines.append(f'• 槽 {action["skill_slot"]}【{action["name"]}】：{state}')
+        doll_actions = battle.doll_actions(user_id)
+        if doll_actions:
+            lines.extend(('', '人偶支援：'))
+            for action in doll_actions:
+                state = (f'冷卻 {action["cooldown_remaining"]} 回合'
+                         if action['cooldown_remaining'] else
+                         '次數用盡' if not action['remaining'] else '可使用')
+                lines.append(f'•【{action["name"]}】{action["remaining"]}/{action["maximum"]}：{state}')
+            support = actor.doll_support or {}
+            pending = support.get('pending')
+            if pending:
+                selected = next((action['name'] for action in doll_actions
+                                 if action['slot'] == pending['slot']), '人偶技能')
+                lines.append(f'已登記人偶支援：【{selected}】')
         choice = battle.choices.get(user_id)
         if choice is not None:
             if choice.action == ACTION_ATTACK:
@@ -1311,6 +1408,18 @@ class TotalRaidService:
         async with self.lock(room_id):
             room, battle = self.running_battle(room_id, user_id)
             battle.submit_paint_gift(user_id, target)
+            room['battle'] = dump_total_battle(battle)
+            self.repo.save(room)
+            await self._edit_public(room, battle)
+
+    async def submit_doll_support(self, room_id, user_id, slot, target=None,
+                                  expected_round=None):
+        async with self.lock(room_id):
+            room, battle = self.running_battle(room_id, user_id)
+            await self.check_witch_deadline(room, battle)
+            if expected_round is not None and battle.planning_round != expected_round:
+                raise TotalRaidError('此面板的回合已結束，請重新開啟行動面板。')
+            battle.submit_doll(user_id, slot, target)
             room['battle'] = dump_total_battle(battle)
             self.repo.save(room)
             await self._edit_public(room, battle)

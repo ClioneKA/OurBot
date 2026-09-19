@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from core.rpg_battle import (PREPARATION_TIMING, SKILLS, Battle, Fighter, Rule, default_rules,
+from core.rpg_battle import (DOLL_SKILL_IDS, PREPARATION_TIMING, SKILLS, Battle, Fighter, Rule, default_rules,
                              dump_battle, load_battle, raid_battle, skill_description)
 
 
@@ -13,6 +13,62 @@ def fighter(name='A', team=0, job='民兵', hp=200, dex=10, attack=40, rules=Non
 
 
 class BattleTests(unittest.TestCase):
+    def test_doll_counter_on_an_ally_credits_the_support_owner(self):
+        owner = fighter('owner', attack=1, rules=[])
+        owner.user_id = 1
+        ally = fighter('ally', hp=500, attack=1, rules=[])
+        ally.user_id = 2
+        ally.hp = 200
+        enemy = fighter('enemy', 1, hp=5000, attack=1, rules=[])
+        owner.doll_support = {
+            'name': '反擊人偶',
+            'stats': {'HP': 500, '攻擊': 100, '防禦': 50, '治療量': 50,
+                      '命中率': 200, '閃避率': 0, '暴擊率': 0},
+            'speed': 50, 'ready_round': 1,
+            'skills': [{
+                'slot': 1, 'key': 'counter', 'rarity': '稀有',
+                'skill_id': DOLL_SKILL_IDS['counter', '稀有'],
+                'condition': 'ally50', 'target': 'lowest',
+                'maximum': 1, 'remaining': 1,
+            }],
+        }
+        battle = Battle([owner, ally, enemy], seed=1)
+        battle.round = 1
+
+        self.assertTrue(battle.activate_doll(owner, automatic=True))
+        self.assertTrue(ally.has('taunt', battle.round))
+        before = owner.combat_stats['damage_dealt']
+        battle.hit(enemy, ally, 1)
+
+        self.assertGreater(owner.combat_stats['damage_dealt'], before)
+        self.assertEqual(ally.combat_stats['damage_dealt'], 0)
+
+    def test_automatic_doll_support_uses_charges_with_two_full_rounds_between(self):
+        owner = fighter(attack=1, rules=[])
+        owner.user_id = 1
+        owner.doll_support = {
+            'name': '支援人偶',
+            'stats': {'HP': 500, '攻擊': 100, '防禦': 50, '治療量': 50,
+                      '命中率': 200, '閃避率': 0, '暴擊率': 0},
+            'speed': 50, 'ready_round': 1,
+            'skills': [{
+                'slot': 1, 'key': 'power_strike', 'rarity': '史詩',
+                'skill_id': DOLL_SKILL_IDS['power_strike', '史詩'],
+                'condition': 'always', 'target': 'lowest',
+                'maximum': 2, 'remaining': 2,
+            }],
+        }
+        enemy = fighter('enemy', 1, hp=5000, attack=1, rules=[])
+        battle = Battle([owner, enemy], seed=1, max_rounds=6)
+
+        for _ in range(4):
+            battle.step()
+
+        self.assertEqual(owner.doll_support['skills'][0]['remaining'], 0)
+        support_logs = [line for line in battle.log if '支援人偶 使用【史詩・動力重擊】' in line]
+        self.assertEqual(len(support_logs), 2)
+        self.assertEqual(owner.doll_support['ready_round'], 7)
+
     def test_shifted_cooldowns_preserve_original_intervals_with_reductions(self):
         original = {
             '民兵': (2, 3, 3), '裝甲步兵': (2, 3, 3, 4, 4),
