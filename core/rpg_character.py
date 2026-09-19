@@ -1321,7 +1321,7 @@ class Characters:
                 equipment_instance_id FROM rpg_crystal_instances
                 WHERE equipment_instance_id IN ({placeholders}) ORDER BY equipment_instance_id,socket_index''',
                 tuple(equipped_instances.values())).fetchall()
-            unique_affixes = set()
+            unique_affixes = {}
             additive = {'HP', '攻擊', '防禦', '治療量', 'accuracy', 'critical_points',
                         'evasion_points', 'speed', 'lifesteal_percent',
                         'healing_received_percent'}
@@ -1330,17 +1330,19 @@ class Characters:
                 values = tuple(json.loads(values_json))
                 if crystal_type == 'source' and crystal_job != job:
                     raise CharacterError('已鑲嵌的源色結晶與目前職業不符。')
-                if any(effect not in additive for effect in effects):
-                    if affix_id in unique_affixes:
-                        # Older versions allowed socketing a duplicate after both
-                        # items were equipped. Keep those characters playable while
-                        # treating later copies as inactive; new duplicates are
-                        # rejected by CrystalStore.socket and Characters.equip.
-                        continue
-                    unique_affixes.add(affix_id)
-                crystal_effects.append(dict(
+                crystal_effect = dict(
                     type=crystal_type, affix_id=affix_id, effects=effects, values=values,
-                    job=crystal_job, equipment_instance_id=equipment_id))
+                    job=crystal_job, equipment_instance_id=equipment_id)
+                if any(effect not in additive for effect in effects):
+                    existing_index = unique_affixes.get(affix_id)
+                    if existing_index is not None:
+                        # Unique effects never stack. If duplicates are socketed,
+                        # retain the stronger roll regardless of equipment order.
+                        if values > crystal_effects[existing_index]['values']:
+                            crystal_effects[existing_index] = crystal_effect
+                        continue
+                    unique_affixes[affix_id] = len(crystal_effects)
+                crystal_effects.append(crystal_effect)
         return dict(level=level, job=job, stage=stage, capacity=capacity, slots=slots,
                     title=job if job == '民兵' else PREFIXES[stage] + job,
                     base=base, bonus=bonus, total=total, combat=combat, equipped=equipped,

@@ -219,7 +219,7 @@ class CrystalStoreTests(unittest.TestCase):
                    if effect['affix_id'] == 'source_focused_shot']
         self.assertEqual(len(focused), 1)
 
-    def test_socket_rejects_duplicate_unique_effect_on_equipped_items(self):
+    def test_socket_allows_duplicate_unique_effect_and_uses_stronger_roll(self):
         self.rpg.award_voice([(1, 3, level_floor(70))])
         self.characters.change_job(1, 3, '弓兵')
         weapon_id = self.characters.grant_item(1, 3, 'maze:archer:weapon')[0]
@@ -241,9 +241,12 @@ class CrystalStoreTests(unittest.TestCase):
                 VALUES (1,3,'source','精製','source_focused_shot','["focused_shot"]',
                         '[4]','弓兵','test','socket-duplicate',3,3,1,1)''').lastrowid
         self.assertIsNotNone(self.crystals.get(mounted))
-        with self.assertRaisesRegex(CharacterError, '相同的唯一結晶效果'):
-            self.crystals.socket(1, 3, candidate, suit_id)
-        self.assertIsNone(self.crystals.get(candidate).equipment_instance_id)
+        self.crystals.socket(1, 3, candidate, suit_id)
+        self.assertEqual(self.crystals.get(candidate).equipment_instance_id, suit_id)
+        focused = [effect for effect in self.characters.snapshot(1, 3)['crystal_effects']
+                   if effect['affix_id'] == 'source_focused_shot']
+        self.assertEqual(len(focused), 1)
+        self.assertEqual(focused[0]['values'], (4,))
 
     def test_socket_type_job_removal_and_outline_stats_are_transactional(self):
         now = self.finish_stage(1, 120)

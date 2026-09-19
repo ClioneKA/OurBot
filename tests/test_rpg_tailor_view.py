@@ -116,7 +116,7 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         await self.view.handle(self.interaction, 'refresh')
         self.assertFalse(next(c for c in self.view.children if getattr(c, 'label', '') == '確認刺繡').disabled)
 
-    def add_crystal(self, crystal_type, reward_slot=0):
+    def add_crystal(self, crystal_type, reward_slot=0, quality='習作'):
         definitions = {
             'outline': ('outline_attack', '["攻擊"]', '[15]', None),
             'color': ('color_speed', '["speed"]', '[5]', None),
@@ -127,9 +127,9 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
             cursor = self.store.db.execute('''INSERT INTO rpg_crystal_instances
                 (guild_id,user_id,crystal_type,quality,affix_id,effect_keys,rolled_values,
                  job,source_painting_id,source_room_id,source_user_id,source_stage,
-                 reward_slot,created_at) VALUES (1,1,?,'習作',?,?,?,?,
-                 'test','tailor-view',1,1,?,1)''',
-                (crystal_type, affix, effects, values, job, reward_slot))
+                 reward_slot,created_at) VALUES (1,1,?,?,?,?,?,?,
+                  'test','tailor-view',1,1,?,1)''',
+                (crystal_type, quality, affix, effects, values, job, reward_slot))
         return cursor.lastrowid
 
     async def test_equipment_first_socket_and_replace(self):
@@ -223,6 +223,70 @@ class TailorViewTests(unittest.IsolatedAsyncioTestCase):
         await view.handle(self.interaction, 'refresh')
         self.assertFalse(view.available_crystals)
         self.assertIn('力量輪廓', str(view.embed().to_dict()))
+
+    async def test_crystal_category_and_sort_controls(self):
+        outline = self.add_crystal('outline', quality='習作')
+        color = self.add_crystal('color', 1, quality='傑作')
+        source = self.add_crystal('source', 2, quality='精製')
+        equipment = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+        await view.handle(self.interaction, 'equipment', f'instance:{equipment}')
+
+        select = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'crystal')
+        self.assertEqual([int(option.value) for option in select.options],
+                         [color, source, outline])
+        self.assertIn('分類：全部｜排序：品質', view.embed().footer.text)
+
+        await view.handle(self.interaction, 'filter')
+        self.assertEqual(view.crystal_filter, 'outline')
+        self.assertEqual(view.available_crystals, {outline})
+        await view.handle(self.interaction, 'filter')
+        self.assertEqual(view.available_crystals, {color})
+        await view.handle(self.interaction, 'filter')
+        self.assertEqual(view.available_crystals, {source})
+        await view.handle(self.interaction, 'filter')
+        await view.handle(self.interaction, 'sort')
+
+        select = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'crystal')
+        self.assertEqual(view.crystal_filter, 'all')
+        self.assertEqual(view.crystal_sort, 'newest')
+        self.assertEqual([int(option.value) for option in select.options],
+                         [source, color, outline])
+
+    async def test_duplicate_unique_effect_warns_but_can_be_socketed(self):
+        self.store.award_voice([(1, 1, level_floor(70))])
+        mounted = self.add_crystal('source', quality='習作')
+        candidate = self.add_crystal('source', 1, quality='傑作')
+        weapon = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        suit = self.characters.grant_item(1, 1, 'maze:archer:suit')[0]
+        with self.store.db:
+            self.store.db.execute(
+                'UPDATE rpg_crystal_instances SET rolled_values=? WHERE instance_id=?',
+                ('[4]', candidate))
+            self.store.db.executemany('INSERT OR REPLACE INTO rpg_equipment VALUES (1,1,?,?)',
+                                      (('武器', weapon), ('套裝', suit)))
+        self.crystals.socket(1, 1, mounted, weapon)
+        view = CrystalTailorView(self.cog, self.interaction)
+        self.addCleanup(view.stop)
+
+        await view.handle(self.interaction, 'equipment', f'instance:{suit}')
+        await view.handle(self.interaction, 'crystal', str(candidate))
+
+        self.assertIn(weapon, view.equipped_ids)
+        self.assertEqual(view.crystals[mounted].equipment_instance_id, weapon)
+        self.assertIsNotNone(view._unique_conflict(
+            view.crystals.values(), view.equipment[f'instance:{suit}'],
+            view.crystals[candidate]))
+        preview = view.embed().to_dict()
+        warning = next(field for field in preview['fields']
+                       if field['name'] == '⚠️ 唯一效果重複')
+        self.assertIn(f'裝備 #{weapon}', warning['value'])
+        self.assertIn('只採用數值較高的一顆', warning['value'])
+        await view.handle(self.interaction, 'apply')
+        self.assertEqual(self.crystals.get(candidate).equipment_instance_id, suit)
 
     async def test_stale_slot_requires_updated_preview(self):
         first = self.add_crystal('outline')

@@ -18,6 +18,10 @@ QUALITY_WEIGHTS = {'習作': 70, '精製': 25, '傑作': 5}
 QUALITY_MULTIPLIERS = {'習作': 1.0, '精製': 1.3, '傑作': 1.65}
 QUALITY_SELL_PRICES = {'習作': 600, '精製': 1200, '傑作': 2500}
 CRYSTAL_REMOVAL_PRICE = 1500
+ADDITIVE_EFFECTS = frozenset({
+    'HP', '攻擊', '防禦', '治療量', 'accuracy', 'critical_points',
+    'evasion_points', 'speed', 'lifesteal_percent', 'healing_received_percent',
+})
 
 # label, effect key, base minimum, base maximum.  Composite outline affixes
 # split one budget between two values instead of granting two full affixes.
@@ -141,6 +145,10 @@ def crystal_effect_text(crystal):
         else:
             parts.append(f'{effect} +{value}')
     return '、'.join(parts)
+
+
+def crystal_has_unique_effect(crystal):
+    return any(effect not in ADDITIVE_EFFECTS for effect in crystal.effect_keys)
 
 
 @dataclass(frozen=True)
@@ -405,23 +413,6 @@ class CrystalStore:
                 (equipment_id, socket_index)).fetchone()
             if existing and not replace_existing:
                 raise CharacterError('這個槽位已有結晶；請選擇付費拆除或直接覆蓋。')
-            additive = {'HP', '攻擊', '防禦', '治療量', 'accuracy',
-                        'critical_points', 'evasion_points', 'speed',
-                        'lifesteal_percent', 'healing_received_percent'}
-            if any(effect not in additive for effect in crystal.effect_keys):
-                equipped = self.db.execute('''SELECT 1 FROM rpg_equipment
-                    WHERE guild_id=? AND user_id=? AND instance_id=?''',
-                    (guild_id, user_id, equipment_id)).fetchone()
-                if equipped:
-                    duplicate = self.db.execute('''SELECT 1
-                        FROM rpg_crystal_instances c
-                        JOIN rpg_equipment e ON e.instance_id=c.equipment_instance_id
-                        WHERE e.guild_id=? AND e.user_id=?
-                        AND c.equipment_instance_id<>? AND c.affix_id=? LIMIT 1''',
-                        (guild_id, user_id, equipment_id, crystal.affix_id)).fetchone()
-                    if duplicate:
-                        raise CharacterError(
-                            '目前穿戴裝備已有相同的唯一結晶效果；請改用其他詞綴。')
             if existing:
                 self.db.execute('DELETE FROM rpg_crystal_instances WHERE instance_id=?', existing)
             updated = self.db.execute('''UPDATE rpg_crystal_instances

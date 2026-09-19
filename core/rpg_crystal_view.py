@@ -6,7 +6,7 @@ import discord
 from core.rpg_character import CharacterError, inventory_entry_label, item_text
 from core.rpg_crystals import (CRYSTAL_TYPES,
                                QUALITY_SELL_PRICES, crystal_affix_name,
-                               crystal_effect_text)
+                               crystal_effect_text, crystal_has_unique_effect)
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import navigate
 
@@ -18,6 +18,20 @@ MODE_LABELS = {
     'sell': '出售',
     'give': '給予',
 }
+CRYSTAL_FILTERS = {
+    'all': '全部',
+    'outline': '輪廓',
+    'color': '色彩',
+    'source': '源色',
+}
+CRYSTAL_SORTS = {
+    'quality': '品質',
+    'newest': '最新',
+    'oldest': '最舊',
+    'affix': '詞條',
+}
+QUALITY_RANK = {'習作': 0, '精製': 1, '傑作': 2}
+TYPE_RANK = {crystal_type: index for index, crystal_type in enumerate(CRYSTAL_TYPES)}
 
 
 class CrystalRecipientSelect(discord.ui.UserSelect):
@@ -31,6 +45,7 @@ class CrystalTailorView(discord.ui.View):
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
         self.mode, self.page = 'socket', 0
+        self.crystal_filter, self.crystal_sort = 'all', 'quality'
         self.equipment_page = 0
         self.selected_crystal = self.selected_equipment = None
         self.recipient = None
@@ -70,6 +85,30 @@ class CrystalTailorView(discord.ui.View):
                      if entry and crystal and other.equipment_instance_id == entry.instance_id
                      and other.crystal_type == crystal.crystal_type), None)
 
+    def _unique_conflict(self, crystals, entry, crystal):
+        if not entry or not crystal or not crystal_has_unique_effect(crystal):
+            return None
+        return next((other for other in crystals
+                     if other.equipment_instance_id in self.equipped_ids
+                     and other.equipment_instance_id != entry.instance_id
+                     and other.affix_id == crystal.affix_id), None)
+
+    def _filter_and_sort(self, crystals):
+        if self.crystal_filter != 'all':
+            crystals = [crystal for crystal in crystals
+                        if crystal.crystal_type == self.crystal_filter]
+        if self.crystal_sort == 'newest':
+            return sorted(crystals, key=lambda crystal: crystal.instance_id, reverse=True)
+        if self.crystal_sort == 'oldest':
+            return sorted(crystals, key=lambda crystal: crystal.instance_id)
+        if self.crystal_sort == 'affix':
+            return sorted(crystals, key=lambda crystal: (
+                TYPE_RANK[crystal.crystal_type], crystal_affix_name(crystal),
+                -QUALITY_RANK[crystal.quality], -crystal.instance_id))
+        return sorted(crystals, key=lambda crystal: (
+            -QUALITY_RANK[crystal.quality], TYPE_RANK[crystal.crystal_type],
+            crystal_affix_name(crystal), -crystal.instance_id))
+
     def rebuild(self):
         all_crystals = self.cog.painted_maze.crystals.inventory(self.guild_id, self.owner.id)
         equipment = self._equipment_entries()
@@ -86,6 +125,7 @@ class CrystalTailorView(discord.ui.View):
             primary = [crystal for crystal in all_crystals if crystal.equipment_instance_id is None]
         else:
             primary = all_crystals
+        primary = self._filter_and_sort(primary)
         self.available_crystals = {crystal.instance_id for crystal in primary}
         if self.selected_crystal not in self.available_crystals:
             self.selected_crystal = None
@@ -136,6 +176,8 @@ class CrystalTailorView(discord.ui.View):
         elif self.mode == 'give':
             self._button('確認給予', 'apply', 3, disabled=crystal is None or self.recipient is None,
                          style=discord.ButtonStyle.success)
+        self._button(f'分類：{CRYSTAL_FILTERS[self.crystal_filter]}', 'filter', 3)
+        self._button(f'排序：{CRYSTAL_SORTS[self.crystal_sort]}', 'sort', 3)
         self._button('結晶上一頁', 'previous', 3, disabled=self.page == 0)
         self._button('結晶下一頁', 'next', 3, disabled=self.page == self.pages - 1)
         if self.mode == 'socket' and self.equipment_pages > 1:
@@ -183,6 +225,13 @@ class CrystalTailorView(discord.ui.View):
                         f'換成：{self._crystal_title(crystal)}\n'
                         f'{crystal_effect_text(crystal)}\n'
                         + ('確認後舊結晶會被摧毀。' if old else '免費鑲嵌。')), inline=False)
+                    conflict = self._unique_conflict(self.crystals.values(), entry, crystal)
+                    if conflict:
+                        embed.add_field(name='⚠️ 唯一效果重複', value=(
+                            f'已穿戴裝備 #{conflict.equipment_instance_id} 的 '
+                            f'{self._crystal_title(conflict)} 具有相同詞條。\n'
+                            '仍可確認鑲嵌，但效果不會疊加；戰鬥時只採用數值較高的一顆。'),
+                            inline=False)
         if self.recipient is not None:
             embed.add_field(name='接收者', value=getattr(self.recipient, 'mention',
                                                         f'<@{self.recipient.id}>'))
@@ -192,7 +241,9 @@ class CrystalTailorView(discord.ui.View):
         if notice:
             embed.add_field(name='加工結果', value=notice, inline=False)
         embed.set_footer(text=(f'裝備第 {self.equipment_page + 1}/{self.equipment_pages} 頁｜' if self.mode == 'socket' else '')
-                         + f'結晶第 {self.page + 1}/{self.pages} 頁')
+                         + f'結晶第 {self.page + 1}/{self.pages} 頁｜'
+                         + f'分類：{CRYSTAL_FILTERS[self.crystal_filter]}｜'
+                         + f'排序：{CRYSTAL_SORTS[self.crystal_sort]}')
         return embed
 
     async def interaction_check(self, interaction):
@@ -242,6 +293,18 @@ class CrystalTailorView(discord.ui.View):
                     self.recipient = value
                 elif action in ('previous', 'next'):
                     self.page = max(0, self.page + (1 if action == 'next' else -1))
+                    self.selected_crystal = None
+                    self.recipient = None
+                elif action in ('filter', 'sort'):
+                    choices = CRYSTAL_FILTERS if action == 'filter' else CRYSTAL_SORTS
+                    current = self.crystal_filter if action == 'filter' else self.crystal_sort
+                    values = tuple(choices)
+                    updated = values[(values.index(current) + 1) % len(values)]
+                    if action == 'filter':
+                        self.crystal_filter = updated
+                    else:
+                        self.crystal_sort = updated
+                    self.page = 0
                     self.selected_crystal = None
                     self.recipient = None
                 elif action == 'apply':
