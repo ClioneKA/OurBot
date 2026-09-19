@@ -500,7 +500,7 @@ class WitchRestService:
                 if reward['gold']:
                     drops.append(f'金幣 ×{reward["gold"]:,}')
                 if reward['treasure']:
-                    drops.append(f'秘寶：{ITEMS[reward["treasure"]].name}')
+                    drops.append(f'**秘寶：{ITEMS[reward["treasure"]].name}**')
                 lines.append(f'<@{user_id}>：' + '、'.join(drops or ('無額外掉落',)))
             embed.add_field(name='個人獎勵', value='\n'.join(lines)[:1024], inline=False)
         embed.add_field(name='戰鬥摘要', value='\n'.join(room['battle'].get('log', [])[-8:])[-1024:] or '無。', inline=False)

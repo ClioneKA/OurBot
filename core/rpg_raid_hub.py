@@ -88,7 +88,8 @@ class RaidHubView(discord.ui.View):
         embed = discord.Embed(title='安安大冒險｜討伐', color=0xA855F7, description=description)
         record = (f'最高通關：{max(0, progress["highest_enrage"]):,}%\n'
                   f'總勝場：{progress["total_wins"]}｜有效勝場：{progress["eligible_wins"]}\n'
-                  f'秘寶乾旱：{progress["dry_wins"]}｜幸運點：{progress["luck_points"]}')
+                  f'連續未獲秘寶：{progress["dry_wins"]} 場｜'
+                  f'秘寶機率加成：+{progress["luck_points"] * .5:g}%')
         earned = [title for threshold, title in zip((1_000, 2_000, 4_000), witch.titles)
                   if progress['highest_enrage'] >= threshold]
         if earned:

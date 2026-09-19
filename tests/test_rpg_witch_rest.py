@@ -613,6 +613,18 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
             (room['id'], self.host.id)).fetchone()[0]
         self.assertEqual(count, 1)
 
+    async def test_result_embed_highlights_treasure_drops(self):
+        room = {
+            'result': '勝利', 'practice': False, 'witch_id': 'ema', 'enrage': 100,
+            'battle': {'rounds': 3, 'log': []},
+        }
+        reward = {'items': {}, 'gold': 0, 'treasure': 'witch_rest:crystal'}
+
+        embed = self.service.result_embed(room, [(self.host.id, reward)])
+
+        reward_field = next(field for field in embed.fields if field.name == '個人獎勵')
+        self.assertIn('**秘寶：凝聚魔女結晶**', reward_field.value)
+
 
 if __name__ == '__main__':
     unittest.main()
