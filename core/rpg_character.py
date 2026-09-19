@@ -1332,7 +1332,11 @@ class Characters:
                     raise CharacterError('已鑲嵌的源色結晶與目前職業不符。')
                 if any(effect not in additive for effect in effects):
                     if affix_id in unique_affixes:
-                        raise CharacterError('穿戴中的裝備含有重複的唯一結晶效果。')
+                        # Older versions allowed socketing a duplicate after both
+                        # items were equipped. Keep those characters playable while
+                        # treating later copies as inactive; new duplicates are
+                        # rejected by CrystalStore.socket and Characters.equip.
+                        continue
                     unique_affixes.add(affix_id)
                 crystal_effects.append(dict(
                     type=crystal_type, affix_id=affix_id, effects=effects, values=values,

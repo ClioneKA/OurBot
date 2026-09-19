@@ -196,6 +196,55 @@ class CrystalStoreTests(unittest.TestCase):
         self.assertEqual(state['equipped_instances']['武器'], weapon_id)
         self.assertNotEqual(state['equipped_instances'].get('套裝'), suit_id)
 
+    def test_legacy_equipped_duplicate_uses_one_effect_without_blocking_snapshot(self):
+        self.rpg.award_voice([(1, 3, level_floor(70))])
+        self.characters.change_job(1, 3, '弓兵')
+        weapon_id = self.characters.grant_item(1, 3, 'maze:archer:weapon')[0]
+        suit_id = self.characters.grant_item(1, 3, 'maze:archer:suit')[0]
+        with self.rpg.db:
+            self.rpg.db.execute(
+                'DELETE FROM rpg_equipment WHERE guild_id=1 AND user_id=3'
+            )
+            self.rpg.db.executemany('''INSERT INTO rpg_crystal_instances
+                (guild_id,user_id,crystal_type,quality,affix_id,effect_keys,rolled_values,
+                 job,source_painting_id,source_room_id,source_user_id,source_stage,
+                 reward_slot,created_at,equipment_instance_id,socket_index)
+                VALUES (1,3,'source','習作','source_focused_shot','["focused_shot"]',
+                        '[3]','弓兵','test','legacy-duplicate',3,3,?,1,?,2)''',
+                ((slot, equipment_id) for slot, equipment_id in enumerate((weapon_id, suit_id))))
+            self.rpg.db.executemany('INSERT INTO rpg_equipment VALUES (1,3,?,?)',
+                                    (('武器', weapon_id), ('套裝', suit_id)))
+        state = self.characters.snapshot(1, 3)
+        focused = [effect for effect in state['crystal_effects']
+                   if effect['affix_id'] == 'source_focused_shot']
+        self.assertEqual(len(focused), 1)
+
+    def test_socket_rejects_duplicate_unique_effect_on_equipped_items(self):
+        self.rpg.award_voice([(1, 3, level_floor(70))])
+        self.characters.change_job(1, 3, '弓兵')
+        weapon_id = self.characters.grant_item(1, 3, 'maze:archer:weapon')[0]
+        suit_id = self.characters.grant_item(1, 3, 'maze:archer:suit')[0]
+        self.characters.equip(1, 3, weapon_id)
+        self.characters.equip(1, 3, suit_id)
+        with self.rpg.db:
+            mounted = self.rpg.db.execute('''INSERT INTO rpg_crystal_instances
+                (guild_id,user_id,crystal_type,quality,affix_id,effect_keys,rolled_values,
+                 job,source_painting_id,source_room_id,source_user_id,source_stage,
+                 reward_slot,created_at,equipment_instance_id,socket_index)
+                VALUES (1,3,'source','習作','source_focused_shot','["focused_shot"]',
+                        '[3]','弓兵','test','socket-duplicate',3,3,0,1,?,2)''',
+                (weapon_id,)).lastrowid
+            candidate = self.rpg.db.execute('''INSERT INTO rpg_crystal_instances
+                (guild_id,user_id,crystal_type,quality,affix_id,effect_keys,rolled_values,
+                 job,source_painting_id,source_room_id,source_user_id,source_stage,
+                 reward_slot,created_at)
+                VALUES (1,3,'source','精製','source_focused_shot','["focused_shot"]',
+                        '[4]','弓兵','test','socket-duplicate',3,3,1,1)''').lastrowid
+        self.assertIsNotNone(self.crystals.get(mounted))
+        with self.assertRaisesRegex(CharacterError, '相同的唯一結晶效果'):
+            self.crystals.socket(1, 3, candidate, suit_id)
+        self.assertIsNone(self.crystals.get(candidate).equipment_instance_id)
+
     def test_socket_type_job_removal_and_outline_stats_are_transactional(self):
         now = self.finish_stage(1, 120)
         outlines = self.crystals.seal_stage(self.room['id'], 1, now=now)
