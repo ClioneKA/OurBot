@@ -14,8 +14,22 @@ class FinalVoteView(discord.ui.View):
         try:
             async with self.service.lock(self.room_id):
                 room = self.service.repo.vote_final(self.room_id, interaction.user.id, choice)
+                complete = all(str(uid) in room['final_vote']['votes'] for uid in room['members'])
+                if complete:
+                    room = self.service.repo.resolve_final_vote(self.room_id)
+                    if room['status'] == 'retreated':
+                        room = self.service.recover_rewards(room['id'])
+                        self.service.cog.divinations.clear_raid(room['id'])
                 await self.service._refresh(room)
-            await interaction.followup.send('已登記去留選擇；截止前可修改。', ephemeral=True)
+                if room['status'] == 'retreated':
+                    await self.service._archive(room)
+            await interaction.followup.send(
+                ('全員已投票，已進入尾王戰前休息點。'
+                 if complete and room['final_vote']['result'] == 'enter' else
+                 '全員已投票，隊伍已撤退。'
+                 if complete else
+                 '已登記去留選擇；全員投完後立即結算，截止前可修改。'),
+                ephemeral=True)
         except CharacterError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 

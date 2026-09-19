@@ -626,7 +626,7 @@ class PaintedMazeService:
                             '舊版房間已發放的幕間掉落不追扣。')
                     embed.add_field(name='全隊去留投票', value=(
                         f'挑戰 {entering} 票｜撤退 {leaving} 票｜截止 <t:{int(vote["deadline"])}:R>\n'
-                        '超過全隊半數同意才進入；平票或同意不足則撤退。\n'
+                        '全員投票後立即結算；未投票與平票預設挑戰尾王。\n'
                         + risk), inline=False)
         else:
             embed.add_field(name='結果', value=room.get('end_reason', room['status']), inline=False)

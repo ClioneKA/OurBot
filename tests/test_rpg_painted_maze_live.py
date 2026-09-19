@@ -49,6 +49,27 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(saved['last_contract_vote']['resolved_at'], saved['last_contract_vote']['deadline'])
         self.assertEqual(self.service._refresh.call_args.args[0]['status'], 'running')
 
+    async def test_last_final_vote_immediately_advances_and_tie_defaults_to_enter(self):
+        room = self.reach_final_vote()
+        view = FinalVoteView(self.service, room['id'])
+        for uid, choice in ((1, 'enter'), (2, 'retreat')):
+            interaction = SimpleNamespace(user=SimpleNamespace(id=uid),
+                response=SimpleNamespace(defer=AsyncMock()), followup=SimpleNamespace(send=AsyncMock()))
+            await view.vote(interaction, choice)
+            if uid == 1:
+                self.assertIsNone(self.repo.get(room['id'])['final_vote']['result'])
+        saved = self.repo.get(room['id'])
+        self.assertEqual(saved['final_vote']['result'], 'enter')
+        self.assertLess(saved['final_vote']['resolved_at'], saved['final_vote']['deadline'])
+        self.assertEqual(self.service._refresh.call_args.args[0]['final_vote']['result'], 'enter')
+
+    def test_final_vote_timeout_defaults_missing_votes_to_enter(self):
+        room = self.reach_final_vote()
+        self.repo.vote_final(room['id'], 1, 'retreat', now=self.now)
+        resolved = self.repo.resolve_final_vote(room['id'], now=room['final_vote']['deadline'])
+        self.assertEqual(resolved['final_vote']['result'], 'enter')
+        self.assertEqual(resolved['status'], 'running')
+
     async def test_party_crystals_are_labelled_as_socketed_separately_from_loot(self):
         room = self.repo.get(self.room['id'])
         room['requires_entry'] = True
@@ -215,8 +236,8 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
             self.service.rewards.seal_currency(room['id'], 1)
         self.service.recover_rewards(room['id'])
         self.assertEqual(self.service.rewards.currency_rewards(room['id']), [])
-        # A tie (one yes, one no) protects the full loot.
-        self.repo.vote_final(room['id'], 1, 'enter', now=self.now)
+        # A retreat majority protects the full loot.
+        self.repo.vote_final(room['id'], 1, 'retreat', now=self.now)
         self.repo.vote_final(room['id'], 2, 'retreat', now=self.now)
         room = self.repo.resolve_final_vote(room['id'], now=room['final_vote']['deadline'])
         self.assertEqual(room['status'], 'retreated')

@@ -631,10 +631,14 @@ class PaintedMazeStore:
             vote = room.get('final_vote') if room else None
             if not vote or vote.get('result') or room['status'] != 'running':
                 return room
-            if now < vote['deadline']:
+            complete = all(str(uid) in vote['votes'] for uid in room['members'])
+            if now < vote['deadline'] and not complete:
                 raise PaintedMazeError('尾王去留投票尚未截止。')
-            entering = sum(vote['votes'].get(str(uid)) == 'enter' for uid in room['members'])
-            vote['result'] = 'enter' if entering > len(room['members']) / 2 else 'retreat'
+            choices = [vote['votes'].get(str(uid), 'enter') for uid in room['members']]
+            entering = choices.count('enter')
+            retreating = choices.count('retreat')
+            vote['result'] = 'enter' if entering >= retreating else 'retreat'
+            vote['resolved_at'] = now
             room['rest_ready'] = []
             if vote['result'] == 'retreat':
                 self._finish(room, 'retreated', None, '全隊投票撤退，保留全部累積掉落', now)
