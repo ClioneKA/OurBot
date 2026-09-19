@@ -1,6 +1,8 @@
 """Discord rooms for Witch Rest Ritual."""
 import asyncio
 from dataclasses import asdict
+import io
+import logging
 import random
 import time
 
@@ -15,10 +17,14 @@ from core.rpg_total_raids import (
     WitchBattleView,
     WITCH_BOSS,
     WITCH_ROUND_SECONDS,
+    complete_battle_report,
 )
 from core.rpg_witch_rest import MIN_LEVEL, WITCHES
 from core.rpg_witch_rest_battle import auto_battle_from_participants, manual_battle_from_participants
 from core.rpg_room_occupancy import occupied_room, room_lock
+
+
+logger = logging.getLogger(__name__)
 
 
 class WitchRestLobbyView(discord.ui.View):
@@ -128,7 +134,14 @@ class WitchRestService:
                     pass
             await self._close_index(room, '魔女安息儀式房間已逾時關閉。')
             await self._archive_thread(room, '魔女安息儀式房間已逾時')
+        for room in self.repo.pending_reports():
+            try:
+                await self._post_battle_report(room)
+            except discord.HTTPException:
+                logger.exception('Witch rest report delivery retry failed: %s', room['id'])
         for room in self.repo.archives_due(now=now):
+            if not room.get('report_message_id'):
+                continue
             await self._archive_thread(room, '魔女安息儀式結束後已保留一天')
             self.repo.mark_archived(room['id'])
 
@@ -288,12 +301,16 @@ class WitchRestService:
             self.repo.save(room)
             await self._edit_auto(room, battle)
             return
-        summary = {'mode': 'witch_rest_auto', 'rounds': battle.round,
-                   'result': battle.result, 'log': battle.log[-30:]}
-        room = self.repo.finish_room(room['id'], battle.result, summary)
+        snapshot = dump_total_battle(battle)
+        snapshot['rounds'] = battle.round  # Preserve the legacy result-summary field.
+        room = self.repo.finish_room(room['id'], battle.result, snapshot)
         room['rewards'] = self._settle_rewards(room)
         self.repo.save(room)
         await self._edit_auto(room, battle)
+        try:
+            await self._post_battle_report(room, battle)
+        except discord.HTTPException:
+            logger.exception('Witch rest report delivery failed: %s', room['id'])
 
     async def _resolve(self, room, battle, timeout=False):
         battle.resolve(use_defaults=timeout)
@@ -316,6 +333,57 @@ class WitchRestService:
             await self._edit_public(room, battle)
         finally:
             await self.refresh_private_panels(room)
+        if battle.result:
+            try:
+                await self._post_battle_report(room, battle)
+            except discord.HTTPException:
+                logger.exception('Witch rest report delivery failed: %s', room['id'])
+
+    def _reward_report_lines(self, room):
+        if room['practice']:
+            return ['練習模式：未消耗討伐之證、未發放獎勵，也未更新進度。']
+        lines = []
+        for user_id, reward in room.get('rewards', ()):
+            drops = [f'{ITEMS[key].name} ×{amount}' for key, amount in reward['items'].items()]
+            if reward['gold']:
+                drops.append(f'金幣 ×{reward["gold"]:,}')
+            if reward['treasure']:
+                drops.append(f'秘寶：{ITEMS[reward["treasure"]].name}')
+            lines.append(f'{user_id}: ' + '、'.join(drops or ('無額外掉落',)))
+        return lines or ['無獎勵。']
+
+    async def _post_battle_report(self, room, battle=None):
+        if room.get('report_message_id') or not room.get('battle'):
+            return
+        channel = self.bot.get_channel(room['channel_id'])
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return
+        snapshot = room['battle']
+        if battle is None and snapshot.get('fighters'):
+            battle = load_total_battle(snapshot)
+        witch = WITCHES[room['witch_id']]
+        rounds = battle.round if battle is not None else snapshot.get('rounds', snapshot.get('round', 0))
+        header = (f'魔女安息儀式 #{room["number"]}｜{room["result"]}\n'
+                  f'{witch.name}・魔女化 {room["enrage"]:,}%｜{rounds} 回合')
+        reward_lines = self._reward_report_lines(room)
+        if battle is not None:
+            report = complete_battle_report(battle, header, reward_lines)
+        else:
+            # Reports created by older versions only retained a bounded log summary.
+            lines = [header, '', '既有紀錄：', *snapshot.get('log', ()), '',
+                     '戰鬥結算：', '此戰於完整快照功能啟用前結束，無法回推個人統計。',
+                     '', '獎勵：', *reward_lines]
+            report = '\n'.join(str(line) for line in lines)
+        embed = self.result_embed(room, room.get('rewards', []))
+        embed.title = f'魔女安息儀式 #{room["number"]}｜完整戰報'
+        embed.set_footer(text='完整逐回合記錄、個人戰鬥統計與獎勵收錄於附件；討論串保留 24 小時。')
+        message = await channel.send(
+            embed=embed,
+            file=discord.File(io.BytesIO(report.encode('utf-8')),
+                              filename=f'witch-rest-{room["number"]}-complete.txt'),
+            allowed_mentions=discord.AllowedMentions.none())
+        room['report_message_id'] = message.id
+        self.repo.save(room)
     async def _edit_auto(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):

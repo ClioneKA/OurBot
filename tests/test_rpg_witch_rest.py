@@ -513,9 +513,18 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         saved = self.rest.get(room['id'])
         self.assertEqual(saved['status'], 'completed')
         self.assertEqual(saved['battle']['rounds'], 1)
+        self.assertIn('fighters', saved['battle'])
+        self.assertTrue(saved['report_message_id'])
         self.assertGreater(saved['archive_at'], saved['finished_at'])
         self.thread.edit.assert_not_awaited()
         self.thread.message.edit.assert_awaited_once()
+        self.thread.send.assert_awaited_once()
+        report = self.thread.send.call_args.kwargs['file'].fp.getvalue().decode('utf-8')
+        self.assertIn('完整逐回合記錄：', report)
+        self.assertIn('戰鬥結算：', report)
+        self.assertIn('獎勵：', report)
+        await self.service._post_battle_report(saved)
+        self.thread.send.assert_awaited_once()
 
     async def test_offline_manual_players_are_not_immediately_switched_to_auto(self):
         members = {user_id: HashableMember(user_id) for user_id in (10, 11, 12)}

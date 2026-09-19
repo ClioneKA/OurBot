@@ -42,6 +42,29 @@ PRIVATE_CONFIRMATION_SECONDS = 8
 WITCH_ROUND_SECONDS = 120
 
 
+def complete_battle_report(battle, header, reward_lines=()):
+    """Build the durable, human-readable report shared by witch activities."""
+    records = (battle.mechanics.get('witch_initial_log', []) +
+               [line for turn in battle.mechanics.get('witch_round_logs', []) for line in turn])
+    records = records or battle.log
+    settlement = []
+    for fighter in (item for item in battle.fighters if item.team == 0):
+        stats = fighter.combat_stats
+        skills = json.dumps(stats['skills_used'], ensure_ascii=False)
+        identity = f'{fighter.name}（{fighter.user_id}）' if fighter.user_id else fighter.name
+        settlement.append(
+            f'{identity}: 實際傷害 {stats["direct_damage"]}, '
+            f'輔助傷害 {stats["support_damage"]}, 治療 {stats["healing_done"]}, '
+            f'承傷 {stats["damage_taken"]}, 輔助承傷 {stats["support_taken"]}, '
+            f'命中 {stats["hits"]}/{stats["attacks"]}, '
+            f'暴擊 {stats["critical_hits"]}, 技能 {skills}')
+    lines = [header, '', '完整逐回合記錄：', *records,
+             '', '戰鬥結算：', *(settlement or ['無參戰資料。'])]
+    if reward_lines:
+        lines.extend(('', '獎勵：', *reward_lines))
+    return '\n'.join(str(line) for line in lines)
+
+
 def witch_day(now=None):
     return datetime.fromtimestamp(time.time() if now is None else now,
                                   timezone(timedelta(hours=8))).date().isoformat()
@@ -1757,16 +1780,18 @@ class TotalRaidService:
                     result = battle.result if battle else '待機房已關閉，未開戰'
                     names = '、'.join(PROFILE[k][1] for k in room.get('witch_ids', []))
                     header = f'魔女試煉 #{room["number"]}｜{result}\n{names}\n' + room.get('reward_text', '')
-                    records = []
                     if battle:
-                        records = (battle.mechanics.get('witch_initial_log', []) +
-                                   [line for turn in battle.mechanics.get('witch_round_logs', []) for line in turn]) or battle.log
                         header += '\n參戰：' + '、'.join(f'{p.name}（{p.user_id}）' for p in battle.fighters if p.team == 0)
-                    payload = (header + '\n\n' + '\n'.join(records)).encode('utf-8-sig')
+                    report = complete_battle_report(battle, header) if battle else header
+                    payload = report.encode('utf-8-sig')
+                    embed = discord.Embed(
+                        title=f'魔女試煉 #{room["number"]}｜完整戰報',
+                        description=header, color=0x8B5CF6)
+                    embed.set_footer(text='完整逐回合記錄與個人戰鬥統計收錄於附件。')
                     try:
                         message = await destination.send(
-                            embed=discord.Embed(title=f'魔女試煉 #{room["number"]}｜戰鬥紀錄', description=header, color=0x8B5CF6),
-                            file=discord.File(io.BytesIO(payload), filename=f'witch-trial-{room["number"]}.txt'),
+                            embed=embed,
+                            file=discord.File(io.BytesIO(payload), filename=f'witch-trial-{room["number"]}-complete.txt'),
                             allowed_mentions=discord.AllowedMentions.none())
                     except discord.HTTPException:
                         logger.exception('Witch archive delivery failed: %s', room['id'])

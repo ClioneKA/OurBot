@@ -650,6 +650,9 @@ class WitchRoomTests(TotalRaidRoomTests):
             contents = file.fp.getvalue().decode('utf-8-sig')
             self.assertIn('第一回合完整紀錄', contents)
             self.assertIn('最後一回合完整紀錄', contents)
+            self.assertIn('戰鬥結算：', contents)
+            self.assertIn('實際傷害', contents)
+            self.assertEqual(file.filename, f'witch-trial-{room["number"]}-complete.txt')
             channel.delete.side_effect = None
             await self.service.cleanup_witch_rooms(time.time())
             self.assertEqual(announcement.send.await_count, 2)

@@ -451,6 +451,11 @@ class WitchRestStore:
             (now,)).fetchall()
         return [room for row in rows if not (room := json.loads(row[0])).get('thread_archived')]
 
+    def pending_reports(self):
+        rows = self.db.execute(
+            "SELECT data FROM rpg_witch_rest_rooms WHERE status='completed'").fetchall()
+        return [room for row in rows if not (room := json.loads(row[0])).get('report_message_id')]
+
     def mark_archived(self, room_id):
         with self.db:
             room = self.room(room_id)
