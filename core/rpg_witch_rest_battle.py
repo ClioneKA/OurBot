@@ -32,9 +32,6 @@ REWRITE_ACTIONS = {
     'rewrite_defend': ('改寫過去・防禦', 'defend'),
 }
 
-EMA_ROUND_LIMITS = ((100, 30), (500, 17), (1_000, 22), (2_000, 29), (4_000, 30))
-
-
 def manual_stats(witch_id, enrage):
     """Linearly interpolate the approved four-player stat anchors."""
     anchors = MANUAL_STATS[witch_id]
@@ -45,14 +42,6 @@ def manual_stats(witch_id, enrage):
     ratio = (enrage - lower) / (upper - lower)
     return tuple(round(start + (end - start) * ratio)
                  for start, end in zip(anchors[lower], anchors[upper]))
-
-
-def manual_round_limit(witch_id, enrage):
-    if witch_id != 'ema':
-        return 30
-    return next(limit for floor, limit in reversed(EMA_ROUND_LIMITS) if enrage >= floor)
-
-
 class WitchRestManualBattle(WitchRaidBattle):
     """Restartable one-witch battle; bespoke thresholds build on this shell."""
     expected_witches = 1
@@ -148,6 +137,11 @@ class WitchRestManualBattle(WitchRaidBattle):
                 result *= .5
             if self.mechanics.get('rest_vulnerable_until', -1) >= self.round:
                 result *= 1.15
+            prosecution = self.pending.get('ema')
+            if (prosecution and prosecution.get('kind') == 'rest_prosecution'
+                    and any(self.fighter_for_key(key).hp > 0
+                            for key in prosecution.get('objects', []))):
+                result = 0
         return result
 
     def damage_dealt_multiplier(self, actor):
@@ -384,7 +378,7 @@ class WitchRestManualBattle(WitchRaidBattle):
             fraction = (.16 if self.enrage >= 4_000 else .14 if self.enrage >= 2_000
                         else .12 if self.enrage >= 1_000 else .10 if self.enrage >= 750
                         else .08)
-            fraction *= 1 + min(4, self.mechanics.get('ema_court_authority', 0)) * .5
+            fraction *= 1 + min(4, self.mechanics.get('ema_court_authority', 0)) * .25
             key = self.add_object(actor, 'factor_evidence', fraction)
             evidence = self.fighter_for_key(key)
             evidence.name = '因子證物'
@@ -440,16 +434,21 @@ class WitchRestManualBattle(WitchRaidBattle):
             self.mechanics['ema_guilt_due'] = True
         if data['objects'] and not any(self.fighter_for_key(key).hp > 0 for key in data['objects']):
             self.events['objects_broken'] += 1
-            authority = min(4, self.mechanics.get('ema_court_authority', 0) + 1)
+            authority = max(0, self.mechanics.get('ema_court_authority', 0) - 1)
             self.mechanics['ema_court_authority'] = authority
             self.log.append('因子證物已被擊破，起訴不成立。')
-            self.log.append(f'{actor.name}累積【法庭權威】{authority} 層，造成傷害提高 {authority * 25}%。')
+            if authority:
+                self.log.append(f'{actor.name}的【法庭權威】降至 {authority} 層。')
+            else:
+                self.log.append(f'{actor.name}的【法庭權威】已解除。')
             return
         targets = [self.fighter_for_key(key) for key in data['targets']]
         targets = [target for target in targets if target and target.hp > 0]
         if not targets:
-            self.log.append(f'{actor.name}的起訴沒有有效被告，本次撤銷。')
-            return
+            if self.enrage < 500:
+                self.log.append(f'{actor.name}的起訴沒有有效被告，本次撤銷。')
+                return
+            self.log.append(f'{actor.name}的起訴沒有有效被告，但因子證物仍未被反駁。')
         consumed = 0
         for target in targets:
             stacks = self.factor_stacks(target)
@@ -457,7 +456,8 @@ class WitchRestManualBattle(WitchRaidBattle):
                 self.log.append(f'{target.name}已反駁所有魔女因子，判決取消。')
                 continue
             authority = min(4, self.mechanics.get('ema_court_authority', 0))
-            requested = int(target.stats['HP'] * (12 + stacks * 8) / 100
+            verdict_percent = 25 + stacks * 10 if self.enrage >= 500 else 12 + stacks * 8
+            requested = int(target.stats['HP'] * verdict_percent / 100
                             * (1 + authority * .1)
                             * self.damage_taken_multiplier(target))
             actual, _, shared = self.apply_damage(target, requested, direct=True)
@@ -466,14 +466,32 @@ class WitchRestManualBattle(WitchRaidBattle):
             consumed += stacks
             self.log.append(
                 f'{actor.name}對 {target.name}作出判決，消耗 {stacks} 層魔女因子，造成 {actual + shared} 傷害。')
-        if consumed:
+        if self.enrage >= 500:
+            pressure = max(1, consumed)
+            healing = self.restore(actor, actor.stats['HP'] * pressure // 20)
+            shield = actor.stats['HP'] * pressure * 8 // 100
+            self.mechanics['rest_boss_shield'] = self.mechanics.get('rest_boss_shield', 0) + shield
+            self.log.append(f'{actor.name}回復 {healing} HP，並取得 {shield} 點判決護盾。')
+            authority = min(4, self.mechanics.get('ema_court_authority', 0) + 1)
+            self.mechanics['ema_court_authority'] = authority
+            backlash_percent = 10 + authority * 10
+            backlash = 0
+            for player in list(self.living(0)):
+                requested = int(player.stats['HP'] * backlash_percent / 100
+                                * self.damage_taken_multiplier(player))
+                actual, _, _ = self.apply_damage(
+                    player, requested, share_link=False, direct=True)
+                backlash += actual
+            self.log.append(
+                f'未反駁的因子證物引發【判決反噬】，全隊承受 {backlash_percent}% 最大 HP 傷害（共 {backlash}）。')
+            self.log.append(f'{actor.name}累積【法庭權威】{authority} 層，造成傷害提高 {authority * 25}%。')
+        elif consumed:
             healing = self.restore(actor, actor.stats['HP'] * consumed // 200)
             shield = actor.stats['HP'] * consumed // 100
             self.mechanics['rest_boss_shield'] = self.mechanics.get('rest_boss_shield', 0) + shield
             self.log.append(f'{actor.name}回復 {healing} HP，並取得 {shield} 點判決護盾。')
         for key in data['objects']:
             self.fighter_for_key(key).hp = 0
-        self.mechanics['ema_court_authority'] = 0
     def _resolve_player(self, actor, choice):
         category = self.action_category(choice)
         old_history = self.mechanics.setdefault('rest_action_history', {}).setdefault(
@@ -811,9 +829,7 @@ def manual_battle_from_participants(participants, witch_id, enrage, seed=None):
     stats = {'HP': round(hp * size / 4), '攻擊': round(attack * attack_scale),
              '防禦': defense, '治療量': 0, '命中率': 100, '閃避率': 5, '暴擊率': 10}
     boss = Fighter(WITCHES[witch_id].name, 1, witch_id, stats, 50, [], is_boss=True)
-    battle = WitchRestManualBattle(
-        players + [boss], witch_id, enrage, seed,
-        max_rounds=manual_round_limit(witch_id, enrage))
+    battle = WitchRestManualBattle(players + [boss], witch_id, enrage, seed)
     battle.mechanics.update(witch_party_size=size, witch_stat_anchor=manual_stats(witch_id, enrage))
     battle.log.extend(snapshot.log)
     return battle

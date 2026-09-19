@@ -777,8 +777,11 @@ def load_total_battle(data):
     if data.get('mode') == 'witch_rest_manual':
         from core.rpg_witch_battle import load_witch_battle
         from core.rpg_witch_rest_battle import WitchRestManualBattle
-        return load_witch_battle(data, battle_class=WitchRestManualBattle,
-                                 battle_args=(data['witch_id'], data['enrage']))
+        battle = load_witch_battle(data, battle_class=WitchRestManualBattle,
+                                   battle_args=(data['witch_id'], data['enrage']))
+        # Normalize snapshots created during the brief variable-limit rollout.
+        battle.max_rounds = 30
+        return battle
     if data.get('mode') == 'witch_raid':
         from core.rpg_witch_battle import load_witch_battle
         return load_witch_battle(data)

@@ -188,7 +188,7 @@ def choose_normal(battle, player, preferred=None):
     return submit(battle, player, 'attack', preferred)
 
 
-def plan_round(battle):
+def plan_round(battle, solve_evidence=True):
     players = sorted(battle.living(0), key=lambda item: item.user_id)
     if not players:
         return
@@ -212,7 +212,8 @@ def plan_round(battle):
         return
     preferred = None
     if pending and pending.get('kind') == 'rest_prosecution' and pending.get('objects'):
-        preferred = pending['objects'][0]
+        preferred = (pending['objects'][0] if solve_evidence
+                     else battle.key(battle.witch('ema')))
     echoes = [echo for echo in battle.mechanics.get('hiro_echoes', [])
               if battle.fighter_for_key(echo['object']).hp > 0]
     if echoes:
@@ -221,10 +222,10 @@ def plan_round(battle):
         choose_normal(battle, player, preferred)
 
 
-def simulate(witch_id, enrage, seed):
+def simulate(witch_id, enrage, seed, solve_evidence=True):
     battle = manual_battle_from_participants(PARTY, witch_id, enrage, seed)
     while not battle.result:
-        plan_round(battle)
+        plan_round(battle, solve_evidence)
         for user_id in list(battle.choices):
             battle.confirm(user_id)
         battle.resolve()
@@ -235,11 +236,13 @@ def simulate(witch_id, enrage, seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--runs', type=int, default=500)
+    parser.add_argument('--ignore-evidence', action='store_true')
     args = parser.parse_args()
     for witch in ('ema', 'hiro'):
         print(f'[{witch}]')
         for enrage in ENRAGES:
-            rows = [simulate(witch, enrage, seed) for seed in range(args.runs)]
+            rows = [simulate(witch, enrage, seed, not args.ignore_evidence)
+                    for seed in range(args.runs)]
             results = Counter(row[0] for row in rows)
             wins = [row for row in rows if row[0] == '勝利']
             rate = results['勝利'] * 100 / args.runs

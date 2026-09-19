@@ -26,7 +26,6 @@ from core.rpg_witch_rest_battle import (
     WitchRestManualBattle,
     auto_battle_from_participants,
     manual_battle_from_participants,
-    manual_round_limit,
     manual_stats,
     run_auto_battle,
 )
@@ -101,10 +100,6 @@ class WitchRestRulesTests(unittest.TestCase):
     def test_manual_stats_interpolate_approved_anchors(self):
         self.assertEqual(manual_stats('ema', 1000), (90_000, 1_625, 500))
         self.assertEqual(manual_stats('ema', 1500), (101_250, 1_772, 550))
-        self.assertEqual([manual_round_limit('ema', value)
-                          for value in (100, 500, 750, 1_000, 2_000, 4_000)],
-                         [30, 17, 17, 22, 29, 30])
-        self.assertEqual(manual_round_limit('hiro', 2_000), 30)
 
     def test_manual_battle_scales_party_and_survives_restart(self):
         participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
@@ -112,11 +107,16 @@ class WitchRestRulesTests(unittest.TestCase):
         boss = battle.witch('ema')
         self.assertEqual((boss.stats['HP'], boss.stats['攻擊'], boss.stats['防禦']),
                          (90_000, 1_625, 500))
-        self.assertEqual(battle.max_rounds, 22)
+        self.assertEqual(battle.max_rounds, 30)
         loaded = load_total_battle(dump_total_battle(battle))
         self.assertIsInstance(loaded, WitchRestManualBattle)
         self.assertEqual((loaded.witch_id, loaded.enrage), ('ema', 1000))
+        self.assertEqual(loaded.max_rounds, 30)
         self.assertEqual(loaded.rng.getstate(), battle.rng.getstate())
+
+        legacy = dump_total_battle(battle)
+        legacy['max_rounds'] = 17
+        self.assertEqual(load_total_battle(legacy).max_rounds, 30)
 
     def test_ema_prosecution_consumes_factors_and_builds_shield(self):
         participants = [self.participant(user_id, attack=100) for user_id in range(1, 4)]
@@ -191,16 +191,31 @@ class WitchRestRulesTests(unittest.TestCase):
         battle.prepare(boss)
         data = battle.pending.pop('ema')
         first_hp = battle.fighter_for_key(data['objects'][0]).stats['HP']
-        battle.fighter_for_key(data['objects'][0]).hp = 0
+        battle.pending['ema'] = data
+        self.assertEqual(battle.damage_taken_multiplier(boss), 0)
+        battle.pending.pop('ema')
         battle.spell(boss, data)
         self.assertEqual(battle.mechanics['ema_court_authority'], 1)
 
+        battle.mark(player, 'factor', 30, True)
         battle.prepare(boss)
         data = battle.pending.pop('ema')
         second_hp = battle.fighter_for_key(data['objects'][0]).stats['HP']
         self.assertGreater(second_hp, first_hp)
+        battle.fighter_for_key(data['objects'][0]).hp = 0
         battle.spell(boss, data)
         self.assertEqual(battle.mechanics['ema_court_authority'], 0)
+
+        ignored = manual_battle_from_participants(participants, 'ema', 500, seed=8)
+        boss = ignored.witch('ema')
+        ignored.prepare(boss)
+        data = ignored.pending.pop('ema')
+        before = [player.hp for player in ignored.living(0)]
+        ignored.spell(boss, data)
+        self.assertEqual(ignored.mechanics['ema_court_authority'], 1)
+        self.assertTrue(all(player.hp < hp
+                            for player, hp in zip(ignored.living(0), before)))
+        self.assertGreater(ignored.mechanics['rest_boss_shield'], 0)
 
         battle = manual_battle_from_participants(participants, 'ema', 1_000, seed=7)
         boss = battle.witch('ema')
