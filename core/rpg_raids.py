@@ -520,7 +520,8 @@ class RaidService:
                 alchemy = getattr(self.cog, 'alchemy', None)
                 if alchemy is not None:
                     for participant in participants:
-                        support = alchemy.support(raid['guild_id'], participant['id'])
+                        support = alchemy.prepare_support(
+                            raid['guild_id'], participant['id'], f'raid:{raid["id"]}')
                         if support:
                             participant['doll_support'] = support
                 raid['participants'] = participants

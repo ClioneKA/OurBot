@@ -127,11 +127,21 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(self.inventory()[skill_item], 1)
         with self.assertRaisesRegex(CharacterError, '不能重複'):
             self.alchemy.engrave(1, 10, core_id, 'combat', 2, skill_item)
-        support = self.alchemy.support(1, 10)
+        self.assertIsNone(self.alchemy.support(1, 10))
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=1000 '
+                                  'WHERE guild_id=1 AND user_id=10')
+        self.alchemy.set_combat_support(1, 10, True)
+        expected_cost = operation_fuel_cost(body)
+        support = self.alchemy.prepare_support(1, 10, 'raid:123', now=200)
         self.assertEqual(support['stats']['HP'], 50 + body['stats'][0] * 10)
         self.assertEqual(len(support['skills']), 1)
         self.assertEqual((support['skills'][0]['maximum'], support['skills'][0]['remaining']),
                          (3, 3))
+        self.assertEqual(support['fuel_cost'], expected_cost)
+        self.assertEqual(self.alchemy.state(1, 10)['fuel'], 1000 - expected_cost)
+        self.assertEqual(self.alchemy.prepare_support(1, 10, 'raid:123', now=201), support)
+        self.assertEqual(self.alchemy.state(1, 10)['fuel'], 1000 - expected_cost)
 
         human = dict(id=99, name='測試者', state=self.characters.snapshot(1, 10),
                      rules=[], basic_target='lowest', doll_support=support)

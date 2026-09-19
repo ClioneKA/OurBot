@@ -1219,7 +1219,8 @@ class TotalRaidService:
             alchemy = getattr(self.cog, 'alchemy', None)
             if alchemy is not None:
                 for participant in participants:
-                    support = alchemy.support(room['guild_id'], participant['id'])
+                    support = alchemy.prepare_support(
+                        room['guild_id'], participant['id'], f'total:{room["id"]}')
                     if support:
                         participant['doll_support'] = support
             provisions = getattr(self.cog, 'provisions', None)

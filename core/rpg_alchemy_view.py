@@ -152,6 +152,11 @@ class AlchemyView(discord.ui.View):
                                   ('自動化設定', 'automation')):
                 self.button(label, action, 0)
             self.button('命名', 'rename', 1)
+            combat_enabled = state['config'].get('combat_support', {}).get('enabled', False)
+            self.button(f'戰鬥支援：{"開" if combat_enabled else "關"}',
+                        'toggle_combat_support', 1,
+                        style=(discord.ButtonStyle.primary if combat_enabled
+                               else discord.ButtonStyle.secondary))
             self.button('分享人偶配置', 'share', 1)
             self.button('能力說明', 'stats', 1)
         elif self.page == 'automation':
@@ -356,10 +361,13 @@ class AlchemyView(discord.ui.View):
                          '、'.join(f'{name} {value}' for name, value in zip(STAT_NAMES, body['stats'])))
             core_text = ('尚未裝備' if not core else
                          f'Lv.{core["level"]} {core["orientation"]}｜核心 #{core["id"]}')
+            combat_enabled = state['config'].get('combat_support', {}).get('enabled', False)
+            combat_cost = operation_fuel_cost(body) if body else 100
             embed = discord.Embed(title=f'煉金人偶｜{state["name"]}', color=0xB8864B,
                 description=f'**素體**　{body_text}\n**思考核心**　{core_text}\n'
                             f'**燃料**　{state["fuel"]:,}\n'
-                            '**戰鬥支援**　參戰時自動攜帶，不占隊伍名額')
+                            f'**戰鬥支援**　{"已開啟" if combat_enabled else "未開啟"}｜'
+                            f'每場 {combat_cost} 燃料｜不占隊伍名額')
             if core:
                 combat_lines = []
                 for saved in core['skills']['combat']:
@@ -744,6 +752,14 @@ class AlchemyView(discord.ui.View):
                         self.confirm_fuel = False
                         notice = (f'已增加 {fuel} 燃料，目前最多為 {FUEL_CAPACITY:,}。' +
                                   (f'另有 {overflow} 燃料溢出。' if overflow else ''))
+                elif action == 'toggle_combat_support':
+                    current = self.cog.alchemy.state(
+                        self.guild_id, self.owner.id)['config'].get(
+                            'combat_support', {}).get('enabled', False)
+                    enabled = self.cog.alchemy.set_combat_support(
+                        self.guild_id, self.owner.id, not current)
+                    notice = ('已開啟戰鬥支援；每場建立支援時會消耗一次燃料。'
+                              if enabled else '已關閉戰鬥支援。')
                 elif action.startswith('toggle_life:'):
                     _, key, field = action.split(':')
                     current = self.cog.alchemy.state(

@@ -666,6 +666,27 @@ class AlchemyDolls:
                             (json.dumps(config, ensure_ascii=False), guild, user))
         return saved
 
+    def set_combat_support(self, guild, user, enabled):
+        if type(enabled) is not bool:
+            raise CharacterError('無效的戰鬥支援設定。')
+        if enabled:
+            state = self.state(guild, user)
+            if not state['active_body'] or not state['core']:
+                raise CharacterError('必須先安裝素體與思考核心。')
+            if not any(state['core']['skills']['combat']):
+                raise CharacterError('目前核心沒有刻入戰鬥技能石。')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self._ensure(guild, user)
+            row = self.db.execute('SELECT life_config FROM rpg_alchemy_dolls '
+                                  'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
+            config = json.loads(row[0])
+            config.setdefault('combat_support', {})['enabled'] = enabled
+            self.db.execute('UPDATE rpg_alchemy_dolls SET life_config=? '
+                            'WHERE guild_id=? AND user_id=?',
+                            (json.dumps(config, ensure_ascii=False), guild, user))
+        return enabled
+
     def _fuel_cost(self, body, operations):
         return operation_fuel_cost(body, operations)
 
@@ -874,11 +895,12 @@ class AlchemyDolls:
             self.db.execute('UPDATE rpg_alchemy_dolls SET name=? WHERE guild_id=? AND user_id=?',
                             (name, guild, user))
 
-    def support(self, guild, user):
+    def support(self, guild, user, *, require_enabled=True):
         """Build a per-battle support snapshot without adding another participant."""
         state = self.state(guild, user)
         body, core = state['active_body'], state['core']
-        if not body or not core:
+        enabled = state['config'].get('combat_support', {}).get('enabled', False)
+        if (require_enabled and not enabled) or not body or not core:
             return None
         from core.rpg_battle import DOLL_RARITY_STATS, DOLL_SKILL_IDS
         conditions = {'rally': ('self40', 'self'), 'repair': ('ally50', 'lowest'),
@@ -905,6 +927,30 @@ class AlchemyDolls:
                   '閃避率': 0, '暴擊率': 10}
         return dict(name=state['name'], stats=combat,
                     speed=min(100, 35 + precision // 10), skills=skills, ready_round=1)
+
+    def prepare_support(self, guild, user, source, now=None):
+        """Charge once for a battle and return its idempotent support snapshot."""
+        now = time.time() if now is None else now
+        source = str(source)
+        existing = self.db.execute('''SELECT status,result FROM rpg_alchemy_operations
+            WHERE guild_id=? AND user_id=? AND kind='battle_support' AND source=?''',
+                                   (guild, user, source)).fetchone()
+        if existing and existing[0] == 'completed' and existing[1]:
+            return json.loads(existing[1]).get('support')
+        snapshot = self.support(guild, user, require_enabled=not bool(existing))
+        if not snapshot:
+            return None
+        try:
+            receipt = self._reserve_operation(
+                guild, user, 'battle_support', source, 1, now)
+        except CharacterError:
+            return None
+        if receipt['status'] == 'completed' and receipt['result']:
+            return receipt['result'].get('support')
+        snapshot['fuel_cost'] = receipt['fuel']
+        self._finish_operation(guild, user, 'battle_support', source,
+                               {'support': snapshot, 'fuel': receipt['fuel']})
+        return snapshot
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
            'LIFE_SKILLS', 'RARITIES', 'COMBAT_RARITY_STATS',
