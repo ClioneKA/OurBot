@@ -16,10 +16,36 @@ AFFIX_NAMES = {
 ROMAN = ('', 'I', 'II', 'III', 'IV')
 
 
+def affix_effect_text(kind, value):
+    """Describe what an affix value changes instead of showing a bare number."""
+    effects = {
+        'vitality': f'HP {value:+}',
+        'assault': f'攻擊 {value:+}',
+        'fortitude': f'防禦 {value:+}',
+        'prayer': f'治療量 {value:+}',
+        'precision': f'命中值 {value:+}',
+        'haste': f'速度 {value:+}',
+        'critical': f'暴擊率 +{value} 個百分點',
+        'prowess': f'暴擊傷害 +{value}%',
+        'stability': f'武器穩定度下限 +{value} 個百分點',
+        'drain': f'直接傷害吸血 +{value}%',
+        'evasion': f'閃避值 {value:+}',
+        'revival': f'受到治療量 +{value}%',
+        'guard': f'受到的直接傷害 -{value}%',
+        'corrosion': f'受到的持續傷害 -{value}%',
+        'unyielding': f'HP 低於 35% 時受到傷害 -{value}%',
+    }
+    return effects[kind]
+
+
+def affix_roll_text(kind, grade, value):
+    return f'{AFFIX_NAMES[kind]} {ROMAN[int(grade)]}（{affix_effect_text(kind, value)}）'
+
+
 def affix_text(row):
     _, affix_id, value = row
     kind, grade = affix_id.split(':')[1:]
-    return f'{AFFIX_NAMES[kind]} {ROMAN[int(grade)]}（{value:+}）'
+    return affix_roll_text(kind, grade, value)
 
 
 def improve_text(row):
@@ -58,7 +84,7 @@ class DirectAffixModal(discord.ui.Modal, title='使用定向詞條記憶'):
             result = self.panel.cog.witch_rest.direct_affix(
                 f'direct:{interaction.id}', self.panel.guild_id, self.panel.owner.id,
                 self.panel.selected, self.affix_index, kind)
-            notice = f'定向完成：{AFFIX_NAMES[result["kind"]]} {ROMAN[result["grade"]]}。'
+            notice = f'定向完成：{affix_roll_text(result["kind"], result["grade"], result["value"])}。'
         except CharacterError as exc:
             notice = str(exc)
         self.panel.rebuild()
@@ -247,8 +273,8 @@ class WitchRestWorkshopView(discord.ui.View):
                         request_id, self.guild_id, self.owner.id, self.selected, index)
                     old, new = offer['old'], offer['new']
                     embed = self.embed(
-                        f'舊：{AFFIX_NAMES[old[0]]} {ROMAN[old[1]]}（{old[2]:+}）\n'
-                        f'新：{AFFIX_NAMES[new[0]]} {ROMAN[new[1]]}（{new[2]:+}）')
+                        f'舊：{affix_roll_text(*old)}\n'
+                        f'新：{affix_roll_text(*new)}')
                     await interaction.response.edit_message(
                         embed=embed, view=RerollDecisionView(self, request_id, offer))
                     return
