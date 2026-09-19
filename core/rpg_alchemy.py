@@ -836,6 +836,8 @@ class AlchemyDolls:
             if config.get('require_no_effect', True) and provisions._active_meal(
                     raid['guild_id'], user, now):
                 continue
+            if provisions._host_has_open_table(raid['guild_id'], user, now):
+                continue
             result.append((user, preset['ingredients']))
         return result
 

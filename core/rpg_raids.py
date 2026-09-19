@@ -702,6 +702,9 @@ class RaidService:
                     if receipt and receipt['status'] == 'reserved':
                         alchemy.cancel_cooking(raid['guild_id'], user_id, raid['id'])
                     raise
+                except CharacterError:
+                    if receipt and receipt['status'] == 'reserved':
+                        alchemy.cancel_cooking(raid['guild_id'], user_id, raid['id'])
                 except Exception:
                     if receipt and receipt['status'] == 'reserved':
                         alchemy.cancel_cooking(raid['guild_id'], user_id, raid['id'])

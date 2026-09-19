@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 
@@ -273,7 +273,7 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
             await self.service._delete_expired_meal(meal['id'], meal['expires_at'])
 
         delay.assert_awaited_once_with(0)
-        message.delete.assert_awaited_once_with(reason='酒館料理已過期')
+        message.delete.assert_awaited_once_with()
         self.assertEqual(self.provisions.meal(meal['id'])['status'], 'expired')
 
     async def test_full_offers_are_deleted_and_claimed_effects_remain(self):

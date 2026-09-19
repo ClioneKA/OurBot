@@ -3,7 +3,7 @@ import asyncio
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, FUEL_CAPACITY, POWDER_ITEM,
@@ -52,6 +52,25 @@ class AlchemyDollTests(unittest.TestCase):
         self.characters = Characters(self.store, RPGSettings())
         self.characters.create(1, 10)
         self.alchemy = AlchemyDolls(self.store, RPGSettings(), FixedRng())
+
+    def test_auto_cooking_skips_host_with_open_public_table(self):
+        self.alchemy.configure_life(
+            1, 10, 'cooking', enabled=True, preset_slot=1,
+            pools=('regular',), qualities=('普通',), require_no_effect=False)
+        open_table = [False]
+        provisions = SimpleNamespace(
+            preset=lambda *_: {'ingredients': ['farming:potato'] * 5},
+            preview=lambda *_: {'score': 1},
+            _active_meal=lambda *_: None,
+            _host_has_open_table=lambda *_: open_table[0],
+        )
+        raid = {'id': 'r1', 'guild_id': 1, 'source': None, 'pool': 'regular',
+                'monster': {'quality': '普通'}}
+        with patch.object(self.alchemy, 'life_skill', return_value={'work': 100}):
+            self.assertEqual(self.alchemy.auto_cooking_candidates(raid, provisions),
+                             [(10, ['farming:potato'] * 5)])
+            open_table[0] = True
+            self.assertEqual(self.alchemy.auto_cooking_candidates(raid, provisions), [])
 
     def inventory(self):
         return self.characters.inventory_counts(1, 10)

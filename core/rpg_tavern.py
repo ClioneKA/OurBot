@@ -407,7 +407,7 @@ class TavernService:
             return
         try:
             message = channel.get_partial_message(meal['message_id'])
-            await message.delete(reason='酒館料理已過期')
+            await message.delete()
         except discord.NotFound:
             pass
         except discord.HTTPException:
