@@ -32,6 +32,8 @@ REWRITE_ACTIONS = {
     'rewrite_defend': ('改寫過去・防禦', 'defend'),
 }
 
+EMA_ROUND_LIMITS = ((100, 30), (500, 17), (1_000, 22), (2_000, 29), (4_000, 30))
+
 
 def manual_stats(witch_id, enrage):
     """Linearly interpolate the approved four-player stat anchors."""
@@ -43,6 +45,12 @@ def manual_stats(witch_id, enrage):
     ratio = (enrage - lower) / (upper - lower)
     return tuple(round(start + (end - start) * ratio)
                  for start, end in zip(anchors[lower], anchors[upper]))
+
+
+def manual_round_limit(witch_id, enrage):
+    if witch_id != 'ema':
+        return 30
+    return next(limit for floor, limit in reversed(EMA_ROUND_LIMITS) if enrage >= floor)
 
 
 class WitchRestManualBattle(WitchRaidBattle):
@@ -140,6 +148,13 @@ class WitchRestManualBattle(WitchRaidBattle):
                 result *= .5
             if self.mechanics.get('rest_vulnerable_until', -1) >= self.round:
                 result *= 1.15
+        return result
+
+    def damage_dealt_multiplier(self, actor):
+        result = super().damage_dealt_multiplier(actor)
+        if actor is self.witch('ema'):
+            authority = min(4, self.mechanics.get('ema_court_authority', 0))
+            result *= 1 + authority * .25
         return result
 
     def check_end(self):
@@ -320,17 +335,14 @@ class WitchRestManualBattle(WitchRaidBattle):
             if final and final.get('active'):
                 self.log.append(f'{actor.name}正在執行【最終判決・魔女殺手】。')
                 return
-            if (750 <= self.enrage < 1_000 and not self.mechanics.get('ema_guilt_used')
-                    and actor.hp * 100 <= actor.stats['HP'] * 35):
-                self.mechanics['ema_guilt_due'] = True
+            if self.mechanics.get('ema_guilt_due'):
+                self._start_ema_guilt(actor)
+                return
             final_due = (self.enrage >= 1_000 and actor.hp * 100 <= actor.stats['HP'] * 35
                          and (not final or not final.get('active'))
                          and self.round >= self.mechanics.get('ema_final_next', 0))
             if final_due:
                 self._start_ema_final(actor)
-                return
-            if self.mechanics.get('ema_guilt_due'):
-                self._start_ema_guilt(actor)
                 return
         if actor.job == 'hiro':
             if self.mechanics.get('hiro_final', {}).get('active'):
@@ -369,7 +381,10 @@ class WitchRestManualBattle(WitchRaidBattle):
             count = len(candidates)
         objects = []
         if self.enrage >= 500:
-            fraction = .12 if self.enrage >= 4_000 else .10 if self.enrage >= 2_000 else .08 if self.enrage >= 1_000 else .06
+            fraction = (.16 if self.enrage >= 4_000 else .14 if self.enrage >= 2_000
+                        else .12 if self.enrage >= 1_000 else .10 if self.enrage >= 750
+                        else .08)
+            fraction *= 1 + min(4, self.mechanics.get('ema_court_authority', 0)) * .5
             key = self.add_object(actor, 'factor_evidence', fraction)
             evidence = self.fighter_for_key(key)
             evidence.name = '因子證物'
@@ -418,9 +433,17 @@ class WitchRestManualBattle(WitchRaidBattle):
             return
         if actor.job != 'ema' or data.get('kind') != 'rest_prosecution':
             return super().spell(actor, data)
+        count = self.mechanics.get('ema_prosecutions', 0) + 1
+        self.mechanics['ema_prosecutions'] = count
+        cadence = 1 if self.enrage >= 4_000 else 2 if self.enrage >= 1_000 else 3
+        if self.enrage >= 500 and count % cadence == 0:
+            self.mechanics['ema_guilt_due'] = True
         if data['objects'] and not any(self.fighter_for_key(key).hp > 0 for key in data['objects']):
             self.events['objects_broken'] += 1
+            authority = min(4, self.mechanics.get('ema_court_authority', 0) + 1)
+            self.mechanics['ema_court_authority'] = authority
             self.log.append('因子證物已被擊破，起訴不成立。')
+            self.log.append(f'{actor.name}累積【法庭權威】{authority} 層，造成傷害提高 {authority * 25}%。')
             return
         targets = [self.fighter_for_key(key) for key in data['targets']]
         targets = [target for target in targets if target and target.hp > 0]
@@ -433,7 +456,9 @@ class WitchRestManualBattle(WitchRaidBattle):
             if not stacks:
                 self.log.append(f'{target.name}已反駁所有魔女因子，判決取消。')
                 continue
+            authority = min(4, self.mechanics.get('ema_court_authority', 0))
             requested = int(target.stats['HP'] * (12 + stacks * 8) / 100
+                            * (1 + authority * .1)
                             * self.damage_taken_multiplier(target))
             actual, _, shared = self.apply_damage(target, requested, direct=True)
             target.status_stacks.pop('factor', None)
@@ -448,11 +473,7 @@ class WitchRestManualBattle(WitchRaidBattle):
             self.log.append(f'{actor.name}回復 {healing} HP，並取得 {shield} 點判決護盾。')
         for key in data['objects']:
             self.fighter_for_key(key).hp = 0
-        count = self.mechanics.get('ema_prosecutions', 0) + 1
-        self.mechanics['ema_prosecutions'] = count
-        if (self.enrage >= 4_000 or self.enrage >= 1_000 and count % 2 == 0):
-            self.mechanics['ema_guilt_due'] = True
-
+        self.mechanics['ema_court_authority'] = 0
     def _resolve_player(self, actor, choice):
         category = self.action_category(choice)
         old_history = self.mechanics.setdefault('rest_action_history', {}).setdefault(
@@ -790,7 +811,9 @@ def manual_battle_from_participants(participants, witch_id, enrage, seed=None):
     stats = {'HP': round(hp * size / 4), '攻擊': round(attack * attack_scale),
              '防禦': defense, '治療量': 0, '命中率': 100, '閃避率': 5, '暴擊率': 10}
     boss = Fighter(WITCHES[witch_id].name, 1, witch_id, stats, 50, [], is_boss=True)
-    battle = WitchRestManualBattle(players + [boss], witch_id, enrage, seed)
+    battle = WitchRestManualBattle(
+        players + [boss], witch_id, enrage, seed,
+        max_rounds=manual_round_limit(witch_id, enrage))
     battle.mechanics.update(witch_party_size=size, witch_stat_anchor=manual_stats(witch_id, enrage))
     battle.log.extend(snapshot.log)
     return battle

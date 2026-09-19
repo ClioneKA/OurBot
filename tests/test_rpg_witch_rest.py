@@ -26,6 +26,7 @@ from core.rpg_witch_rest_battle import (
     WitchRestManualBattle,
     auto_battle_from_participants,
     manual_battle_from_participants,
+    manual_round_limit,
     manual_stats,
     run_auto_battle,
 )
@@ -100,6 +101,10 @@ class WitchRestRulesTests(unittest.TestCase):
     def test_manual_stats_interpolate_approved_anchors(self):
         self.assertEqual(manual_stats('ema', 1000), (90_000, 1_625, 500))
         self.assertEqual(manual_stats('ema', 1500), (101_250, 1_772, 550))
+        self.assertEqual([manual_round_limit('ema', value)
+                          for value in (100, 500, 750, 1_000, 2_000, 4_000)],
+                         [30, 17, 17, 22, 29, 30])
+        self.assertEqual(manual_round_limit('hiro', 2_000), 30)
 
     def test_manual_battle_scales_party_and_survives_restart(self):
         participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
@@ -107,6 +112,7 @@ class WitchRestRulesTests(unittest.TestCase):
         boss = battle.witch('ema')
         self.assertEqual((boss.stats['HP'], boss.stats['攻擊'], boss.stats['防禦']),
                          (90_000, 1_625, 500))
+        self.assertEqual(battle.max_rounds, 22)
         loaded = load_total_battle(dump_total_battle(battle))
         self.assertIsInstance(loaded, WitchRestManualBattle)
         self.assertEqual((loaded.witch_id, loaded.enrage), ('ema', 1000))
@@ -150,6 +156,59 @@ class WitchRestRulesTests(unittest.TestCase):
         battle.spell(boss, data)
         self.assertEqual(player.hp, before)
         self.assertEqual(battle.factor_stacks(player), 1)
+
+    def test_ema_broken_evidence_still_advances_guilt_cadence(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        for enrage, cadence in ((500, 3), (1_000, 2), (4_000, 1)):
+            with self.subTest(enrage=enrage):
+                battle = manual_battle_from_participants(participants, 'ema', enrage, seed=7)
+                player, boss = battle.living(0)[0], battle.witch('ema')
+                for count in range(1, cadence + 1):
+                    battle.mark(player, 'factor', 30, True)
+                    battle.prepare(boss)
+                    data = battle.pending.pop('ema')
+                    battle.fighter_for_key(data['objects'][0]).hp = 0
+                    battle.spell(boss, data)
+                    self.assertEqual(battle.mechanics['ema_prosecutions'], count)
+                    self.assertEqual(bool(battle.mechanics.get('ema_guilt_due')),
+                                     count == cadence)
+
+    def test_ema_evidence_pressure_scales_and_guilt_precedes_final(self):
+        participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
+        evidence_hp = []
+        for enrage in (500, 750, 1_000, 2_000, 4_000):
+            battle = manual_battle_from_participants(participants, 'ema', enrage, seed=7)
+            player, boss = battle.living(0)[0], battle.witch('ema')
+            battle.mark(player, 'factor', 30, True)
+            battle.prepare(boss)
+            evidence = battle.fighter_for_key(battle.pending['ema']['objects'][0])
+            evidence_hp.append(evidence.stats['HP'])
+        self.assertEqual(evidence_hp, sorted(evidence_hp))
+
+        battle = manual_battle_from_participants(participants, 'ema', 500, seed=7)
+        player, boss = battle.living(0)[0], battle.witch('ema')
+        battle.mark(player, 'factor', 30, True)
+        battle.prepare(boss)
+        data = battle.pending.pop('ema')
+        first_hp = battle.fighter_for_key(data['objects'][0]).stats['HP']
+        battle.fighter_for_key(data['objects'][0]).hp = 0
+        battle.spell(boss, data)
+        self.assertEqual(battle.mechanics['ema_court_authority'], 1)
+
+        battle.prepare(boss)
+        data = battle.pending.pop('ema')
+        second_hp = battle.fighter_for_key(data['objects'][0]).stats['HP']
+        self.assertGreater(second_hp, first_hp)
+        battle.spell(boss, data)
+        self.assertEqual(battle.mechanics['ema_court_authority'], 0)
+
+        battle = manual_battle_from_participants(participants, 'ema', 1_000, seed=7)
+        boss = battle.witch('ema')
+        boss.hp = boss.stats['HP'] * 30 // 100
+        battle.mechanics['ema_guilt_due'] = True
+        battle.act(boss)
+        self.assertEqual(battle.pending['ema']['kind'], 'rest_guilt')
+        self.assertNotIn('ema_final', battle.mechanics)
 
     def test_ema_shared_testimony_and_guilt_verdict(self):
         participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
