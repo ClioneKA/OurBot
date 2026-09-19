@@ -68,6 +68,9 @@ async def navigate(view, interaction, page='home', *, help_topic='intro', help_r
     elif page == 'use_items':
         from core.rpg_item_use_view import ItemUseView
         next_view = ItemUseView(view.cog, view.origin)
+    elif page == 'storage':
+        from core.rpg_storage_view import StorageView
+        next_view = StorageView(view.cog, view.origin)
     elif page == 'divination':
         from core.rpg_divination_view import DivinationView
         next_view = DivinationView(view.cog, view.origin)
@@ -169,6 +172,7 @@ class AdventureView(discord.ui.View):
             self.button('下一頁', 'next', 1, self.index == self.pages - 1)
             self.button('給予物品', 'give', 1)
             self.button('使用道具', 'use_items', 1)
+            self.button('倉庫', 'storage', 1)
         topic = {'jobs': 'growth', 'backpack': 'combat', 'life': 'life', 'travel': 'life'}.get(self.page)
         if topic:
             add_help(self, 2, topic, self.page)
@@ -244,7 +248,7 @@ class AdventureView(discord.ui.View):
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids', 'alchemy',
-                          'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
+                          'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'expedition', 'provisions', 'help', 'give', 'use_items', 'storage'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':
