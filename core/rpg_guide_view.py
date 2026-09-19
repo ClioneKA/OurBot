@@ -13,7 +13,7 @@ from core.rpg_witch_rest import ENTRY_PROOFS, MAX_ENRAGE, MIN_LEVEL as WITCH_MIN
 
 
 CATEGORIES = {
-    'regular': ('一般討伐', REGULAR_KINDS),
+    'regular': ('低階討伐', REGULAR_KINDS),
     'mid': ('中階討伐', MID_KINDS),
     'high': ('高階討伐', HIGH_RAID_KINDS),
     'special': ('特殊討伐', (SPECIAL_KIND, *tuple(boss.name for boss in FISHING_BOSSES.values()))),
@@ -23,10 +23,10 @@ CATEGORIES = {
 }
 
 MODE_TEXT = {
-    'regular': ('由一般討伐頻道定時出現，五分鐘報名後自動戰鬥；無最低等級。'
+    'regular': ('由低階討伐頻道定時出現，五分鐘報名後自動戰鬥；無最低等級。'
                 '怪物為 0～2 階，品質與頻道動態難度會影響強度及獎勵。'),
     'mid': ('由中階討伐頻道出現，需 Lv.30；五分鐘報名後自動戰鬥。'
-            '怪物為 3～4 階，機制比一般討伐更要求集火、淨化、打斷或同步控血。'),
+            '怪物為 3～4 階，機制比低階討伐更要求集火、淨化、打斷或同步控血。'),
     'high': ('由高階討伐頻道出現，需 Lv.50；五分鐘報名後自動戰鬥。'
              '怪物為 5～6 階，具有必須處理的護甲、召喚物或蓄力機制。'),
     'special': ('包含道具召喚的城崎諾亞與釣魚觸發的特殊 Boss。'

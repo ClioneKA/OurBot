@@ -588,7 +588,7 @@ class RPG(commands.Cog):
     @app_commands.rename(action='操作', kind='類型')
     @app_commands.choices(action=[app_commands.Choice(name='領取', value='subscribe'),
                                  app_commands.Choice(name='取消', value='unsubscribe')],
-                         kind=[app_commands.Choice(name='一般討伐', value='regular'),
+                         kind=[app_commands.Choice(name='低階討伐', value='regular'),
                                app_commands.Choice(name='中階討伐', value='mid'),
                                app_commands.Choice(name='高階討伐', value='high'),
                                app_commands.Choice(name='全部', value='all')])
@@ -600,7 +600,7 @@ class RPG(commands.Cog):
             await interaction.response.send_message('請選擇領取或取消。', ephemeral=True)
             return
         if kind not in ('regular', 'mid', 'high', 'all'):
-            await interaction.response.send_message('請選擇一般討伐、中階討伐、高階討伐或全部。', ephemeral=True)
+            await interaction.response.send_message('請選擇低階討伐、中階討伐、高階討伐或全部。', ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:
@@ -622,7 +622,7 @@ class RPG(commands.Cog):
     @app_commands.rename(action='操作')
     @app_commands.choices(action=[app_commands.Choice(name='查看狀態', value='status'),
                                  app_commands.Choice(name='建立／匯入', value='setup'),
-                                 app_commands.Choice(name='修復分類與權限', value='repair')])
+                                 app_commands.Choice(name='修復名稱、分類與權限', value='repair')])
     async def adventure_space(self, interaction: discord.Interaction, action: str = 'status'):
         if interaction.guild is None or not interaction.permissions.administrator:
             await interaction.response.send_message('只有伺服器管理員可以管理冒險區域。', ephemeral=True)

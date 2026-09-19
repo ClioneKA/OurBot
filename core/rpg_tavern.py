@@ -1,6 +1,7 @@
 """Adventurers' tavern bounties and public round-of-drinks offers."""
 import asyncio
 from dataclasses import dataclass
+import logging
 import os
 import time
 import uuid
@@ -333,6 +334,7 @@ class TavernService:
         self.cog, self.store = cog, TavernStore(cog.store)
         self.commissions = DailyCommissions(cog.store, getattr(cog, 'commission_memory', None))
         self.views = {}
+        self.expiry_tasks = {}
         try:
             self.environment_channel_ids = tuple(dict.fromkeys(
                 int(value.strip()) for value in
@@ -362,13 +364,56 @@ class TavernService:
         for offer in self.store.open_offers():
             view = self.offer_view(offer['id'])
             self.cog.bot.add_view(view, message_id=offer['message_id'])
-        for meal in self.cog.provisions.open_meals():
-            view = self.meal_view(meal['id'])
-            self.cog.bot.add_view(view, message_id=meal['message_id'])
+        now = time.time()
+        for meal in self.cog.provisions.published_meals():
+            if meal['expires_at'] > now:
+                view = self.meal_view(meal['id'])
+                self.cog.bot.add_view(view, message_id=meal['message_id'])
+            self._schedule_meal_expiry(meal)
 
     def close(self):
         for view in self.views.values():
             view.stop()
+        for task in self.expiry_tasks.values():
+            task.cancel()
+        self.expiry_tasks.clear()
+
+    def _schedule_meal_expiry(self, meal):
+        meal_id = meal['id']
+        previous = self.expiry_tasks.pop(meal_id, None)
+        if previous is not None:
+            previous.cancel()
+        task = asyncio.create_task(self._delete_expired_meal(meal_id, meal['expires_at']))
+        self.expiry_tasks[meal_id] = task
+        task.add_done_callback(
+            lambda completed, key=meal_id: self.expiry_tasks.pop(key, None)
+            if self.expiry_tasks.get(key) is completed else None)
+
+    async def _delete_expired_meal(self, meal_id, expires_at):
+        await asyncio.sleep(max(0, expires_at - time.time()))
+        meal = self.cog.provisions.meal(meal_id)
+        if not meal or meal['status'] != 'open' or time.time() < meal['expires_at']:
+            return
+        view = self.views.pop(f'meal:{meal_id}', None)
+        if view is not None:
+            view.stop()
+        bot = getattr(self.cog, 'bot', None)
+        wait_until_ready = getattr(bot, 'wait_until_ready', None)
+        if callable(wait_until_ready):
+            await wait_until_ready()
+        channel = bot.get_channel(meal['channel_id']) if bot is not None else None
+        if channel is None:
+            self.cog.provisions.expire(meal_id)
+            return
+        try:
+            message = channel.get_partial_message(meal['message_id'])
+            await message.delete(reason='酒館料理已過期')
+        except discord.NotFound:
+            pass
+        except discord.HTTPException:
+            logging.exception('Failed to delete expired tavern meal %s', meal_id)
+            return
+        self.cog.provisions.expire(meal_id)
 
     def offer_view(self, offer_id):
         if offer_id not in self.views:
@@ -405,7 +450,9 @@ class TavernService:
             message = await channel.send(embed=view.embed(), view=view,
                 allowed_mentions=discord.AllowedMentions.none())
             self.cog.provisions.publish(meal['id'], message.id)
-            return message, self.cog.provisions.meal(meal['id'])
+            meal = self.cog.provisions.meal(meal['id'])
+            self._schedule_meal_expiry(meal)
+            return message, meal
         except (Exception, asyncio.CancelledError):
             self.cog.provisions.cancel(meal['id'], refund=True)
             view.stop()
@@ -419,7 +466,9 @@ class TavernService:
             message = await channel.send(embed=view.embed(), view=view,
                                          allowed_mentions=discord.AllowedMentions.none())
             self.cog.provisions.publish(meal['id'], message.id)
-            return message, self.cog.provisions.meal(meal['id'])
+            meal = self.cog.provisions.meal(meal['id'])
+            self._schedule_meal_expiry(meal)
+            return message, meal
         except (Exception, asyncio.CancelledError):
             self.cog.provisions.cancel(meal['id'], refund=True)
             view.stop()

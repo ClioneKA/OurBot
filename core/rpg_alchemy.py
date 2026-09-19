@@ -62,7 +62,7 @@ LIFE_WORK_UNLOCKS = {
     'fishing': ((19, '30 分鐘'), (65, '2 小時'), (133, '8 小時')),
     'farming': tuple((threshold, LOCATIONS[location_id])
                      for location_id, threshold in FARMING_WORK_THRESHOLDS.items()),
-    'raid_signup': ((19, '一般討伐'), (70, '中階討伐'), (122, '高階討伐')),
+    'raid_signup': ((19, '低階討伐'), (70, '中階討伐'), (122, '高階討伐')),
 }
 POWDER_COSTS = {'普通': 10, '稀有': 30, '史詩': 100}
 CORE_ITEM = {level: f'alchemy:core:{level}' for level in (1, 2, 3)}

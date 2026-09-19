@@ -133,16 +133,20 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             message = await self.service.setup(self.guild)
             self.assertIn('繪境迷宮', message)
             self.guild.create_category.assert_not_awaited()
-            self.assertEqual(self.guild.create_text_channel.await_count, 2)
+            self.assertEqual(self.guild.create_text_channel.await_count, 3)
             maze_id = self.service.store.get(9).maze_channel_id
             special_id = self.service.store.get(9).special_channel_id
-            self.assertEqual(self.service.store.get(9), AdventureSpace(9, 10, 11, 12, 13, 14, 3, maze_id, special_id))
+            chat_id = self.service.store.get(9).chat_channel_id
+            self.assertEqual(self.service.store.get(9),
+                             AdventureSpace(9, 10, 11, 12, 13, 14, 3, maze_id, special_id, chat_id))
             self.assertIn('必要權限尚未一致', self.service.status_text(self.guild))
 
             await self.service.repair(self.guild)
+            self.assertEqual(self.channels[11].name, '低階討伐')
             self.assertIs(self.channels[11].overwrites_for(self.adventurer_role).send_messages, False)
             self.assertIs(self.channels[special_id].overwrites_for(self.adventurer_role).send_messages, False)
-            self.assertIs(self.channels[14].overwrites_for(self.adventurer_role).send_messages, True)
+            self.assertIs(self.channels[14].overwrites_for(self.adventurer_role).send_messages, False)
+            self.assertIs(self.channels[chat_id].overwrites_for(self.adventurer_role).send_messages, True)
             self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages, True)
             self.assertIs(self.channels[maze_id].overwrites_for(self.adventurer_role).send_messages_in_threads, True)
             self.assertIs(self.channels[11].overwrites_for(self.default_role).view_channel, False)
@@ -200,8 +204,9 @@ class AdventureSpaceTests(unittest.IsolatedAsyncioTestCase):
             space = self.service.store.get(9)
             self.assertIsNotNone(space.category_id)
             self.assertIsNotNone(space.adventurer_role_id)
-            self.assertEqual(self.guild.create_text_channel.await_count, 6)
+            self.assertEqual(self.guild.create_text_channel.await_count, 7)
             self.assertEqual(self.channels[space.tavern_channel_id].name, '冒險者酒館')
+            self.assertEqual(self.channels[space.chat_channel_id].name, '冒險者聊天')
             self.assertEqual(self.channels[space.maze_channel_id].name, '🎨・繪境迷宮')
             self.assertIn('皆正常', self.service.status_text(self.guild))
             member.add_roles.assert_awaited_once()

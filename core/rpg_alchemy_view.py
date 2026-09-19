@@ -309,12 +309,15 @@ class AlchemyView(discord.ui.View):
             per_item = fuel_value(ITEMS[self.fuel_item_id]) if self.fuel_item_id in ITEMS else 0
             maximum = owned if per_item else 0
             remaining_capacity = max(0, FUEL_CAPACITY - state['fuel'])
-            quantities = sorted({amount for amount in (1, 5, 10, maximum) if amount <= maximum})
+            near_capacity = min(maximum, remaining_capacity // per_item) if per_item else 0
+            quantities = sorted({amount for amount in (1, 5, 10, near_capacity, maximum)
+                                 if 0 < amount <= maximum})
             if self.fuel_quantity not in quantities:
                 self.fuel_quantity = quantities[0] if quantities else 1
             self.add_item(PanelSelect('fuel_quantity', row=1, placeholder='選擇轉換數量',
                 disabled=not quantities, options=[discord.SelectOption(
-                    label=('全部持有數量' if amount == maximum else f'{amount} 個'),
+                    label=('補至接近上限' if amount == near_capacity and near_capacity < maximum
+                           else '全部持有數量' if amount == maximum else f'{amount} 個'),
                     value=str(amount), description=(
                         f'實際增加 {min(amount * per_item, remaining_capacity)} 燃料' +
                         (f'｜溢出 {amount * per_item - remaining_capacity}'

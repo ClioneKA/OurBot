@@ -609,6 +609,18 @@ class Provisions:
                                'AND message_id IS NOT NULL AND expires_at>?', (now,)).fetchall()
         return [self.meal(row[0]) for row in rows]
 
+    def published_meals(self):
+        rows = self.db.execute("SELECT id FROM rpg_meals WHERE status='open' "
+                               'AND message_id IS NOT NULL').fetchall()
+        return [self.meal(row[0]) for row in rows]
+
+    def expire(self, meal_id, now=None):
+        now = time.time() if now is None else now
+        with self.db:
+            self.db.execute("UPDATE rpg_meals SET status='expired' "
+                            "WHERE id=? AND status='open' AND expires_at<=?", (meal_id, now))
+        return self.meal(meal_id)
+
     def recover_drafts(self):
         rows = self.db.execute(
             "SELECT id FROM rpg_meals WHERE status='posting' AND message_id IS NULL").fetchall()

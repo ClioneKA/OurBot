@@ -256,6 +256,26 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         self.public.send.assert_awaited_once()
         self.current.send.assert_not_awaited()
 
+    async def test_expired_meal_message_is_deleted(self):
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',5)")
+        meal = self.provisions.cook(
+            1, 1, 88, ['fishing:pond:common'] * 5, now=100)
+        self.provisions.publish(meal['id'], 99)
+        message = SimpleNamespace(delete=AsyncMock())
+        channel = SimpleNamespace(get_partial_message=Mock(return_value=message))
+        self.cog.bot = SimpleNamespace(get_channel=lambda channel_id:
+                                       channel if channel_id == 88 else None)
+
+        with patch('core.rpg_tavern.asyncio.sleep', new_callable=AsyncMock) as delay, \
+                patch('core.rpg_tavern.time.time', return_value=meal['expires_at'] + 1):
+            await self.service._delete_expired_meal(meal['id'], meal['expires_at'])
+
+        delay.assert_awaited_once_with(0)
+        message.delete.assert_awaited_once_with(reason='酒館料理已過期')
+        self.assertEqual(self.provisions.meal(meal['id'])['status'], 'expired')
+
     async def test_full_offers_are_deleted_and_claimed_effects_remain(self):
         with self.store.db:
             self.store.db.execute(

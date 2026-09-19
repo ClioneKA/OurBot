@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 from core.rpg import RPGStore, level_floor
-from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM,
+from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, FUEL_CAPACITY, POWDER_ITEM,
                               RARITY_ORDER, body_acceleration_cost, fuel_value,
                               fuel_discount, operation_fuel_cost,
                               life_skill_unlocks, material_profile, parse_stone,
@@ -343,6 +343,31 @@ class AlchemyDollTests(unittest.TestCase):
         self.characters.grant_item(1, 10, 'farming:wheat')
         with self.assertRaisesRegex(CharacterError, '已達上限'):
             self.alchemy.convert_fuel(1, 10, 'farming:wheat', 1)
+
+    def test_fuel_page_offers_near_capacity_and_all_quantities(self):
+        item_id = 'farming:wheat'
+        per_item = fuel_value(ITEMS[item_id])
+        self.characters.grant_item(1, 10, item_id, 20)
+        self.alchemy.state(1, 10)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
+                                  'WHERE guild_id=1 AND user_id=10',
+                                  (FUEL_CAPACITY - per_item * 7 - 1,))
+
+        provisions = SimpleNamespace(presets=lambda guild, user: [])
+        cog = SimpleNamespace(alchemy=self.alchemy, characters=self.characters,
+                              provisions=provisions, store=self.store)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10, mention='<@10>'), guild_id=1)
+        view = AlchemyView(cog, interaction)
+        view.page = 'fuel'
+        view.fuel_item_id = item_id
+        view.rebuild()
+        select = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'fuel_quantity')
+        labels = {option.value: option.label for option in select.options}
+
+        self.assertEqual(labels['7'], '補至接近上限')
+        self.assertEqual(labels['20'], '全部持有數量')
 
     def test_durability_uses_smooth_fuel_discount_capped_at_seventy_percent(self):
         body = {'stats': [0, 0, 30, 0, 0]}
