@@ -49,7 +49,11 @@ class CrystalTailorView(discord.ui.View):
         job = f'｜{crystal.job}限定' if crystal.job else ''
         state = (f'裝備 #{crystal.equipment_instance_id}'
                  if crystal.equipment_instance_id else '未鑲嵌')
-        return f'{crystal_effect_text(crystal)}｜{state}{job}'[:100]
+        return f'{state}{job}｜{crystal_effect_text(crystal)}'[:100]
+
+    @staticmethod
+    def _crystal_title(crystal):
+        return f'#{crystal.instance_id} {crystal.name}・{crystal_affix_name(crystal)}'
 
     def _equipment_entries(self):
         return [entry for entry in self.cog.characters.inventory_entries(
@@ -107,7 +111,7 @@ class CrystalTailorView(discord.ui.View):
                 else '目前沒有可鑲嵌結晶的裝備', disabled=not equipment_options,
                 options=equipment_options or [discord.SelectOption(label='沒有可選裝備', value='empty')]))
         options = [discord.SelectOption(
-            label=f'#{item.instance_id} {item.name}', value=str(item.instance_id),
+            label=self._crystal_title(item)[:100], value=str(item.instance_id),
             description=self._crystal_description(item),
             default=item.instance_id == self.selected_crystal) for item in visible]
         placeholder = '選擇顏料結晶' if options else '目前沒有可用的顏料結晶'
@@ -144,8 +148,8 @@ class CrystalTailorView(discord.ui.View):
 
     def embed(self, notice=None):
         descriptions = {
-            'inventory': '查看持有結晶與效果；前往「裝備鑲嵌／替換」可選擇裝備加工。',
-            'socket': '① 選裝備查看槽位 → ② 選相容結晶 → ③ 確認鑲嵌或替換。\n空槽免費鑲嵌；已有結晶則直接替換，舊結晶會被摧毀。',
+            'inventory': '查看持有結晶與效果；下拉選單是摘要，選取後會顯示完整觸發條件。前往「裝備鑲嵌／替換」可選擇裝備加工。',
+            'socket': '① 選裝備查看槽位 → ② 選相容結晶 → ③ 閱讀完整效果後確認。\n空槽免費鑲嵌；已有結晶則直接替換，舊結晶會被摧毀。',
             'sell': '將未鑲嵌的顏料結晶出售給漢娜。',
             'give': '將未鑲嵌的顏料結晶交給另一位冒險者。',
         }
@@ -174,8 +178,10 @@ class CrystalTailorView(discord.ui.View):
                 if crystal:
                     old = self._old_crystal(self.crystals.values(), entry, crystal)
                     embed.add_field(name='替換預覽' if old else '鑲嵌預覽', value=(
-                        f'目前：{crystal_effect_text(old) if old else "空槽"}\n'
-                        f'換成：{crystal_effect_text(crystal)}\n'
+                        f'目前：{self._crystal_title(old) if old else "空槽"}\n'
+                        f'{crystal_effect_text(old) if old else ""}\n'
+                        f'換成：{self._crystal_title(crystal)}\n'
+                        f'{crystal_effect_text(crystal)}\n'
                         + ('確認後舊結晶會被摧毀。' if old else '免費鑲嵌。')), inline=False)
         if self.recipient is not None:
             embed.add_field(name='接收者', value=getattr(self.recipient, 'mention',

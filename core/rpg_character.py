@@ -1103,10 +1103,15 @@ class Characters:
                 for effect_key, value in zip(json.loads(effects_json), json.loads(values_json)):
                     if effect_key in COMBAT_NAMES:
                         combat[COMBAT_NAMES.index(effect_key)] += value
-                    elif effect_key in ('speed', 'accuracy', 'evasion', 'lifesteal',
-                                        'critical_points', 'healing_received_percent'):
-                        changes[effect_key] = changes.get(
-                            effect_key, getattr(item, effect_key)) + value
+                    else:
+                        item_field = {
+                            'evasion_points': 'evasion',
+                            'lifesteal_percent': 'lifesteal',
+                        }.get(effect_key, effect_key)
+                        if item_field in ('speed', 'accuracy', 'evasion', 'lifesteal',
+                                          'critical_points', 'healing_received_percent'):
+                            changes[item_field] = changes.get(
+                                item_field, getattr(item, item_field)) + value
         return replace(item, stats=tuple(stats), combat=tuple(combat), stability=stability, **changes)
 
     def _resolve_instance(self, guild_id, user_id, reference):

@@ -13,6 +13,7 @@ from core.rpg_crystals import (
     QUALITY_SELL_PRICES,
     SOURCE_AFFIXES,
     CrystalStore,
+    crystal_effect_text,
 )
 from core.rpg_painted_maze import PaintedMazeStore
 from core.settings import RPGSettings
@@ -42,6 +43,36 @@ class CrystalStoreTests(unittest.TestCase):
         self.room.pop('reward_policy')
         with self.rpg.db:
             self.maze._save(self.room)
+
+    def test_color_effect_text_states_triggers_and_value_basis(self):
+        from types import SimpleNamespace
+        cases = {
+            'low_enemy_damage_percent': 'HP 30% 以下',
+            'high_hp_damage_percent': '自身 HP 80% 以上',
+            'opening_shield_percent': '自身最大 HP 7%',
+            'kill_heal_percent': '自身最大 HP 7%',
+            'lifesteal_percent': '實際扣除的 HP',
+        }
+        for effect, expected in cases.items():
+            crystal = SimpleNamespace(crystal_type='color', effect_keys=(effect,),
+                                      rolled_values=(7,))
+            self.assertIn(expected, crystal_effect_text(crystal))
+
+    def test_color_evasion_and_lifesteal_apply_to_resolved_equipment(self):
+        equipment_id = self.characters.grant_item(1, 1, 'maze:archer:weapon')[0]
+        with self.rpg.db:
+            self.rpg.db.execute('''INSERT INTO rpg_crystal_instances
+                (guild_id,user_id,crystal_type,quality,affix_id,effect_keys,rolled_values,
+                 job,source_painting_id,source_room_id,source_user_id,source_stage,
+                 reward_slot,created_at,equipment_instance_id,socket_index)
+                VALUES (1,1,'color','習作','color_evasion',
+                        '["evasion_points","lifesteal_percent"]','[3,2]',NULL,
+                        'test','effect-resolution',1,2,0,1,?,1)''', (equipment_id,))
+        resolved = self.characters.resolved_item(
+            self.characters.get_instance(1, 1, equipment_id))
+        base = ITEMS['maze:archer:weapon']
+        self.assertEqual(resolved.evasion, base.evasion + 3)
+        self.assertEqual(resolved.lifesteal, base.lifesteal + 2)
 
     def finish_stage(self, stage, now):
         self.room = self.maze.record_boss_victory(self.room['id'], 1, now=now)

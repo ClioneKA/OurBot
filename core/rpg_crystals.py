@@ -97,10 +97,10 @@ def crystal_effect_text(crystal):
             'formation_breaker': '攻擊破防目標時疊層（最多 5），每層傷害 +{v}%',
             'blooded_blade': '每回合首次受直接傷害疊 1 層（最多 5）；下次傷害行動每層 +{v}% 並消耗',
             'endless_offense': '使用準備技能後，下一次傷害行動 +{v}%',
-            'heavy_suppression': '依目前 HP 四分位提高傷害，每一分位 +{v}%',
+            'heavy_suppression': '依自身目前 HP 提高傷害：每滿 25% HP，傷害 +{v}%（至少計 1 層，最多 4 層）',
             'vengeance_mark': '每回合首次受直接傷害疊 1 層（最多 5）；下次傷害行動每層 +{v}% 並消耗',
             'guardian_oath': '護衛中的隊友每回合首次受擊疊 1 層（最多 3）；盾擊每層 +{v}% 並消耗',
-            'immovable_wall': '每場以 3 層城牆開始，每層減傷 {v}%；受到直接傷害失去 2 層',
+            'immovable_wall': '每場戰鬥以 3 層城牆開始，每層使受到的直接傷害 -{v}%；每次受直接傷害後失去 2 層',
             'steel_echo': '嘲諷中命中可疊層（最多 5）；騎士衝鋒每層 +{v}% 並消耗',
             'life_lance': '自我治療成功時疊層（最多 5）；騎士衝鋒每層 +{v}% 並消耗',
             'endless_arrow': '每次命中疊 1 層（最多 10），每層傷害 +{v}%；未命中失去 2 層',
@@ -112,30 +112,34 @@ def crystal_effect_text(crystal):
             'holy_afterglow': '治療行動成功時疊層（最多 5）；下次傷害每層 +{v}% 並消耗',
             'suffering_prayer': '隊友首次降至 40% HP 以下時疊層（最多 3）；下次治療每層 +{v}% 並消耗',
             'pure_faith': '每淨化一個效果疊 1 層（最多 5），每層治療與聖光效果 +{v}%',
-            'threefold_cast': '依序完成治療、祝福、淨化後，下次行動效果 +{v}% 且冷卻少 1 回合',
+            'threefold_cast': '依序完成治療→祝福→淨化後，下次行動的傷害或治療 +{v}%，且該技能冷卻少 1 回合',
         }
         effect = crystal.effect_keys[0]
         return templates.get(effect, crystal_affix_name(crystal) + ' +{v}').format(
             v=value, triple=value * 3)
-    labels = {
-        'HP': 'HP', '攻擊': '攻擊', '防禦': '防禦', '治療量': '治療量',
-        'accuracy': '命中值', 'critical_points': '暴擊率', 'evasion_points': '閃避值',
-        'speed': '速度', 'poison_damage_percent': '對中毒傷害',
-        'break_damage_percent': '對破防傷害', 'low_enemy_damage_percent': '收尾傷害',
-        'high_hp_damage_percent': '高 HP 傷害', 'opening_shield_percent': '開場護盾',
-        'low_hp_reduction_percent': '低 HP 減傷', 'kill_heal_percent': '擊殺回復',
-        'cleanse_heal_percent': '淨化回復', 'lifesteal_percent': '吸血',
-        'healing_received_percent': '受治療量', 'survive_fatal_once': '致命留白',
+    templates = {
+        'accuracy': '命中值 +{v}',
+        'critical_points': '暴擊率 +{v} 個百分點',
+        'evasion_points': '閃避值 +{v}',
+        'speed': '速度 +{v}',
+        'poison_damage_percent': '攻擊中毒或帶有毒箭的目標時，造成傷害 +{v}%',
+        'break_damage_percent': '攻擊破防目標時，造成傷害 +{v}%',
+        'low_enemy_damage_percent': '攻擊 HP 30% 以下的目標時，造成傷害 +{v}%',
+        'high_hp_damage_percent': '自身 HP 80% 以上時，造成傷害 +{v}%',
+        'opening_shield_percent': '每場戰鬥開始時，獲得自身最大 HP {v}% 的護盾',
+        'low_hp_reduction_percent': '自身 HP 30% 以下時，受到的直接傷害 -{v}%',
+        'kill_heal_percent': '擊倒敵人時，恢復自身最大 HP {v}%',
+        'cleanse_heal_percent': '淨化成功時，使目標恢復其最大 HP {v}%（每次行動一次）',
+        'lifesteal_percent': '直接傷害吸血 +{v}%（依實際扣除的 HP 計算）',
+        'healing_received_percent': '受到的治療量 +{v}%',
+        'survive_fatal_once': '每場戰鬥一次，受到致命傷害時保留 1 HP',
     }
     parts = []
     for effect, value in zip(crystal.effect_keys, crystal.rolled_values):
-        label = labels.get(effect, crystal_affix_name(crystal))
-        suffix = ('%' if effect.endswith('_percent') else
-                  '百分點' if effect in ('critical_points', 'evasion_points') else '')
-        if effect == 'survive_fatal_once':
-            parts.append('每場一次抵擋致命傷害')
+        if effect in templates:
+            parts.append(templates[effect].format(v=value))
         else:
-            parts.append(f'{label} +{value}{suffix}')
+            parts.append(f'{effect} +{value}')
     return '、'.join(parts)
 
 
