@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -275,6 +276,28 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
         delay.assert_awaited_once_with(0)
         message.delete.assert_awaited_once_with()
         self.assertEqual(self.provisions.meal(meal['id'])['status'], 'expired')
+
+    async def test_expired_meal_deletions_are_rate_limited(self):
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO rpg_inventory VALUES (1,1,'fishing:pond:common',5)")
+        meal = self.provisions.cook(
+            1, 1, 88, ['fishing:pond:common'] * 5, now=100)
+        self.provisions.publish(meal['id'], 99)
+        message = SimpleNamespace(delete=AsyncMock())
+        channel = SimpleNamespace(get_partial_message=Mock(return_value=message))
+        self.cog.bot = SimpleNamespace(get_channel=lambda channel_id:
+                                       channel if channel_id == 88 else None)
+        self.service._next_meal_delete_at = asyncio.get_running_loop().time() + 1
+
+        with patch('core.rpg_tavern.asyncio.sleep', new_callable=AsyncMock) as delay, \
+                patch('core.rpg_tavern.time.time', return_value=meal['expires_at'] + 1):
+            await self.service._delete_expired_meal(meal['id'], meal['expires_at'])
+
+        self.assertEqual(delay.await_count, 2)
+        self.assertEqual(delay.await_args_list[0].args, (0,))
+        self.assertGreater(delay.await_args_list[1].args[0], 0)
+        message.delete.assert_awaited_once_with()
 
     async def test_full_offers_are_deleted_and_claimed_effects_remain(self):
         with self.store.db:

@@ -32,6 +32,7 @@ DRINK_PACKAGES = {
 DRINK_XP_PERCENT = 5
 DRINK_CLAIM_SECONDS = 2 * 60 * 60
 DRINK_EFFECT_SECONDS = 24 * 60 * 60
+MEAL_DELETE_INTERVAL_SECONDS = 1.0
 BOUNTY_PRICES = {'regular': 2_000, 'mid': 5_000, 'high': 8_000}
 
 
@@ -335,6 +336,8 @@ class TavernService:
         self.commissions = DailyCommissions(cog.store, getattr(cog, 'commission_memory', None))
         self.views = {}
         self.expiry_tasks = {}
+        self._meal_delete_lock = asyncio.Lock()
+        self._next_meal_delete_at = 0.0
         try:
             self.environment_channel_ids = tuple(dict.fromkeys(
                 int(value.strip()) for value in
@@ -405,14 +408,24 @@ class TavernService:
         if channel is None:
             self.cog.provisions.expire(meal_id)
             return
-        try:
-            message = channel.get_partial_message(meal['message_id'])
-            await message.delete()
-        except discord.NotFound:
-            pass
-        except discord.HTTPException:
-            logging.exception('Failed to delete expired tavern meal %s', meal_id)
-            return
+        async with self._meal_delete_lock:
+            meal = self.cog.provisions.meal(meal_id)
+            if not meal or meal['status'] != 'open' or time.time() < meal['expires_at']:
+                return
+            loop = asyncio.get_running_loop()
+            delay = self._next_meal_delete_at - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                message = channel.get_partial_message(meal['message_id'])
+                await message.delete()
+            except discord.NotFound:
+                pass
+            except discord.HTTPException:
+                logging.exception('Failed to delete expired tavern meal %s', meal_id)
+                return
+            finally:
+                self._next_meal_delete_at = loop.time() + MEAL_DELETE_INTERVAL_SECONDS
         self.cog.provisions.expire(meal_id)
 
     def offer_view(self, offer_id):
