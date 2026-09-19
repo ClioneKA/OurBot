@@ -239,8 +239,12 @@ class WitchRestManualBattle(WitchRaidBattle):
             evidence.hp = evidence.stats['HP'] = 1
             evidence.status_stacks['rest_guilt_evidence'] = 1
             objects.append(key)
-            assignments[key] = [player.user_id for offset, player in enumerate(advocates)
-                                if offset % count == index]
+            assigned = [player for offset, player in enumerate(advocates)
+                        if offset % count == index]
+            assignments[key] = [player.user_id for player in assigned]
+            required = assigned if self.enrage >= 1_000 else assigned[:2]
+            names = '、'.join(player.name for player in required) or '無人'
+            evidence.name = f'{defendant.name}的斷罪證物（辯護：{names}）'
         self.pending['ema'] = dict(
             due=self.round + 1, phase=0, kind='rest_guilt',
             targets=[self.key(player) for player in defendants], objects=objects,
@@ -668,8 +672,15 @@ class WitchRestManualBattle(WitchRaidBattle):
                 object_key = data['objects'][index]
                 required = data['assignments'][object_key]
                 hits = data['hits'].get(object_key, [])
+                required = required if self.enrage >= 1_000 else required[:2]
+                advocate_names = [
+                    player.name for user_id in required
+                    if (player := next((item for item in self.fighters
+                                        if item.user_id == user_id), None))
+                ]
                 lines.append(f'{target.name}：{"已防禦" if target.user_id in data["defended"] else "尚未防禦"}｜'
-                             f'舉證 {len(set(hits))}/{len(required) if self.enrage >= 1_000 else min(2, len(required))}')
+                             f'辯護人 {"、".join(advocate_names) or "無"}｜'
+                             f'舉證 {len(set(hits))}/{len(required)}')
             return EnemyIntent(self.planning_round, '有罪推定', '\n'.join(lines))
         if data and data.get('kind') == 'rest_prosecution':
             targets = [self.fighter_for_key(key) for key in data['targets']]

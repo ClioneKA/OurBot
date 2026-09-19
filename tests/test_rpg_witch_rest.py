@@ -176,6 +176,25 @@ class WitchRestRulesTests(unittest.TestCase):
         battle.spell(boss, data)
         self.assertEqual(defendant.hp, before - defendant.stats['HP'] * 20 // 100)
 
+    def test_ema_guilt_identifies_each_evidence_and_its_advocate(self):
+        participants = [self.participant(user_id=user_id, attack=100)
+                        for user_id in range(1, 5)]
+        battle = manual_battle_from_participants(participants, 'ema', 4000, seed=7)
+        battle._start_ema_guilt(battle.witch('ema'))
+        data = battle.pending['ema']
+
+        intent = battle.intent()
+        for index, target_key in enumerate(data['targets']):
+            defendant = battle.fighter_for_key(target_key)
+            object_key = data['objects'][index]
+            evidence = battle.fighter_for_key(object_key)
+            advocate = next(player for player in battle.fighters
+                             if player.user_id == data['assignments'][object_key][0])
+            self.assertEqual(evidence.name,
+                             f'{defendant.name}的斷罪證物（辯護：{advocate.name}）')
+            self.assertIn(f'{defendant.name}：尚未防禦｜辯護人 {advocate.name}｜舉證 0/1',
+                          intent.description)
+
     def test_ema_witch_killer_success_and_failure_are_explicit(self):
         participants = [self.participant(user_id, attack=100) for user_id in range(1, 5)]
         battle = manual_battle_from_participants(participants, 'ema', 1000, seed=7)
