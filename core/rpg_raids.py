@@ -864,6 +864,10 @@ class RaidService:
                                                                                  roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
+            joined = await self.apply_alchemy_signups(raid, channel)
+            if joined:
+                raid = self.repo.get(raid['id'])
+                await message.edit(embed=self.lobby_embed(raid), view=self.signup(raid))
             return channel, message, raid
         except (Exception, asyncio.CancelledError):
             if consumed:

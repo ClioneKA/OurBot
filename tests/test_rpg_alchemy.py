@@ -10,7 +10,7 @@ from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, POWDER_ITEM
                               RARITY_ORDER, body_acceleration_cost, fuel_value,
                               fuel_discount, operation_fuel_cost,
                               life_skill_unlocks, material_profile, parse_stone,
-                              stat_caps, stone_id)
+                              raid_automation_pool, stat_caps, stone_id)
 from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
@@ -35,6 +35,12 @@ class FixedRng:
 
     def choices(self, values, weights=None, k=1):
         return [tuple(values)[0]] * k
+
+
+class AlchemyAutomationPoolTests(unittest.TestCase):
+    def test_paint_set_raid_uses_mid_tier_filters(self):
+        self.assertEqual(raid_automation_pool({'pool': 'special'}), 'mid')
+        self.assertEqual(raid_automation_pool({'pool': 'regular'}), 'regular')
 
 
 class AlchemyDollTests(unittest.TestCase):
@@ -404,6 +410,8 @@ class AlchemyDollTests(unittest.TestCase):
                     (1, 10, 'raid_signup', f'old-{index}', 'completed', 100, '{}', index))
         self.assertEqual(self.alchemy.auto_signup_candidates(raid), [10])
         raid['pool'] = 'mid'
+        self.assertEqual(self.alchemy.auto_signup_candidates(raid), [])
+        raid['pool'] = 'special'
         self.assertEqual(self.alchemy.auto_signup_candidates(raid), [])
         with self.store.db:
             self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=400 '

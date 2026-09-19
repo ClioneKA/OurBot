@@ -214,6 +214,15 @@ class CrystalStore:
             (guild_id, user_id)).fetchall()
         return [self._instance(row) for row in rows]
 
+    def room_rewards(self, room_id):
+        """Return crystals originally awarded by one Painted Maze room."""
+        rows = self.db.execute(
+            f'''SELECT {self._columns()} FROM rpg_crystal_instances
+                WHERE source_room_id=?
+                ORDER BY source_user_id,source_stage,reward_slot,instance_id''',
+            (room_id,)).fetchall()
+        return [self._instance(row) for row in rows]
+
     @staticmethod
     def _quality(rng):
         return rng.choices(tuple(QUALITY_WEIGHTS), weights=tuple(QUALITY_WEIGHTS.values()), k=1)[0]

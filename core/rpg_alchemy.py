@@ -75,6 +75,11 @@ BODY_ACCEL_GOLD_PER_HOUR = 500
 FUEL_CAPACITY = 1000
 
 
+def raid_automation_pool(raid):
+    """Apply mid-tier automation filters to paint-set Noah summons."""
+    return 'mid' if raid.get('pool') == 'special' else raid.get('pool')
+
+
 def stone_id(domain, skill, rarity):
     return f'alchemy:stone:{domain}:{skill}:{RARITY_ORDER.index(rarity)}'
 
@@ -779,9 +784,10 @@ class AlchemyDolls:
         return bool(changed.rowcount)
 
     def auto_signup_candidates(self, raid):
-        if raid.get('source') not in (None, 'bounty') or raid.get('pool') not in ('regular', 'mid', 'high'):
+        pool = raid_automation_pool(raid)
+        if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
             return []
-        threshold = {'regular': 19, 'mid': 70, 'high': 122}[raid['pool']]
+        threshold = {'regular': 19, 'mid': 70, 'high': 122}[pool]
         result = []
         rows = self.db.execute('SELECT user_id,life_config FROM rpg_alchemy_dolls '
                                'WHERE guild_id=?', (raid['guild_id'],)).fetchall()
@@ -790,7 +796,7 @@ class AlchemyDolls:
             skill = self.life_skill(raid['guild_id'], user, 'raid_signup')
             if not config.get('enabled') or not skill or skill['work'] < threshold:
                 continue
-            if raid['pool'] not in config.get('pools', ('regular', 'mid', 'high')):
+            if pool not in config.get('pools', ('regular', 'mid', 'high')):
                 continue
             if raid['monster'].get('quality', '普通') not in config.get(
                     'qualities', ('普通', '精英', '首領', '傳說')):
@@ -803,7 +809,8 @@ class AlchemyDolls:
 
     def auto_cooking_candidates(self, raid, provisions, now=None):
         now = time.time() if now is None else now
-        if raid.get('source') not in (None, 'bounty') or raid.get('pool') not in ('regular', 'mid', 'high'):
+        pool = raid_automation_pool(raid)
+        if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
             return []
         result = []
         for user, raw_config in self.db.execute('SELECT user_id,life_config FROM rpg_alchemy_dolls '
@@ -812,7 +819,7 @@ class AlchemyDolls:
             skill = self.life_skill(raid['guild_id'], user, 'cooking')
             if not config.get('enabled') or not skill or not config.get('preset_slot'):
                 continue
-            if raid['pool'] not in config.get('pools', ('regular', 'mid', 'high')):
+            if pool not in config.get('pools', ('regular', 'mid', 'high')):
                 continue
             if raid['monster'].get('quality', '普通') not in config.get(
                     'qualities', ('普通', '精英', '首領', '傳說')):
@@ -1003,4 +1010,5 @@ __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAIL
            'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
            'body_acceleration_cost', 'fuel_value', 'fuel_discount', 'operation_fuel_cost',
            'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
-           'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work']
+           'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work',
+           'raid_automation_pool']

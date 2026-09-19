@@ -1,5 +1,6 @@
 """Discord-facing private-thread service for the Painted Maze roguelite."""
 import asyncio
+from collections import Counter
 import io
 from dataclasses import asdict
 import logging
@@ -394,8 +395,13 @@ class PaintedMazeService:
             summary = f'{report["title"]}｜{battle.get("result") or "中止"}｜{battle.get("round", 0)} 回合'
             summaries.append(summary)
             lines.extend([summary, *[str(line) for line in battle.get('log', ())], ''])
+        reward_lines = self._reward_report_lines(room)
+        if reward_lines:
+            lines.extend(['掉落結算：', *reward_lines, ''])
         embed = discord.Embed(title=f'{MODE_NAME} #{room["number"]}｜整趟戰報',
             description='\n'.join(summaries)[:4000], color=0x7C3AED)
+        if reward_lines:
+            embed.add_field(name='掉落結算', value='\n'.join(reward_lines)[:1024], inline=False)
         embed.set_footer(text='完整逐回合記錄收錄於附件；探索途中不發送戰報。')
         message = await thread.send(embed=embed,
             file=discord.File(io.BytesIO('\n'.join(lines).encode('utf-8')),
@@ -403,6 +409,43 @@ class PaintedMazeService:
             allowed_mentions=discord.AllowedMentions.none())
         self.repo.mark_report_sent(room['id'], message.id)
         room['report_message_id'] = message.id
+
+    def _reward_report_lines(self, room):
+        """Build one durable reward summary per participant after outbox recovery."""
+        if not room.get('requires_entry', True):
+            return []
+        rewards = {user_id: [] for user_id in room.get('members', ())}
+        totals = {}
+        cores = Counter()
+        for payout in self.rewards.currency_rewards(room['id']):
+            total = totals.setdefault(payout['user_id'], [0, 0])
+            total[0] += payout['xp']
+            total[1] += payout['gold']
+            cores[payout['user_id']] += int(payout['alchemy_core'])
+        for user_id, (xp, gold) in totals.items():
+            rewards.setdefault(user_id, []).extend((f'{xp:,} XP', f'{gold:,} 金幣'))
+
+        crystals = {}
+        for crystal in self.crystals.room_rewards(room['id']):
+            crystals.setdefault(crystal.source_user_id, Counter())[crystal.name] += 1
+        for user_id, awarded in crystals.items():
+            rewards.setdefault(user_id, []).extend(
+                f'{name} ×{quantity}' for name, quantity in awarded.items())
+        for user_id, quantity in cores.items():
+            if quantity:
+                rewards.setdefault(user_id, []).append(f'{ITEMS["alchemy:core:2"].name} ×{quantity}')
+
+        for reward in self.rewards.rewards(room['id']):
+            item_id = reward.get('item_id')
+            if item_id:
+                rewards.setdefault(reward['user_id'], []).append(
+                    ITEMS[item_id].name if item_id in ITEMS else item_id)
+        for reward in self.rewards.route_accessory_rewards(room['id']):
+            item_id = reward['item_id']
+            rewards.setdefault(reward['user_id'], []).append(
+                ITEMS[item_id].name if item_id in ITEMS else item_id)
+        return [f'<@{user_id}>：' + '、'.join(items or ('無掉落',))
+                for user_id, items in rewards.items()]
 
     def recover_rewards(self, room_id):
         """Drain the room's transactional outbox; every individual seal is idempotent."""

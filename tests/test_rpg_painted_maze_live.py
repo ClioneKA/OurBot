@@ -312,12 +312,22 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         await PaintedMazeService._post_battle_report(self.service, room)
         thread.send.assert_not_awaited()
         room = self.repo.close(room['id'], 1, administrator=True)
+        with self.store.db:
+            self.store.db.execute('''INSERT INTO rpg_painted_maze_currency_rewards
+                (room_id,checkpoint,guild_id,user_id,xp,gold,created_at,alchemy_core)
+                VALUES (?,1,1,1,250,150,123,0)''', (room['id'],))
         await PaintedMazeService._post_battle_report(self.service, room)
         await PaintedMazeService._post_battle_report(self.service, self.repo.get(room['id']))
         thread.send.assert_awaited_once()
         report = thread.send.call_args.kwargs['file']
         self.addCleanup(report.close)
-        self.assertIn('第一幕記錄', report.fp.read().decode('utf-8'))
+        report_text = report.fp.read().decode('utf-8')
+        self.assertIn('第一幕記錄', report_text)
+        self.assertIn('掉落結算：', report_text)
+        self.assertIn('<@1>：250 XP、150 金幣', report_text)
+        reward_field = next(field.value for field in thread.send.call_args.kwargs['embed'].fields
+                            if field.name == '掉落結算')
+        self.assertIn('<@1>：250 XP、150 金幣', reward_field)
         self.assertEqual(self.repo.get(room['id'])['report_message_id'], 102)
 
     async def test_final_rest_displays_third_contract_backlash(self):

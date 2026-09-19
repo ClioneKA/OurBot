@@ -205,6 +205,16 @@ class PaintedMazeRewardStore:
                      alchemy_core=bool(row[4]))
                 for row in self.db.execute(query, args).fetchall()]
 
+    def route_accessory_rewards(self, room_id):
+        """Return the route accessory created or upgraded by this room."""
+        rows = self.db.execute('''SELECT a.user_id,e.item_id,a.instance_id,a.upgraded
+            FROM rpg_painted_maze_accessories a
+            JOIN rpg_equipment_instances e ON e.instance_id=a.instance_id
+            WHERE a.shadow_room_id=? OR a.noah_room_id=? ORDER BY a.user_id''',
+            (room_id, room_id)).fetchall()
+        return [dict(user_id=row[0], item_id=row[1], instance_id=row[2],
+                     upgraded=bool(row[3])) for row in rows]
+
     def release_pending_boxes(self, guild_id, user_id):
         """Convert legacy unclaimed first-clear choices into inventory boxes once."""
         with self.db:

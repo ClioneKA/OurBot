@@ -134,6 +134,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
             service = RaidService(self.cog)
         service.notifications.ensure = AsyncMock(return_value=None)
+        service.apply_alchemy_signups = AsyncMock(return_value=[])
         service.repo.schedule(3, 12345)
         user = SimpleNamespace(id=1, bot=False)
         with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
@@ -146,6 +147,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(raid['preserve_schedule'])
             self.assertEqual(service.repo.next_at(3), 12345)
             self.assertEqual(self.characters.inventory_counts(1, 1).get('paint:set', 0), 0)
+            service.apply_alchemy_signups.assert_awaited_once_with(raid, channel)
             self.characters.grant_item(1, 1, 'paint:set')
             with self.assertRaises(CharacterError):
                 await service.summon_noah(channel.guild, user)
