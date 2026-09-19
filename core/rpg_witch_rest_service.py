@@ -88,6 +88,7 @@ class WitchRestService:
         return self.locks.setdefault(key, asyncio.Lock())
 
     def start(self):
+        self._backfill_missing_rewards()
         for room in self.repo.active_rooms():
             if room['status'] == 'lobby' and (room.get('index_message_id') or room.get('message_id')):
                 view = WitchRestLobbyView(self, room['id'])
@@ -281,18 +282,18 @@ class WitchRestService:
     def _settle_rewards(self, room):
         if room['result'] != '勝利' or room['practice']:
             return []
-        channel = self.bot.get_channel(room['channel_id'])
-        guild = channel.guild if isinstance(channel, (discord.TextChannel, discord.Thread)) else None
         rewards = []
         for index, participant in enumerate(room['participants']):
-            member = guild.get_member(participant['id']) if guild else None
-            if member is None or member.bot or member.status == discord.Status.offline:
-                continue
             reward = self.repo.settle(
                 room['id'], room['guild_id'], participant['id'], room['witch_id'],
                 participant['state']['job'], room['enrage'], seed=f'{room["id"]}:{index}')
             rewards.append((participant['id'], reward))
         return rewards
+
+    def _backfill_missing_rewards(self):
+        for room in self.repo.rooms_missing_rewards():
+            room['rewards'] = self._settle_rewards(room)
+            self.repo.save(room)
 
     async def _step_auto(self, room, battle):
         battle.step()

@@ -456,6 +456,22 @@ class WitchRestStore:
             "SELECT data FROM rpg_witch_rest_rooms WHERE status='completed'").fetchall()
         return [room for row in rows if not (room := json.loads(row[0])).get('report_message_id')]
 
+    def rooms_missing_rewards(self):
+        rows = self.db.execute(
+            "SELECT data FROM rpg_witch_rest_rooms WHERE status='completed'").fetchall()
+        missing = []
+        for row in rows:
+            room = json.loads(row[0])
+            if room.get('result') != '勝利' or room.get('practice'):
+                continue
+            participant_ids = {participant['id'] for participant in room.get('participants', ())}
+            rewarded_ids = {rewarded[0] for rewarded in self.db.execute(
+                'SELECT user_id FROM rpg_witch_rest_rewards WHERE clear_id=?',
+                (room['id'],)).fetchall()}
+            if participant_ids - rewarded_ids:
+                missing.append(room)
+        return missing
+
     def mark_archived(self, room_id):
         with self.db:
             room = self.room(room_id)

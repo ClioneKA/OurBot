@@ -569,6 +569,50 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.auto_players, set())
         self.assertEqual(saved.waiting_player_ids(), {10, 11, 12})
 
+    async def test_offline_players_still_receive_victory_rewards(self):
+        Characters(self.store, SimpleNamespace(stage_levels=(1, 10, 20, 50)))
+        self.store.create_player(1, self.host.id)
+        self.host.status = discord.Status.offline
+        self.guild.get_member = lambda user_id: self.host if user_id == self.host.id else None
+        self.bot.channels[self.thread.id] = self.thread
+        participant = WitchRestRulesTests.participant(self.host.id)
+        room = {
+            'id': 'offline-clear', 'guild_id': 1, 'channel_id': self.thread.id,
+            'witch_id': 'ema', 'enrage': 100, 'practice': False,
+            'result': '勝利', 'participants': [participant],
+        }
+
+        with patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            rewards = self.service._settle_rewards(room)
+
+        self.assertEqual([user_id for user_id, _reward in rewards], [self.host.id])
+        saved = self.store.db.execute(
+            'SELECT 1 FROM rpg_witch_rest_rewards WHERE clear_id=? AND user_id=?',
+            (room['id'], self.host.id)).fetchone()
+        self.assertIsNotNone(saved)
+
+    async def test_missing_rewards_are_backfilled_once(self):
+        Characters(self.store, SimpleNamespace(stage_levels=(1, 10, 20, 50)))
+        self.store.create_player(1, self.host.id)
+        with self.store.db:
+            add_owned_item(self.store.db, 1, self.host.id, 'proof:raid', 10)
+        participant = WitchRestRulesTests.participant(self.host.id)
+        room = self.rest.create_room(1, self.host.id, 'ema', 99)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        room = self.rest.start_room(room['id'], self.host.id, [participant])
+        self.rest.finish_room(room['id'], '勝利', {'rounds': 1, 'log': []})
+
+        self.assertEqual([item['id'] for item in self.rest.rooms_missing_rewards()], [room['id']])
+        self.service._backfill_missing_rewards()
+        self.assertEqual(self.rest.rooms_missing_rewards(), [])
+        saved = self.rest.get(room['id'])
+        self.assertEqual([user_id for user_id, _reward in saved['rewards']], [self.host.id])
+        self.service._backfill_missing_rewards()
+        count = self.store.db.execute(
+            'SELECT count(*) FROM rpg_witch_rest_rewards WHERE clear_id=? AND user_id=?',
+            (room['id'], self.host.id)).fetchone()[0]
+        self.assertEqual(count, 1)
+
 
 if __name__ == '__main__':
     unittest.main()
