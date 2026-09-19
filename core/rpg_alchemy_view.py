@@ -568,7 +568,8 @@ class AlchemyView(discord.ui.View):
                             f'目前耐久減免：**{discount}%**｜每次自動操作：**{cost}** 燃料\n'
                             f'剩餘可執行：**{cycles} 次**（收竿、收成、備餐或討伐響應）\n'
                             f'{endurance}\n\n'
-                            '每件素材取得等同該物品出售價的燃料，最低 1。')
+                            '每件素材取得等同該物品出售價的燃料，最低 1。'
+                            '燃料不足下一次操作時會私訊提醒一次；補充後可再次提醒。')
         if notice:
             embed.add_field(name='操作結果', value=notice, inline=False)
         embed.set_footer(text='刻印會消耗技能石；覆蓋舊技能不會返還。')

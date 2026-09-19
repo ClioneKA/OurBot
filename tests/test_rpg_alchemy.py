@@ -346,6 +346,35 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(fuel_discount(234), 70)
         self.assertEqual(fuel_discount(10000), 70)
 
+    def test_low_fuel_alert_is_queued_once_and_rearmed_after_refill(self):
+        body = self.make_body()
+        self.characters.grant_item(1, 10, CORE_ITEM[1])
+        core_id = self.alchemy.orient_core(1, 10, 1, '戰鬥')
+        stone = stone_id('combat', 'power_strike', '普通')
+        self.characters.grant_item(1, 10, stone)
+        self.alchemy.engrave(1, 10, core_id, 'combat', 1, stone)
+        self.alchemy.set_combat_support(1, 10, True)
+        cost = operation_fuel_cost(body)
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
+                                  'WHERE guild_id=1 AND user_id=10', (cost * 2,))
+
+        self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:first', now=1))
+        self.assertEqual(self.alchemy.fuel_alerts_due(), [])
+        self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:second', now=2))
+        self.assertEqual(self.alchemy.fuel_alerts_due(), [(1, 10, 0, cost)])
+        self.assertTrue(self.alchemy.reserve_fuel_alert(1, 10))
+        self.assertFalse(self.alchemy.reserve_fuel_alert(1, 10))
+        self.assertEqual(self.alchemy.fuel_alerts_due(), [])
+
+        per_item = fuel_value(ITEMS['farming:wheat'])
+        quantity = (cost + per_item - 1) // per_item
+        self.characters.grant_item(1, 10, 'farming:wheat', quantity)
+        self.alchemy.convert_fuel(1, 10, 'farming:wheat', quantity)
+        self.assertIsNotNone(self.alchemy.prepare_support(1, 10, 'raid:third', now=3))
+        remaining = per_item * quantity - cost
+        self.assertEqual(self.alchemy.fuel_alerts_due(), [(1, 10, remaining, cost)])
+
     def test_life_automation_collection_and_restart_cost_one_operation(self):
         self.make_body()
         body = self.alchemy.state(1, 10)['active_body']

@@ -247,7 +247,17 @@ class AlchemyDolls:
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '煉金人偶',
                 active_body TEXT, candidate_body TEXT, crafting TEXT, fuel INTEGER NOT NULL DEFAULT 0,
                 registered INTEGER NOT NULL DEFAULT 0, last_selected REAL NOT NULL DEFAULT 0,
-                life_config TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(guild_id,user_id))''')
+                life_config TEXT NOT NULL DEFAULT '{}',
+                fuel_low_notified INTEGER NOT NULL DEFAULT 0,
+                fuel_low_pending INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(guild_id,user_id))''')
+            doll_columns = {row[1] for row in self.db.execute('PRAGMA table_info(rpg_alchemy_dolls)')}
+            if 'fuel_low_notified' not in doll_columns:
+                self.db.execute('ALTER TABLE rpg_alchemy_dolls ADD COLUMN '
+                                'fuel_low_notified INTEGER NOT NULL DEFAULT 0')
+            if 'fuel_low_pending' not in doll_columns:
+                self.db.execute('ALTER TABLE rpg_alchemy_dolls ADD COLUMN '
+                                'fuel_low_pending INTEGER NOT NULL DEFAULT 0')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_alchemy_cores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
                 level INTEGER NOT NULL, orientation TEXT NOT NULL, skills TEXT NOT NULL,
@@ -606,8 +616,9 @@ class AlchemyDolls:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self._ensure(guild, user)
-            current = self.db.execute('SELECT fuel FROM rpg_alchemy_dolls '
-                                      'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()[0]
+            row = self.db.execute('SELECT fuel,active_body FROM rpg_alchemy_dolls '
+                                  'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
+            current, body_raw = row
             if current >= FUEL_CAPACITY:
                 raise CharacterError(f'燃料已達上限 {FUEL_CAPACITY:,}。')
             gained = min(fuel, FUEL_CAPACITY - current)
@@ -618,9 +629,13 @@ class AlchemyDolls:
                 raise CharacterError('素材數量不足。')
             self.db.execute('DELETE FROM rpg_inventory WHERE guild_id=? AND user_id=? '
                             'AND item_id=? AND quantity=0', (guild, user, item_id))
-            self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=? '
-                            'WHERE guild_id=? AND user_id=?',
-                            (current + gained, guild, user))
+            updated = current + gained
+            next_cost = operation_fuel_cost(json.loads(body_raw)) if body_raw else 100
+            self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel=?,
+                fuel_low_notified=CASE WHEN ?>= ? THEN 0 ELSE fuel_low_notified END,
+                fuel_low_pending=CASE WHEN ?>= ? THEN 0 ELSE fuel_low_pending END
+                WHERE guild_id=? AND user_id=?''',
+                (updated, updated, next_cost, updated, next_cost, guild, user))
         return gained
 
     def life_skill(self, guild, user, key):
@@ -701,18 +716,25 @@ class AlchemyDolls:
             if existing:
                 return dict(status=existing[0], fuel=existing[1],
                             result=json.loads(existing[2]) if existing[2] else None)
-            body_row = self.db.execute('SELECT active_body,fuel FROM rpg_alchemy_dolls '
-                                       'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
+            body_row = self.db.execute('''SELECT active_body,fuel,fuel_low_notified
+                FROM rpg_alchemy_dolls WHERE guild_id=? AND user_id=?''',
+                                       (guild, user)).fetchone()
             if not body_row[0]:
                 raise CharacterError('人偶尚未安裝素體。')
             cost = self._fuel_cost(json.loads(body_row[0]), operations)
             if body_row[1] < cost:
                 raise CharacterError(f'鍊金燃料不足，需要 {cost}。')
-            self.db.execute('UPDATE rpg_alchemy_dolls SET fuel=fuel-? '
-                            'WHERE guild_id=? AND user_id=?', (cost, guild, user))
+            remaining = body_row[1] - cost
+            alert = remaining < cost and not body_row[2]
+            self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel=?,
+                fuel_low_notified=CASE WHEN ? THEN 1 ELSE fuel_low_notified END,
+                fuel_low_pending=CASE WHEN ? THEN 1 ELSE fuel_low_pending END
+                WHERE guild_id=? AND user_id=?''',
+                (remaining, int(alert), int(alert), guild, user))
             self.db.execute('INSERT INTO rpg_alchemy_operations VALUES (?,?,?,?,?,?,?,?)',
                             (guild, user, kind, source, 'reserved', cost, None, now))
-        return dict(status='reserved', fuel=cost, result=None)
+        return dict(status='reserved', fuel=cost, result=None,
+                    remaining_fuel=remaining, low_fuel_alert=alert)
 
     def _finish_operation(self, guild, user, kind, source, result):
         with self.db:
@@ -731,6 +753,30 @@ class AlchemyDolls:
                 self.db.execute("UPDATE rpg_alchemy_operations SET status='failed' "
                                 'WHERE guild_id=? AND user_id=? AND kind=? AND source=?',
                                 (guild, user, kind, source))
+                doll = self.db.execute('SELECT active_body,fuel FROM rpg_alchemy_dolls '
+                                       'WHERE guild_id=? AND user_id=?',
+                                       (guild, user)).fetchone()
+                next_cost = operation_fuel_cost(json.loads(doll[0])) if doll[0] else 100
+                if doll[1] >= next_cost:
+                    self.db.execute('''UPDATE rpg_alchemy_dolls SET
+                        fuel_low_notified=0,fuel_low_pending=0
+                        WHERE guild_id=? AND user_id=?''', (guild, user))
+
+    def fuel_alerts_due(self):
+        result = []
+        rows = self.db.execute('''SELECT guild_id,user_id,fuel,active_body
+            FROM rpg_alchemy_dolls WHERE fuel_low_pending=1
+            ORDER BY guild_id,user_id''').fetchall()
+        for guild, user, fuel, body_raw in rows:
+            cost = operation_fuel_cost(json.loads(body_raw)) if body_raw else 100
+            result.append((guild, user, fuel, cost))
+        return result
+
+    def reserve_fuel_alert(self, guild, user):
+        with self.db:
+            changed = self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel_low_pending=0
+                WHERE guild_id=? AND user_id=? AND fuel_low_pending=1''', (guild, user))
+        return bool(changed.rowcount)
 
     def auto_signup_candidates(self, raid):
         if raid.get('source') not in (None, 'bounty') or raid.get('pool') not in ('regular', 'mid', 'high'):

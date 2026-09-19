@@ -161,6 +161,22 @@ class RPG(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def fishing_notification_tick(self):
+        for guild_id, user_id, fuel, next_cost in self.alchemy.fuel_alerts_due():
+            if not self.alchemy.reserve_fuel_alert(guild_id, user_id):
+                continue
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                guild = self.bot.get_guild(guild_id)
+                guild_name = discord.utils.escape_markdown(
+                    guild.name if guild else str(guild_id))
+                await asyncio.wait_for(user.send(
+                    f'安安大冒險｜煉金人偶燃料不足\n'
+                    f'你在 **{guild_name}** 的人偶目前剩餘 **{fuel}** 燃料，'
+                    f'下一次操作需要 **{next_cost}**。戰鬥支援與生活自動化會在燃料不足時停止。',
+                    allowed_mentions=discord.AllowedMentions.none()), timeout=20)
+            except (discord.HTTPException, asyncio.TimeoutError, AttributeError):
+                logging.info('Alchemy low-fuel DM could not be delivered for guild %s user %s',
+                             guild_id, user_id)
         for guild_id, user_id, spot_id, duration_id, started_at in self.alchemy.auto_fishing_due():
             try:
                 summary = self.alchemy.auto_fish(
