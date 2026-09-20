@@ -1,15 +1,18 @@
-# 設定維護
+# 設定與部署
+
+本文件只處理安裝、部署與可調設定。玩家可見的 RPG 規則請看 [安安大冒險](RPG.md)，其他功能規格與平衡報告請從 [文件索引](../docs/README.md) 進入。
 
 ## 啟動與斜線指令
 
-安裝 `requirements.txt` 的依賴，依 `.env.example` 填好 `.env` 後，在專案根目錄執行：
+建議使用 Python 3.11 以上。安裝 `requirements.txt` 的依賴，依 `.env.example` 填好 `.env` 後，在專案根目錄執行：
 
 ```powershell
-.\ourbot\Scripts\python.exe -m pip install -r requirements.txt
-.\ourbot\Scripts\python.exe .\ourbot.py
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe .\ourbot.py
 ```
 
-若虛擬環境無法建立 Python 程序，請先安裝 Python 3.12 以上，使用 `py -3.12 -m venv .venv` 建立新環境，並把上述命令的 `ourbot` 改成 `.venv`。虛擬環境依賴原本安裝的 Python，不能只複製資料夾使用。
+虛擬環境依賴本機安裝的 Python，不能只複製別台機器的環境資料夾使用。
 
 啟動時先驗證設定，再於 `setup_hook` 載入全部 `cmds/*.py` 並同步應用程式指令；失敗會記錄原因並結束程序。重新連線不會再次同步。終端機與根目錄 `log.txt` 都會顯示模組名稱、同步範圍、Discord 回傳的指令名稱與 ID，以及登入後的 Application ID。
 
@@ -43,8 +46,8 @@
 | `[tts]` | MiniMax 語音模型、音色 ID 與預設朗讀語言 `language_boost`（auto／Chinese／Japanese／English） |
 | `[rpg]` | RPG 等級開關、文字 XP／冷卻／長度、語音 XP／人數；詳見 [RPG 說明](RPG.md) |
 | `[rpg.raid]` | 討伐活動、AI 怪物、一般 30–60 分鐘隨機間隔、台灣時間 12:00–14:00／18:00–23:00 減半為 15–30 分鐘、人數與金幣；XP 改由怪物階層配置，專用頻道在 `.env` 的 `RPG_RAID_CHANNEL_IDS` 設定 |
-| `[rpg.mid_raid]` | 三、四階的中階討伐，預設 90–180 分鐘隨機間隔、勝利 200 金幣；XP 依怪物階層為 600／1,000，專用頻道在 `.env` 的 `RPG_MID_RAID_CHANNEL_IDS` 設定 |
-| `[rpg.high_raid]` | 五、六階的高階討伐，預設 90–180 分鐘隨機間隔、勝利 250 金幣；XP 依怪物階層為 2,500／4,500，專用頻道在 `.env` 的 `RPG_HIGH_RAID_CHANNEL_IDS` 設定 |
+| `[rpg.mid_raid]` | 三、四階的中階討伐，預設 45–75 分鐘隨機間隔、勝利 200 金幣；XP 依怪物階層為 600／1,000，專用頻道在 `.env` 的 `RPG_MID_RAID_CHANNEL_IDS` 設定 |
+| `[rpg.high_raid]` | 五、六階的高階討伐，預設 60–90 分鐘隨機間隔、勝利 500 金幣；XP 依怪物階層為 2,500／4,500，專用頻道在 `.env` 的 `RPG_HIGH_RAID_CHANNEL_IDS` 設定 |
 | 酒館餐點頻道 | `.env` 的 `RPG_TAVERN_CHANNEL_IDS` 設定各伺服器的酒館餐點公告頻道；公開料理與請客都會發布於此 |
 | 釣魚特殊討伐 | `.env` 的 `RPG_SPECIAL_RAID_CHANNEL_IDS` 或 `/冒險區域 建立／匯入` 配置獨立頻道；沿用 `[rpg.raid]` 的開關、人數與金幣，詳見 [釣魚 Boss](../docs/fishing-bosses.md) |
 | `[rpg.total_raid]` | 手動總力戰測試房：最多 6 人、每回合選擇期限與回合上限；暫時頻道類別在 `.env` 的 `RPG_TOTAL_RAID_CATEGORY_IDS` 設定 |
