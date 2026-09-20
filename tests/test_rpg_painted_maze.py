@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import sqlite3
 import tempfile
 import unittest
 
@@ -17,6 +19,31 @@ from core.settings import RPGSettings
 
 
 class PaintedMazeStoreTests(unittest.TestCase):
+    def test_legacy_rooms_backfill_pending_indexes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'legacy.db'
+            db = sqlite3.connect(path)
+            db.execute('''CREATE TABLE rpg_painted_maze_rooms (
+                id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, host_id INTEGER NOT NULL,
+                thread_id INTEGER UNIQUE, status TEXT NOT NULL, expires_at REAL NOT NULL,
+                data TEXT NOT NULL)''')
+            room = {'id': 'legacy', 'status': 'completed', 'thread_id': 9,
+                    'reward_policy': 'escrow_v2', 'reward_due': [{'kind': 'final'}],
+                    'terminal_refresh_pending': True}
+            db.execute('INSERT INTO rpg_painted_maze_rooms VALUES (?,?,?,?,?,?,?)',
+                       ('legacy', 1, 1, 9, 'completed', 100, json.dumps(room)))
+            db.commit()
+            db.close()
+
+            store = RPGStore(path)
+            try:
+                repo = PaintedMazeStore(store)
+                self.assertEqual([saved['id'] for saved in repo.rooms_with_rewards_due()], ['legacy'])
+                self.assertEqual([saved['id'] for saved in repo.terminal_refreshes()], ['legacy'])
+                self.assertEqual([saved['id'] for saved in repo.archives_due()], ['legacy'])
+            finally:
+                store.close()
+
     def test_contract_draw_offers_one_variant_per_color_and_can_offer_all_variants(self):
         seen = set()
         for seed in range(200):

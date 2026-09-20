@@ -135,15 +135,48 @@ class PaintedMazeStore:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_painted_maze_rooms (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, host_id INTEGER NOT NULL,
                 thread_id INTEGER UNIQUE, status TEXT NOT NULL, expires_at REAL NOT NULL,
-                data TEXT NOT NULL)''')
+                data TEXT NOT NULL, reward_pending INTEGER NOT NULL DEFAULT 0,
+                terminal_refresh_pending INTEGER NOT NULL DEFAULT 0,
+                archive_pending INTEGER NOT NULL DEFAULT 0)''')
+            columns = {row[1] for row in self.db.execute(
+                'PRAGMA table_info(rpg_painted_maze_rooms)')}
+            added = False
+            for column in ('reward_pending', 'terminal_refresh_pending', 'archive_pending'):
+                if column not in columns:
+                    self.db.execute(f'''ALTER TABLE rpg_painted_maze_rooms
+                        ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0''')
+                    added = True
+            if added:
+                rows = self.db.execute(
+                    'SELECT id,status,data FROM rpg_painted_maze_rooms').fetchall()
+                for room_id, status, raw in rows:
+                    room = json.loads(raw)
+                    self.db.execute('''UPDATE rpg_painted_maze_rooms SET
+                        reward_pending=?,terminal_refresh_pending=?,archive_pending=?
+                        WHERE id=?''', self._pending_flags(room, status) + (room_id,))
             self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_painted_maze_active
                 ON rpg_painted_maze_rooms(guild_id,status,expires_at)''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_painted_maze_reward_pending
+                ON rpg_painted_maze_rooms(id) WHERE reward_pending=1''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_painted_maze_refresh_pending
+                ON rpg_painted_maze_rooms(id) WHERE terminal_refresh_pending=1''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_painted_maze_archive_pending
+                ON rpg_painted_maze_rooms(id) WHERE archive_pending=1''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_painted_maze_numbers (
                 guild_id INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)''')
 
     @staticmethod
     def _decode(row):
         return json.loads(row[0]) if row else None
+
+    @staticmethod
+    def _pending_flags(room, status=None):
+        status = room['status'] if status is None else status
+        reward_pending = bool(room.get('reward_due')) and (
+            room.get('reward_policy') != 'escrow_v2' or status not in ACTIVE_STATUSES)
+        archive_pending = status not in ACTIVE_STATUSES and not room.get('thread_deleted')
+        return (int(reward_pending), int(bool(room.get('terminal_refresh_pending'))),
+                int(archive_pending))
 
     def get(self, room_id):
         return self._decode(self.db.execute(
@@ -179,9 +212,11 @@ class PaintedMazeStore:
 
     def _save(self, room):
         self.db.execute('''UPDATE rpg_painted_maze_rooms
-            SET thread_id=?,status=?,expires_at=?,data=? WHERE id=?''',
+            SET thread_id=?,status=?,expires_at=?,data=?,reward_pending=?,
+                terminal_refresh_pending=?,archive_pending=? WHERE id=?''',
             (room.get('thread_id'), room['status'], room['expires_at'],
-             json.dumps(room, ensure_ascii=False), room['id']))
+             json.dumps(room, ensure_ascii=False),
+             *self._pending_flags(room), room['id']))
 
     def create(self, guild_id, host_id, entry_item, host_level, *, channel_id=None,
                now=None, seed=None, require_entry=True):
@@ -240,10 +275,11 @@ class PaintedMazeStore:
                 'last_battle': None,
             }
             self.db.execute('''INSERT INTO rpg_painted_maze_rooms
-                (id,guild_id,host_id,thread_id,status,expires_at,data)
-                VALUES (?,?,?,?,?,?,?)''',
+                (id,guild_id,host_id,thread_id,status,expires_at,data,
+                 reward_pending,terminal_refresh_pending,archive_pending)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''',
                 (room['id'], guild_id, host_id, None, room['status'], room['expires_at'],
-                 json.dumps(room, ensure_ascii=False)))
+                 json.dumps(room, ensure_ascii=False), *self._pending_flags(room)))
             return room
 
     def attach_discord(self, room_id, *, channel_id, thread_id, index_message_id, message_id):
@@ -696,13 +732,14 @@ class PaintedMazeStore:
         return expired
 
     def rooms_with_rewards_due(self):
-        rows = self.db.execute("SELECT data FROM rpg_painted_maze_rooms").fetchall()
-        return [room for row in rows if (room := json.loads(row[0])).get('reward_due')
-                and (room.get('reward_policy') != 'escrow_v2' or room['status'] not in ACTIVE_STATUSES)]
+        rows = self.db.execute(
+            'SELECT data FROM rpg_painted_maze_rooms WHERE reward_pending=1').fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def terminal_refreshes(self):
-        rows = self.db.execute('SELECT data FROM rpg_painted_maze_rooms').fetchall()
-        return [room for row in rows if (room := json.loads(row[0])).get('terminal_refresh_pending')]
+        rows = self.db.execute('''SELECT data FROM rpg_painted_maze_rooms
+            WHERE terminal_refresh_pending=1''').fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def mark_terminal_refreshed(self, room_id):
         with self.db:
@@ -713,9 +750,9 @@ class PaintedMazeStore:
                 self._save(room)
 
     def archives_due(self, *, now=None):
-        rows = self.db.execute('SELECT data FROM rpg_painted_maze_rooms').fetchall()
-        return [room for row in rows if (room := json.loads(row[0]))['status'] not in ACTIVE_STATUSES
-                and room.get('thread_id') and not room.get('thread_deleted')]
+        rows = self.db.execute(
+            'SELECT data FROM rpg_painted_maze_rooms WHERE archive_pending=1').fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def mark_archived(self, room_id):
         with self.db:

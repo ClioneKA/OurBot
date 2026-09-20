@@ -268,7 +268,28 @@ class WitchRestStore:
                 operation TEXT NOT NULL, data TEXT NOT NULL)''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_rest_rooms (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, status TEXT NOT NULL,
-                expires_at REAL NOT NULL, data TEXT NOT NULL)''')
+                expires_at REAL NOT NULL, data TEXT NOT NULL,
+                report_pending INTEGER NOT NULL DEFAULT 0,
+                archive_pending INTEGER NOT NULL DEFAULT 0)''')
+            columns = {row[1] for row in self.db.execute(
+                'PRAGMA table_info(rpg_witch_rest_rooms)')}
+            added = False
+            for column in ('report_pending', 'archive_pending'):
+                if column not in columns:
+                    self.db.execute(f'''ALTER TABLE rpg_witch_rest_rooms
+                        ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0''')
+                    added = True
+            if added:
+                rows = self.db.execute('SELECT id,status,data FROM rpg_witch_rest_rooms').fetchall()
+                for room_id, status, raw in rows:
+                    room = json.loads(raw)
+                    self.db.execute('''UPDATE rpg_witch_rest_rooms
+                        SET report_pending=?,archive_pending=? WHERE id=?''',
+                        self._pending_flags(room, status) + (room_id,))
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_witch_rest_report_pending
+                ON rpg_witch_rest_rooms(id) WHERE report_pending=1''')
+            self.db.execute('''CREATE INDEX IF NOT EXISTS rpg_witch_rest_archive_pending
+                ON rpg_witch_rest_rooms(id) WHERE archive_pending=1''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_rest_room_numbers (
                 guild_id INTEGER PRIMARY KEY, next_number INTEGER NOT NULL)''')
 
@@ -319,6 +340,13 @@ class WitchRestStore:
     def _decode(row):
         return json.loads(row[0]) if row else None
 
+    @staticmethod
+    def _pending_flags(room, status=None):
+        status = room['status'] if status is None else status
+        report_pending = status == 'completed' and not room.get('report_message_id')
+        archive_pending = status in ('completed', 'cancelled', 'expired') and not room.get('thread_deleted')
+        return int(report_pending), int(archive_pending)
+
     def room(self, room_id):
         return self._decode(self.db.execute(
             'SELECT data FROM rpg_witch_rest_rooms WHERE id=?', (room_id,)).fetchone())
@@ -334,8 +362,10 @@ class WitchRestStore:
         return [json.loads(row[0]) for row in self.db.execute(query, args)]
 
     def _save_room(self, room):
-        self.db.execute('''UPDATE rpg_witch_rest_rooms SET status=?,expires_at=?,data=? WHERE id=?''',
-                        (room['status'], room['expires_at'], json.dumps(room, ensure_ascii=False), room['id']))
+        self.db.execute('''UPDATE rpg_witch_rest_rooms SET status=?,expires_at=?,data=?,
+            report_pending=?,archive_pending=? WHERE id=?''',
+            (room['status'], room['expires_at'], json.dumps(room, ensure_ascii=False),
+             *self._pending_flags(room), room['id']))
 
     def save(self, room):
         with self.db:
@@ -362,9 +392,11 @@ class WitchRestStore:
                     'number': number, 'status': 'lobby', 'members': [host_id], 'participants': [],
                     'channel_id': None, 'message_id': None, 'created_at': now,
                     'expires_at': now + 1_800, 'battle': None, 'result': None}
-            self.db.execute('INSERT INTO rpg_witch_rest_rooms VALUES (?,?,?,?,?)',
-                            (room['id'], guild_id, 'lobby', room['expires_at'],
-                             json.dumps(room, ensure_ascii=False)))
+            self.db.execute('''INSERT INTO rpg_witch_rest_rooms
+                (id,guild_id,status,expires_at,data,report_pending,archive_pending)
+                VALUES (?,?,?,?,?,?,?)''',
+                (room['id'], guild_id, 'lobby', room['expires_at'],
+                 json.dumps(room, ensure_ascii=False), *self._pending_flags(room)))
             return room
 
     def attach_room(self, room_id, channel_id, message_id, *, parent_channel_id=None,
@@ -446,14 +478,13 @@ class WitchRestStore:
 
     def archives_due(self, *, now=None):
         rows = self.db.execute(
-            "SELECT data FROM rpg_witch_rest_rooms "
-            "WHERE status IN ('completed','cancelled','expired')").fetchall()
-        return [room for row in rows if not (room := json.loads(row[0])).get('thread_deleted')]
+            'SELECT data FROM rpg_witch_rest_rooms WHERE archive_pending=1').fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def pending_reports(self):
         rows = self.db.execute(
-            "SELECT data FROM rpg_witch_rest_rooms WHERE status='completed'").fetchall()
-        return [room for row in rows if not (room := json.loads(row[0])).get('report_message_id')]
+            'SELECT data FROM rpg_witch_rest_rooms WHERE report_pending=1').fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def rooms_missing_rewards(self):
         rows = self.db.execute(

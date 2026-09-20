@@ -1,4 +1,6 @@
+import json
 import random
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -545,6 +547,27 @@ class WitchRestRulesTests(unittest.TestCase):
 
 
 class WitchRestStoreTests(unittest.TestCase):
+    def test_legacy_rooms_backfill_pending_indexes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'legacy.db'
+            db = sqlite3.connect(path)
+            db.execute('''CREATE TABLE rpg_witch_rest_rooms (
+                id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, status TEXT NOT NULL,
+                expires_at REAL NOT NULL, data TEXT NOT NULL)''')
+            room = {'id': 'legacy', 'status': 'completed'}
+            db.execute('INSERT INTO rpg_witch_rest_rooms VALUES (?,?,?,?,?)',
+                       ('legacy', 1, 'completed', 100, json.dumps(room)))
+            db.commit()
+            db.close()
+
+            store = RPGStore(path)
+            try:
+                repo = WitchRestStore(store)
+                self.assertEqual([saved['id'] for saved in repo.pending_reports()], ['legacy'])
+                self.assertEqual([saved['id'] for saved in repo.archives_due()], ['legacy'])
+            finally:
+                store.close()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = RPGStore(Path(self.temp.name) / 'rpg.db')
