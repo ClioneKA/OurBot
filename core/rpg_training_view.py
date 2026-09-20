@@ -6,7 +6,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import AdventureView, add_favorite_toggle
+from core.rpg_menu import AdventureView, add_back, add_favorite_toggle
 from core.rpg_training import COUNT_OPTIONS, DEFENSE_OPTIONS, ROUND_OPTIONS, train
 
 
@@ -32,7 +32,7 @@ class TrainingView(AdventureView):
         self.button('裝備／能力', 'equipment', 4)
         self.button('技能', 'skills', 4)
         self.button('出戰配置', 'loadouts', 4)
-        self.button('返回主選單', 'home', 4)
+        add_back(self, 4, 'character', '返回角色')
         self.button('關閉', 'close', 4)
 
     def embed(self, notice=None):

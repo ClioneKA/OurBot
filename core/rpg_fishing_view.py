@@ -9,7 +9,7 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_fishing import (BIG_FISH, DURATIONS, ISLAND_ANGLER_FISH, RECIPES, ROD_BONUS,
                               SPOTS, STAR_SEA_FISH, fishing_mastery, fishing_progress, next_rod)
-from core.rpg_menu import add_favorite_toggle, add_help, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, add_help, navigate, remember_current_page
 from core.rpg_fishing_bosses import encounter_notice
 
 
@@ -52,10 +52,10 @@ class FishingView(discord.ui.View):
                     discord.SelectOption(label=BIG_FISH[row['fish_id']].name,
                         value=row['fish_id'], description=f'{row["best_weight_g"] / 1000:.1f} kg',
                         default=row['fish_id'] == state['display_fish_id']) for row in records]))
-            self._button('返回釣魚', 'records', 1, style=discord.ButtonStyle.primary)
+            add_back(self, 1, 'fishing', '返回釣魚')
             self._button('取消展示', 'clear_display', 1, disabled=not state['display_fish_id'])
             self._button('關閉', 'close', 1)
-            add_favorite_toggle(self, 1, 'fishing')
+            add_favorite_toggle(self, 1, 'fishing:records')
             return state
         self.add_item(PanelSelect('spot', row=0, placeholder='選擇釣場', options=[
             discord.SelectOption(label=spot.name, value=key,
@@ -94,7 +94,7 @@ class FishingView(discord.ui.View):
             self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
         add_help(self, 4, 'gathering', 'fishing')
         add_favorite_toggle(self, 3, 'fishing')
-        self._button('返回生活', 'life', 4)
+        add_back(self, 4, 'life', '返回生活')
         self._button('大魚圖鑑', 'records', 4)
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)
@@ -201,6 +201,7 @@ class FishingView(discord.ui.View):
                 await navigate(self, interaction, 'life')
                 return
             if action == 'records':
+                remember_current_page(self)
                 self.showing_records = not self.showing_records
                 self.rebuild()
                 await interaction.response.edit_message(embed=self.embed(), view=self)

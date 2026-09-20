@@ -14,7 +14,7 @@ from core.rpg_alchemy import (COMBAT_RARITY_STATS, COMBAT_SKILLS, COMBAT_SKILL_D
                               material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_current_page
 
 
 def combat_stone_effect(skill_key, rarity, body):
@@ -350,10 +350,9 @@ class AlchemyView(discord.ui.View):
             if self.trigger_skill == 'cooking':
                 self.button(f'{"✓" if config.get("require_no_effect", True) else "×"} 自己無料理效果才開桌',
                             'trigger_no_effect', 3)
-        if self.page != 'overview':
-            self.button('返回人偶', 'overview', 4)
-        self.button('返回生活', 'life', 4)
-        add_favorite_toggle(self, 4, 'alchemy')
+        add_back(self, 4, 'alchemy:overview' if self.page != 'overview' else 'life',
+                 '返回煉金人偶' if self.page != 'overview' else '返回生活')
+        add_favorite_toggle(self, 4, f'alchemy:{self.page}')
         self.button('重新整理', 'refresh', 4)
         self.button('關閉', 'close', 4)
 
@@ -609,9 +608,13 @@ class AlchemyView(discord.ui.View):
                     state = self.cog.alchemy.state(self.guild_id, self.owner.id)
                     if not state['active_body'] or not state['core']:
                         raise CharacterError('請先安裝素體與思考核心，再設定自動化。')
+                    if action != self.page:
+                        remember_current_page(self)
                     self.page = action
                 elif action in ('overview', 'body', 'cores', 'gacha', 'powder', 'fuel',
                                 'decompose', 'stats'):
+                    if action != self.page:
+                        remember_current_page(self)
                     self.page = action
                 elif action == 'share':
                     await interaction.response.defer()

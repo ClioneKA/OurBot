@@ -4,7 +4,7 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, MAZE_CHOICE_BOXES
-from core.rpg_menu import add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate
 from core.rpg_painted_maze import ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, ENTRY_ROUTES, MODE_NAME
 
 
@@ -27,10 +27,11 @@ class ActionSelect(discord.ui.Select):
 
 
 class ItemUseView(discord.ui.View):
-    def __init__(self, cog, interaction):
+    def __init__(self, cog, interaction, *, return_page='backpack'):
         super().__init__(timeout=180)
         self.cog, self.origin = cog, interaction
         self.owner, self.guild_id = interaction.user, interaction.guild_id
+        self.return_page = return_page
         self.selected = 'recipe:paint_set'
         self.pending_choice = None
         self.closed = False
@@ -76,11 +77,8 @@ class ItemUseView(discord.ui.View):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
-        back = discord.ui.Button(label='返回背包', row=2)
-        async def back_callback(interaction):
-            await self.handle(interaction, 'backpack')
-        back.callback = back_callback
-        self.add_item(back)
+        labels = {'backpack': '返回背包', 'raids': '返回討伐'}
+        add_back(self, 2, self.return_page, labels.get(self.return_page, '返回上一層'))
         add_favorite_toggle(self, 2, 'use_items')
         return counts
 
@@ -118,8 +116,8 @@ class ItemUseView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('道具面板已關閉，請從背包重新開啟。', ephemeral=True)
                 return
-            if action in ('home', 'backpack'):
-                await navigate(self, interaction, 'home' if action == 'home' else 'backpack')
+            if action in ('home', 'backpack', 'back'):
+                await navigate(self, interaction, self.return_page if action == 'back' else action)
                 return
             if action == 'close':
                 self.closed = True

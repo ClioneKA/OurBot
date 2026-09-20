@@ -1,7 +1,7 @@
 """Currency-specific shops with explicit, transactional purchases."""
 import asyncio
 
-from core.rpg_menu import add_back, add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_current_page
 
 import discord
 
@@ -71,8 +71,8 @@ class ShopView(discord.ui.View):
                 or self.cog.store.gold(self.guild_id, self.owner.id) < item.price)
         for button in (self.buy_button, self.close_panel, self.sell_button):
             self.add_item(button)
-        add_back(self, 2)
-        add_favorite_toggle(self, 3, 'shop')
+        add_back(self, 2, 'items', '返回物品')
+        add_favorite_toggle(self, 3, f'shop:{self.currency}')
 
     def expansion_description(self, key):
         status = self.expansion_status[key]
@@ -125,8 +125,8 @@ class ShopView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('商店已關閉，請重新使用 /冒險 → 商店。', ephemeral=True)
                 return
-            if action == 'home':
-                await navigate(self, interaction)
+            if action in ('home', 'items'):
+                await navigate(self, interaction, action)
                 return
             if action == 'sell':
                 await navigate(self, interaction, 'sell')
@@ -143,6 +143,8 @@ class ShopView(discord.ui.View):
                 if action == 'currency':
                     if value not in ('gold', 'proof'):
                         raise CharacterError('無效的貨幣分類。')
+                    if value != self.currency:
+                        remember_current_page(self)
                     self.currency = value
                     self.item_id = None
                 elif action == 'item':

@@ -9,7 +9,7 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_farming import (LOCATION_LEVELS, LOCATIONS, PLANTS, SPECIALIZATIONS,
                               SPECIALIZATION_LEVEL, farming_progress, growth_text)
-from core.rpg_menu import add_favorite_toggle, add_help, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, add_help, navigate
 
 
 class FarmingView(discord.ui.View):
@@ -82,7 +82,7 @@ class FarmingView(discord.ui.View):
             self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 3)
         add_help(self, 4, 'gathering', 'farming')
         add_favorite_toggle(self, 4, 'farming')
-        self._button('返回生活', 'life', 4)
+        add_back(self, 4, 'life', '返回生活')
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)
         return state

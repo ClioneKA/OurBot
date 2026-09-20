@@ -118,8 +118,18 @@ class AlchemyDollTests(unittest.TestCase):
                 response=SimpleNamespace(send_message=AsyncMock()))
             view = AlchemyView(cog, interaction)
             view.page = 'cores'
+            self.store.set_menu_favorites(1, 10, ('alchemy:cores',))
             view.rebuild()
             self.assertGreater(len(view.children), 0)
+            self.assertTrue(any(getattr(child, 'label', '') == '★ 移除最愛'
+                                for child in view.children))
+            view.page = 'body'
+            view.rebuild()
+            self.assertTrue(any(getattr(child, 'label', '') == '☆ 加入最愛'
+                                for child in view.children))
+            self.assertEqual(self.store.menu_favorites(1, 10), ('alchemy:cores',))
+            view.page = 'cores'
+            view.rebuild()
             await view.handle(interaction, 'triggers')
             interaction.response.send_message.assert_awaited_once()
             self.characters.grant_item(1, 10, CORE_ITEM[1])

@@ -6,7 +6,7 @@ import discord
 
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate
 from core.rpg_provisions import (INGREDIENT_COUNT, INGREDIENTS,
                                  effect_text, guest_reward_target)
 
@@ -104,7 +104,7 @@ class ProvisionView(discord.ui.View):
             counts.get(key, 0) >= amount for key, amount in Counter(last_recipe).items())
         self._button('載入上一份配方', 'repeat', 1, not can_repeat,
                      discord.ButtonStyle.primary)
-        self._button('返回酒館', 'tavern', 2)
+        add_back(self, 2, 'tavern', '返回冒險者酒館')
         self._button('上一頁食材', 'ingredient_prev', 2, self.ingredient_page == 0)
         self._button('下一頁食材', 'ingredient_next', 2, self.ingredient_page + 1 >= page_count)
         self._button('關閉', 'close', 2)

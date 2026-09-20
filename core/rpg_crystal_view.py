@@ -8,7 +8,7 @@ from core.rpg_crystals import (CRYSTAL_TYPES,
                                QUALITY_SELL_PRICES, crystal_affix_name,
                                crystal_effect_text, crystal_has_unique_effect)
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_current_page
 
 
 PAGE_SIZE = 20
@@ -140,7 +140,7 @@ class CrystalTailorView(discord.ui.View):
             self._button(label, f'mode:{mode}', 0,
                          style=(discord.ButtonStyle.primary if mode == self.mode
                                 else discord.ButtonStyle.secondary))
-        add_favorite_toggle(self, 0, 'crystals')
+        add_favorite_toggle(self, 0, f'crystals:{self.mode}')
         if self.mode == 'socket':
             equipment_options = [discord.SelectOption(
                 label=inventory_entry_label(item, self.equipped_ids), value=item.reference,
@@ -185,7 +185,7 @@ class CrystalTailorView(discord.ui.View):
             self._button('裝備上一頁', 'equipment_previous', 4, disabled=self.equipment_page == 0)
             self._button('裝備下一頁', 'equipment_next', 4,
                          disabled=self.equipment_page == self.equipment_pages - 1)
-        self._button('返回裁縫所', 'tailor', 4)
+        add_back(self, 4, 'tailor:dye', '返回漢娜的裁縫所')
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)
 
@@ -273,6 +273,7 @@ class CrystalTailorView(discord.ui.View):
                 if action.startswith('mode:') and action.split(':', 1)[1] in MODE_LABELS:
                     mode = action.split(':', 1)[1]
                     if mode != self.mode:
+                        remember_current_page(self)
                         self.page = 0
                     self.mode = mode
                     self.recipient = None

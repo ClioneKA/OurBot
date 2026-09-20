@@ -11,6 +11,7 @@ from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
 from core.rpg_divination import Divinations
 from core.rpg_divination_view import DivinationView
+from core.rpg_item_use_view import ItemUseView
 from core.rpg_menu import AdventureView, FAVORITE_PAGES
 from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
@@ -127,6 +128,12 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('裝備', panel.embed().title)
         self.assertTrue(any(getattr(child, 'label', '') == '★ 移除最愛'
                             for child in panel.children))
+        back = next(child for child in panel.children
+                    if getattr(child, 'label', '') == '返回首頁')
+        await back.callback(self.interaction)
+        returned = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(returned.stop)
+        self.assertEqual(returned.page, 'home')
 
     async def test_favorite_toggle_removes_and_enforces_limit(self):
         self.store.set_menu_favorites(1, 1, ('character',))
@@ -147,6 +154,76 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         await toggle.callback(self.interaction)
         self.interaction.response.send_message.assert_awaited_once()
         self.assertEqual(len(self.store.menu_favorites(1, 1)), 10)
+
+    async def test_feature_pages_return_to_their_immediate_parent(self):
+        jobs = AdventureView(self.cog, self.interaction, 'jobs')
+        self.addCleanup(jobs.stop)
+        self.assertTrue(any(getattr(child, 'label', '') == '返回角色'
+                            for child in jobs.children))
+        backpack = AdventureView(self.cog, self.interaction, 'backpack')
+        self.addCleanup(backpack.stop)
+        self.assertTrue(any(getattr(child, 'label', '') == '返回物品'
+                            for child in backpack.children))
+
+        await self.view.handle(self.interaction, 'character')
+        character = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(character.stop)
+        await character.handle(self.interaction, 'equipment')
+        equipment = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(equipment.stop)
+        back = next(child for child in equipment.children
+                    if getattr(child, 'label', '') == '返回角色')
+        await back.callback(self.interaction)
+        parent = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(parent.stop)
+        self.assertEqual(parent.page, 'character')
+
+        shop = AdventureView(self.cog, self.interaction, 'items')
+        self.addCleanup(shop.stop)
+        await shop.handle(self.interaction, 'shop')
+        shop = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(shop.stop)
+        back = next(child for child in shop.children
+                    if getattr(child, 'label', '') == '返回物品')
+        await back.callback(self.interaction)
+        parent = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(parent.stop)
+        self.assertEqual(parent.page, 'items')
+
+        raid_items = ItemUseView(self.cog, self.interaction, return_page='raids')
+        self.addCleanup(raid_items.stop)
+        self.assertTrue(any(getattr(child, 'label', '') == '返回討伐'
+                            for child in raid_items.children))
+
+    async def test_each_visible_page_has_an_independent_favorite(self):
+        backpack = AdventureView(self.cog, self.interaction, 'backpack')
+        self.addCleanup(backpack.stop)
+        toggle = next(child for child in backpack.children
+                      if getattr(child, 'label', '') == '☆ 加入最愛')
+        await toggle.callback(self.interaction)
+        self.assertEqual(self.store.menu_favorites(1, 1), ('backpack:全部',))
+
+        await backpack.handle(self.interaction, 'category', '裝備')
+        self.assertTrue(any(getattr(child, 'label', '') == '☆ 加入最愛'
+                            for child in backpack.children))
+        self.assertFalse(any(getattr(child, 'label', '') == '★ 移除最愛'
+                             for child in backpack.children))
+        self.assertEqual(self.store.menu_favorites(1, 1), ('backpack:全部',))
+        back = next(child for child in backpack.children
+                    if getattr(child, 'label', '') == '返回背包・全部')
+        await back.callback(self.interaction)
+        previous = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(previous.stop)
+        self.assertEqual((previous.page, previous.category), ('backpack', '全部'))
+
+        home = AdventureView(self.cog, self.interaction)
+        self.addCleanup(home.stop)
+        await home.handle(self.interaction, 'backpack:全部')
+        shortcut = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(shortcut.stop)
+        self.assertEqual((shortcut.page, shortcut.category), ('backpack', '全部'))
+        self.assertTrue(any(getattr(child, 'label', '') == '返回首頁'
+                            for child in shortcut.children))
 
     async def test_help_topic_rejects_foreign_user_and_closed_panel(self):
         guide = AdventureView(self.cog, self.interaction, 'help')

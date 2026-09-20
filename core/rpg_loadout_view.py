@@ -59,7 +59,7 @@ class LoadoutView(discord.ui.View):
                 await self.handle(interaction, action)
             button.callback = callback
             self.add_item(button)
-        add_back(self, 4)
+        add_back(self, 4, 'character', '返回角色')
         add_favorite_toggle(self, 4, 'loadouts')
         for label, action in (('關閉', 'close'),):
             button = discord.ui.Button(label=label, row=4)
@@ -120,8 +120,8 @@ class LoadoutView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險 → 出戰配置。', ephemeral=True)
                 return
-            if action == 'home':
-                await navigate(self, interaction)
+            if action in ('home', 'character'):
+                await navigate(self, interaction, action)
                 return
             if action == 'close':
                 self.closed = True

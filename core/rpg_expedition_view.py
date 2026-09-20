@@ -6,7 +6,7 @@ import discord
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_expeditions import DURATIONS, EXPEDITION_ROUTES
-from core.rpg_menu import AdventureView, add_favorite_toggle, navigate
+from core.rpg_menu import AdventureView, add_back, add_favorite_toggle, navigate
 
 
 def rewards(result):
@@ -50,7 +50,7 @@ class ExpeditionView(AdventureView):
             if not legacy:
                 self.button('領取並再次遠征', 'repeat', 1, not ready or not local)
             self.button('中斷遠征', 'cancel', 1, ready or not local)
-        self.button('返回人偶', 'alchemy', 4)
+        add_back(self, 4, 'alchemy:overview', '返回煉金人偶')
         add_favorite_toggle(self, 4, 'expedition')
         self.button('重新整理', 'refresh', 4)
         self.button('關閉', 'close', 4)

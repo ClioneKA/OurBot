@@ -82,13 +82,13 @@ class MazeSkillView(SkillView):
     def rebuild(self):
         super().rebuild()
         for item in list(self.children):
-            if getattr(item, 'label', None) == '返回主選單':
+            if getattr(item, 'adventure_back', False):
                 self.remove_item(item)
 
     async def handle(self, interaction, action, value=None):
         if not await self.interaction_check(interaction):
             return
-        if action == 'home':
+        if action in ('home', 'character'):
             await interaction.response.send_message('休息點只能調整技能。', ephemeral=True)
             return
         async with self.service.lock(self.room_id):

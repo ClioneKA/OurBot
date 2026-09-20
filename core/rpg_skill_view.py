@@ -1,7 +1,7 @@
 """Private, immediately saved skill strategy controls."""
 import asyncio
 
-from core.rpg_menu import add_back, add_favorite_toggle, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_current_page
 
 import discord
 
@@ -73,7 +73,8 @@ class SkillView(discord.ui.View):
                 for key, label in BASIC_TARGETS.items()]))
             for button in (self.close_panel,):
                 self.add_item(button)
-            add_back(self, 4)
+            add_back(self, 4, 'character', '返回角色')
+            add_favorite_toggle(self, 4, 'skills:basic')
             return
         if self.setting_passive:
             selected = self.cog.tactics.passive(self.guild_id, self.owner.id, self.job)
@@ -84,7 +85,8 @@ class SkillView(discord.ui.View):
                 for passive in passives]))
             for button in (self.close_panel,):
                 self.add_item(button)
-            add_back(self, 4)
+            add_back(self, 4, 'character', '返回角色')
+            add_favorite_toggle(self, 4, 'skills:passive')
             return
         rule = self.current()
         skill = rule_skill(self.job, rule)
@@ -97,7 +99,8 @@ class SkillView(discord.ui.View):
             self.change_skill.label = '返回策略設定'
             for button in (self.change_skill, self.close_panel):
                 self.add_item(button)
-            add_back(self, 4)
+            add_back(self, 4, 'character', '返回角色')
+            add_favorite_toggle(self, 4, f'skills:replace-{self.slot}')
             return
         self.change_skill.label = '更換技能'
         self.add_item(PanelSelect('priority', row=1, placeholder='選擇優先順序', options=[
@@ -121,8 +124,8 @@ class SkillView(discord.ui.View):
         self.toggle.style = discord.ButtonStyle.secondary if rule.enabled else discord.ButtonStyle.success
         for button in (self.change_skill, self.toggle, self.close_panel):
             self.add_item(button)
-        add_back(self, 4)
-        add_favorite_toggle(self, 4, 'skills')
+        add_back(self, 4, 'character', '返回角色')
+        add_favorite_toggle(self, 4, f'skills:slot-{self.slot}')
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)
@@ -169,8 +172,8 @@ class SkillView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險 → 技能。', ephemeral=True)
                 return
-            if action == 'home':
-                await navigate(self, interaction)
+            if action in ('home', 'character'):
+                await navigate(self, interaction, action)
                 return
             if action == 'close':
                 self.closed = True
@@ -188,6 +191,7 @@ class SkillView(discord.ui.View):
             else:
                 try:
                     if action == 'change_skill':
+                        remember_current_page(self)
                         self.choosing_skill = not self.choosing_skill
                     elif action == 'equip':
                         if value not in tuple(str(i) for i in range(1, 6)):
@@ -196,6 +200,11 @@ class SkillView(discord.ui.View):
                         self.choosing_skill = False
                         notice = '已更換技能，開戰時套用。'
                     elif action == 'slot':
+                        target_route = ('skills:basic' if value == 'basic' else
+                                        'skills:passive' if value == 'passive' else
+                                        f'skills:slot-{value}')
+                        if target_route != getattr(self, 'current_route', None):
+                            remember_current_page(self)
                         if value == 'basic':
                             self.setting_basic = True
                             self.setting_passive = False

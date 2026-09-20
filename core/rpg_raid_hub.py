@@ -8,7 +8,7 @@ from core.rpg_character import CharacterError
 from core.rpg_total_battle import TotalRaidError
 from core.rpg_total_raids import WITCH_BOSS
 from core.rpg_witch_rest import MAX_ENRAGE, MIN_LEVEL, WITCHES
-from core.rpg_menu import add_favorite_toggle
+from core.rpg_menu import add_back, add_favorite_toggle
 
 
 COMMON_ENRAGES = (0, 50, 99, 100, 250, 500, 750, 1000, 2000, 4000)
@@ -72,7 +72,7 @@ class RaidHubView(discord.ui.View):
         self.button('建立安息儀式', 'create_rest', 2, style=discord.ButtonStyle.danger)
         self.button('開啟魔女試煉', 'witch_trial', 3, style=discord.ButtonStyle.primary)
         self.button('繪境／特殊召喚', 'items', 3)
-        self.button('返回主選單', 'back', 4)
+        add_back(self, 4, 'travel', '返回冒險')
         self.button('關閉', 'close', 4)
         add_favorite_toggle(self, 4, 'raids')
 
@@ -147,11 +147,11 @@ class RaidHubView(discord.ui.View):
                 return
             elif action == 'items':
                 from core.rpg_menu import navigate
-                await navigate(self, interaction, 'use_items')
+                await navigate(self, interaction, 'use_items', return_page='raids')
                 return
-            elif action == 'back':
+            elif action in ('back', 'travel'):
                 from core.rpg_menu import navigate
-                await navigate(self, interaction, 'home')
+                await navigate(self, interaction, 'travel' if action == 'travel' else 'home')
                 return
             elif action == 'close':
                 await interaction.response.edit_message(content='討伐面板已關閉。', embed=None, view=None)

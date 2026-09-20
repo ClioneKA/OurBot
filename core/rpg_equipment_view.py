@@ -87,7 +87,7 @@ class EquipmentView(discord.ui.View):
         for button in buttons:
             self.add_item(button)
         add_help(self, 4, 'combat', 'equipment')
-        add_back(self, 4)
+        add_back(self, 4, 'character', '返回角色')
         add_favorite_toggle(self, 4, 'equipment')
         self.wear.disabled = self.item_id is None
         self.remove.disabled = self.slot not in state['equipped']
@@ -123,8 +123,8 @@ class EquipmentView(discord.ui.View):
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險 → 裝備／能力。', ephemeral=True)
                 return
             notice = None
-            if action == 'home':
-                await navigate(self, interaction)
+            if action in ('home', 'character'):
+                await navigate(self, interaction, action)
                 return
             if action == 'close':
                 self.closed = True
