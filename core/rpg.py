@@ -106,6 +106,10 @@ class RPGStore:
             day TEXT NOT NULL, draws INTEGER NOT NULL DEFAULT 0,
             card TEXT, bound_raid_id TEXT, summon_raid_id TEXT,
             PRIMARY KEY(guild_id,user_id))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_menu_favorites (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            page TEXT NOT NULL, position INTEGER NOT NULL,
+            PRIMARY KEY(guild_id,user_id,page))''')
         self.db.commit()
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_daily_xp (
@@ -180,6 +184,23 @@ class RPGStore:
     def has_player(self, guild_id, user_id):
         return self.db.execute('SELECT 1 FROM players WHERE guild_id=? AND user_id=?',
                                (guild_id, user_id)).fetchone() is not None
+
+    def menu_favorites(self, guild_id, user_id):
+        return tuple(row[0] for row in self.db.execute(
+            '''SELECT page FROM rpg_menu_favorites
+               WHERE guild_id=? AND user_id=? ORDER BY position,page''',
+            (guild_id, user_id)))
+
+    def set_menu_favorites(self, guild_id, user_id, pages):
+        pages = tuple(dict.fromkeys(pages))
+        with self.db:
+            self.db.execute('DELETE FROM rpg_menu_favorites WHERE guild_id=? AND user_id=?',
+                            (guild_id, user_id))
+            self.db.executemany(
+                'INSERT INTO rpg_menu_favorites (guild_id,user_id,page,position) VALUES (?,?,?,?)',
+                ((guild_id, user_id, page, position)
+                 for position, page in enumerate(pages)))
+        return pages
 
     def create_player(self, guild_id, user_id):
         """Create a formally invited player, returning whether it was new."""

@@ -9,6 +9,39 @@ from core.rpg_character import CharacterError, ITEMS, JOBS, item_display_name, i
 
 BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '製作材料', '換金道具', '釣竿')
 
+# Keep this below Discord's 25-option select limit. Ten shortcuts use two rows
+# on the home view while leaving room for navigation and utilities.
+FAVORITE_PAGES = {
+    'character': ('角色', '裝備、技能、配置與轉職'),
+    'equipment': ('裝備／能力', '穿戴裝備並查看能力'),
+    'skills': ('技能', '設定技能與自動施放策略'),
+    'loadouts': ('出戰配置', '保存或套用整套配置'),
+    'jobs': ('轉職', '切換職業或領取補給'),
+    'training': ('訓練假人', '測試自己的戰鬥表現'),
+    'items': ('物品', '背包與商店入口'),
+    'backpack': ('背包', '查看、給予或使用物品'),
+    'shop': ('商店', '購買與出售裝備'),
+    'use_items': ('使用道具', '使用背包中的消耗品'),
+    'life': ('生活', '釣魚、農耕與煉金人偶'),
+    'fishing': ('釣魚', '管理釣魚行程'),
+    'farming': ('農耕', '管理田地與作物'),
+    'alchemy': ('煉金人偶', '製作與管理煉金人偶'),
+    'expedition': ('人偶遠征', '派遣人偶遠征'),
+    'provisions': ('準備料理', '製作酒館料理'),
+    'travel': ('冒險', '討伐與城鎮設施入口'),
+    'raids': ('討伐', '建立特殊討伐房間'),
+    'divination': ('瑪格的占卜室', '抽取討伐用塔羅牌'),
+    'tavern': ('冒險者酒館', '料理、懸賞與請客'),
+    'tailor': ('漢娜的裁縫所', '染色與刺繡加工'),
+    'crystals': ('顏料結晶', '管理裁縫所顏料結晶'),
+}
+MAX_FAVORITES = 10
+
+
+class FavoriteSelect(discord.ui.Select):
+    async def callback(self, interaction):
+        await self.view.handle(interaction, 'set_favorites', self.values)
+
 
 def add_help(view, row, topic, return_page):
     button = discord.ui.Button(label='玩法說明', row=row)
@@ -127,6 +160,17 @@ class AdventureView(discord.ui.View):
                                                  ('生活', 'life'), ('冒險', 'travel'),
                                                  ('說明', 'help'))):
                 self.button(label, action, i // 3)
+            for i, page in enumerate(self._favorites()):
+                self.button('⭐ ' + FAVORITE_PAGES[page][0], page, 2 + i // 5)
+        elif self.page == 'favorites':
+            favorites = self._favorites()
+            self.add_item(FavoriteSelect(
+                placeholder='選擇要加入最愛的介面（最多 10 個）', row=0,
+                min_values=0, max_values=MAX_FAVORITES,
+                options=[discord.SelectOption(
+                    label=label, value=page, description=description,
+                    default=page in favorites)
+                    for page, (label, description) in FAVORITE_PAGES.items()]))
         elif self.page == 'character':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
                                                  ('出戰配置', 'loadouts'), ('轉職', 'jobs'),
@@ -178,15 +222,33 @@ class AdventureView(discord.ui.View):
         if topic:
             add_help(self, 2, topic, self.page)
         if self.page != 'home':
-            add_back(self, 2)
-        utility_row = 4 if self.page == 'home' else 2
+            add_back(self, 4 if self.page == 'favorites' else 2)
+        utility_row = 4 if self.page in ('home', 'favorites') else 2
+        if self.page == 'home':
+            self.button('編輯最愛', 'favorites', utility_row)
         self.button('重新整理', 'refresh', utility_row)
         self.button('關閉', 'close', utility_row)
+
+    def _favorites(self):
+        store = getattr(self.cog, 'store', self.cog.characters.store)
+        return tuple(page for page in store.menu_favorites(self.guild_id, self.owner.id)
+                     if page in FAVORITE_PAGES)[:MAX_FAVORITES]
 
     def embed(self, notice=None):
         if self.page == 'home':
             embed = self.cog.character_embed(self.guild_id, self.owner)
             embed.title = '安安大冒險｜' + embed.title
+        elif self.page == 'favorites':
+            favorites = self._favorites()
+            description = ('從下拉選單勾選常用介面；設定會自動保存。\n'
+                           '儲存後，捷徑會直接顯示在冒險首頁。')
+            if favorites:
+                description += '\n\n**目前最愛**\n' + '、'.join(
+                    FAVORITE_PAGES[page][0] for page in favorites)
+            else:
+                description += '\n\n目前尚未加入任何最愛。'
+            embed = discord.Embed(title='安安大冒險｜⭐ 最愛',
+                                  description=description, color=0xF59E0B)
         elif self.page == 'backpack':
             chars = self.cog.characters
             all_owned = chars.inventory_entries(self.guild_id, self.owner.id)
@@ -259,7 +321,8 @@ class AdventureView(discord.ui.View):
             if action in ('home', 'character', 'items', 'equipment', 'skills', 'loadouts',
                           'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids',
                           'alchemy', 'divination', 'tavern', 'tailor', 'crystals', 'fishing',
-                          'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
+                          'farming', 'expedition', 'provisions', 'help', 'give', 'use_items',
+                          'favorites'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':
@@ -286,6 +349,11 @@ class AdventureView(discord.ui.View):
                     self.index = min(self.pages - 1, self.index + 1)
                 elif action == 'category' and self.page == 'backpack' and value in BACKPACK_CATEGORIES:
                     self.category, self.index = value, 0
+                elif action == 'set_favorites' and self.page == 'favorites':
+                    pages = [page for page in FAVORITE_PAGES if page in value][:MAX_FAVORITES]
+                    store = getattr(self.cog, 'store', self.cog.characters.store)
+                    store.set_menu_favorites(self.guild_id, self.owner.id, pages)
+                    notice = ('最愛已更新。' if pages else '已清空最愛。')
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()
