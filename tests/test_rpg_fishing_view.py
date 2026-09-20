@@ -48,7 +48,7 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         await button.callback(self.interaction)
         guide = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(guide.stop)
-        self.assertEqual(guide.help_topic, 'life')
+        self.assertEqual(guide.help_topic, 'gathering')
         self.assertIn('釣魚', guide.embed().description)
         self.assertTrue(self.view.closed)
         self.interaction.response.edit_message.reset_mock()

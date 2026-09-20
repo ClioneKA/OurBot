@@ -467,6 +467,24 @@ class AlchemyDollTests(unittest.TestCase):
                           specialization_rng=FixedRng(.99))
         fish = fishing.start(1, 10, 'pond', 'short', now=0)
         crop = farming.plant(1, 10, 'courtyard', 'potato', now=0)
+        fishing.set_notify(1, 10, True)
+        farming.set_notify(1, 10, True)
+        self.assertEqual(fishing.notifications_due(now=fish['ready_at']),
+                         [(1, 10, 'pond', 'short', 0.0)])
+        self.assertEqual(farming.notifications_due(now=crop['ready_at']),
+                         [(1, 10, 'courtyard', 'potato', 0.0)])
+        self.alchemy.configure_life(1, 10, 'fishing', enabled=False)
+        self.alchemy.configure_life(1, 10, 'farming', enabled=False)
+        self.assertEqual(self.alchemy.fishing_notifications_due(
+            fishing, now=fish['ready_at']), fishing.notifications_due(now=fish['ready_at']))
+        self.assertEqual(self.alchemy.farming_notifications_due(
+            farming, now=crop['ready_at']), farming.notifications_due(now=crop['ready_at']))
+        self.alchemy.configure_life(1, 10, 'fishing', enabled=True)
+        self.alchemy.configure_life(1, 10, 'farming', enabled=True)
+        self.assertEqual(self.alchemy.fishing_notifications_due(
+            fishing, now=fish['ready_at']), [])
+        self.assertEqual(self.alchemy.farming_notifications_due(
+            farming, now=crop['ready_at']), [])
         fish_result = self.alchemy.auto_fish(
             fishing, 1, 10, 'pond', 'short', 0, now=fish['ready_at'])
         farm_result = self.alchemy.auto_farm(

@@ -80,7 +80,7 @@ class FarmingView(discord.ui.View):
             self._button('收成', 'harvest', 3, not ready, discord.ButtonStyle.primary)
             self._button('中斷種植', 'cancel', 3, not active, discord.ButtonStyle.danger)
             self._button('關閉成熟通知' if state['notify'] else '開啟成熟通知', 'notify', 3)
-        add_help(self, 4, 'life', 'farming')
+        add_help(self, 4, 'gathering', 'farming')
         self._button('返回生活', 'life', 4)
         self._button('重新整理', 'refresh', 4)
         self._button('關閉', 'close', 4)

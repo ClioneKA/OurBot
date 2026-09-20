@@ -42,7 +42,7 @@ class DivinationView(discord.ui.View):
                 await self.handle(interaction, 'summon')
             summon.callback = summon_callback
             self.add_item(summon)
-        add_help(self, 1, 'life', 'divination')
+        add_help(self, 1, 'town', 'divination')
         back = discord.ui.Button(label='返回冒險', row=1)
         async def back_callback(interaction):
             await self.handle(interaction, 'travel')

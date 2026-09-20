@@ -173,8 +173,8 @@ class AdventureView(discord.ui.View):
             self.button('下一頁', 'next', 1, self.index == self.pages - 1)
             self.button('給予物品', 'give', 1)
             self.button('使用道具', 'use_items', 1)
-        topic = {'character': 'growth', 'items': 'combat', 'jobs': 'growth',
-                 'backpack': 'combat', 'life': 'life', 'travel': 'life'}.get(self.page)
+        topic = {'character': 'growth', 'items': 'economy', 'jobs': 'growth',
+                 'backpack': 'economy', 'life': 'gathering', 'travel': 'raids'}.get(self.page)
         if topic:
             add_help(self, 2, topic, self.page)
         if self.page != 'home':

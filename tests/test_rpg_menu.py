@@ -65,6 +65,24 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         await guide.handle(self.interaction, 'help_topic', 'unknown')
         self.assertEqual(guide.help_topic, 'advanced')
 
+    async def test_help_covers_major_systems_with_actionable_directions(self):
+        self.assertEqual(set(HELP_TOPICS), {
+            'intro', 'growth', 'combat', 'skills', 'raids', 'modes',
+            'gathering', 'cooking', 'alchemy', 'town', 'economy', 'advanced'})
+        expected_text = {
+            'intro': '/邀請', 'growth': '每日基礎上限', 'combat': '出戰配置',
+            'skills': '優先 1', 'raids': '/攻略', 'modes': '繪境迷宮',
+            'gathering': '釣魚與農耕各有獨立 XP', 'cooking': '成長提高討伐 XP',
+            'alchemy': '思考核心', 'town': '占卜室', 'economy': '不能直接轉帳',
+            'advanced': '實際命中率',
+        }
+        for topic, expected in expected_text.items():
+            guide = AdventureView(self.cog, self.interaction, 'help', help_topic=topic)
+            self.addCleanup(guide.stop)
+            embed = guide.embed()
+            rendered = embed.description + ''.join(field.value for field in embed.fields)
+            self.assertIn(expected, rendered)
+
     async def test_home_groups_features_and_keeps_utilities_last(self):
         rows = {child.label: child.row for child in self.view.children
                 if isinstance(child, discord.ui.Button)}

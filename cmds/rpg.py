@@ -184,7 +184,8 @@ class RPG(commands.Cog):
                     self.fishing, guild_id, user_id, spot_id, duration_id, started_at)
             except CharacterError:
                 pass
-        for guild_id, user_id, spot_id, duration_id, started_at in self.fishing.notifications_due():
+        for guild_id, user_id, spot_id, duration_id, started_at in \
+                self.alchemy.fishing_notifications_due(self.fishing):
             if not self.fishing.reserve_notification(guild_id, user_id):
                 continue
             try:
@@ -223,7 +224,8 @@ class RPG(commands.Cog):
                     processed[key] = processed.get(key, 0) + 1
             except CharacterError:
                 pass
-        for guild_id, user_id, location_id, plant_id, planted_at in self.farming.notifications_due():
+        for guild_id, user_id, location_id, plant_id, planted_at in \
+                self.alchemy.farming_notifications_due(self.farming):
             if not self.farming.reserve_notification(guild_id, user_id, location_id):
                 continue
             try:

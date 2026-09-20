@@ -902,6 +902,28 @@ class AlchemyDolls:
     def cancel_signup(self, guild, user, raid_id):
         self._cancel_operation(guild, user, 'raid_signup', raid_id)
 
+    def _life_automation_enabled(self, guild, user, key, threshold):
+        state = self.state(guild, user)
+        config = state['config'].get(key, {})
+        skill = self.life_skill(guild, user, key)
+        return bool(config.get('enabled') and skill and skill['work'] >= threshold)
+
+    def automates_fishing(self, guild, user, duration_id):
+        threshold = {'short': 19, 'medium': 65, 'long': 133}.get(duration_id, 10**9)
+        return self._life_automation_enabled(guild, user, 'fishing', threshold)
+
+    def automates_farming(self, guild, user, location_id):
+        threshold = FARMING_WORK_THRESHOLDS.get(location_id, 10**9)
+        return self._life_automation_enabled(guild, user, 'farming', threshold)
+
+    def fishing_notifications_due(self, fishing, now=None):
+        return [row for row in fishing.notifications_due(now)
+                if not self.automates_fishing(row[0], row[1], row[3])]
+
+    def farming_notifications_due(self, farming, now=None):
+        return [row for row in farming.notifications_due(now)
+                if not self.automates_farming(row[0], row[1], row[2])]
+
     def auto_fishing_due(self, now=None):
         now = time.time() if now is None else now
         return self.db.execute('''SELECT guild_id,user_id,spot_id,duration_id,started_at
@@ -914,11 +936,7 @@ class AlchemyDolls:
 
     def auto_fish(self, fishing, guild, user, spot_id, duration_id, started_at, now=None):
         now = time.time() if now is None else now
-        state = self.state(guild, user)
-        config = state['config'].get('fishing', {})
-        skill = self.life_skill(guild, user, 'fishing')
-        threshold = {'short': 19, 'medium': 65, 'long': 133}.get(duration_id, 10**9)
-        if not config.get('enabled') or not skill or skill['work'] < threshold:
+        if not self.automates_fishing(guild, user, duration_id):
             return None
         source = str(float(started_at))
         receipt = self._reserve_operation(guild, user, 'fishing', source, 1, now)
@@ -953,11 +971,7 @@ class AlchemyDolls:
 
     def auto_farm(self, farming, guild, user, location_id, plant_id, planted_at, now=None):
         now = time.time() if now is None else now
-        state = self.state(guild, user)
-        config = state['config'].get('farming', {})
-        skill = self.life_skill(guild, user, 'farming')
-        threshold = FARMING_WORK_THRESHOLDS.get(location_id, 10**9)
-        if not config.get('enabled') or not skill or skill['work'] < threshold:
+        if not self.automates_farming(guild, user, location_id):
             return None
         source = f'{location_id}:{float(planted_at)}'
         receipt = self._reserve_operation(guild, user, 'farming', source, 1, now)
