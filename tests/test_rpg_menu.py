@@ -177,6 +177,12 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         parent = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(parent.stop)
         self.assertEqual(parent.page, 'character')
+        back = next(child for child in parent.children
+                    if getattr(child, 'label', '') == '返回首頁')
+        await back.callback(self.interaction)
+        root = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(root.stop)
+        self.assertEqual(root.page, 'home')
 
         shop = AdventureView(self.cog, self.interaction, 'items')
         self.addCleanup(shop.stop)

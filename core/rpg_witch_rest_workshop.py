@@ -4,6 +4,7 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, ITEMS
+from core.rpg_menu import add_back
 from core.rpg_witch_rest import JOBS, affix_kinds, reroll_cost
 
 
@@ -187,10 +188,11 @@ class WitchRestWorkshopView(discord.ui.View):
         self.button('昇階 T90', 'upgrade', 2, discord.ButtonStyle.primary)
         self.button('分解', 'dismantle', 2, discord.ButtonStyle.danger)
         for label, action in (('合成魔女結晶', 'crystal'), ('合成高級記憶', 'memory'),
-                              ('返回討伐', 'back'), ('關閉', 'close')):
+                              ('關閉', 'close')):
             button = discord.ui.Button(label=label, row=3)
             button.callback = lambda interaction, action=action: self.handle(interaction, action)
             self.add_item(button)
+        add_back(self, 3, 'tailor:dye', '返回漢娜的裁縫所')
         if pages > 1:
             for label, action in (('裝備上一頁', 'previous'), ('裝備下一頁', 'next')):
                 button = discord.ui.Button(label=label, row=4)

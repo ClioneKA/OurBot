@@ -57,11 +57,15 @@ class FishingViewTests(unittest.IsolatedAsyncioTestCase):
         await button.callback(self.interaction)
         self.interaction.response.edit_message.assert_not_awaited()
         back = next(child for child in guide.children
-                    if getattr(child, 'label', None) == '返回原功能')
+                    if getattr(child, 'label', None) == '返回釣魚')
         await back.callback(self.interaction)
         fishing = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(fishing.stop)
         self.assertIsInstance(fishing, FishingView)
+        self.assertTrue(any(getattr(child, 'label', None) == '返回生活'
+                            for child in fishing.children))
+        self.assertFalse(any((getattr(child, 'label', '') or '').startswith('返回說明')
+                             for child in fishing.children))
         self.assertTrue(guide.closed)
 
     async def test_start_wait_claim_and_notification_toggle(self):

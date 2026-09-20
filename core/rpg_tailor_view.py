@@ -235,6 +235,10 @@ class TailorView(discord.ui.View):
                 from core.rpg_witch_rest_workshop import WitchRestWorkshopView
                 view = WitchRestWorkshopView(
                     self.cog, self.owner, self.guild_id, origin=self.origin)
+                view.navigation_history = tuple(getattr(self, 'navigation_history', ())) + (
+                    getattr(self, 'current_route', f'tailor:{self.mode}'),)
+                view.current_route = 'witch_rest_workshop'
+                view.rebuild()
                 await interaction.response.edit_message(embed=view.embed(), view=view)
                 self.stop()
                 return

@@ -191,8 +191,14 @@ class SkillView(discord.ui.View):
             else:
                 try:
                     if action == 'change_skill':
-                        remember_current_page(self)
-                        self.choosing_skill = not self.choosing_skill
+                        if self.choosing_skill:
+                            self.choosing_skill = False
+                            history = tuple(getattr(self, 'navigation_history', ()))
+                            if history and history[-1] == f'skills:slot-{self.slot}':
+                                self.navigation_history = history[:-1]
+                        else:
+                            remember_current_page(self)
+                            self.choosing_skill = True
                     elif action == 'equip':
                         if value not in tuple(str(i) for i in range(1, 6)):
                             raise CharacterError('無效的技能。')

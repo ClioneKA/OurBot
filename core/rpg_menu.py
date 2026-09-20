@@ -130,7 +130,7 @@ def add_favorite_toggle(view, row, page):
             await interaction.response.send_message('請使用 /冒險 開啟自己的安安大冒險。', ephemeral=True)
             return
         async with view.lock:
-            if view.closed or view.is_finished():
+            if getattr(view, 'closed', False) or view.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             current = list(canonical_favorite_routes(
@@ -162,7 +162,7 @@ def add_help(view, row, topic, return_page):
         if not await view.interaction_check(interaction):
             return
         async with view.lock:
-            if view.closed or view.is_finished():
+            if getattr(view, 'closed', False) or view.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             await navigate(view, interaction, 'help', help_topic=topic, help_return=return_page)
@@ -182,7 +182,7 @@ def add_back(view, row, page='home', label='返回主選單'):
             await interaction.response.send_message('請使用 /冒險 開啟自己的安安大冒險。', ephemeral=True)
             return
         async with view.lock:
-            if view.closed or view.is_finished():
+            if getattr(view, 'closed', False) or view.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
             await navigate(view, interaction, target, _history=history[:-1])
@@ -330,8 +330,6 @@ class AdventureView(discord.ui.View):
                 discord.SelectOption(label=label, value=key, description=summary,
                                      default=key == self.help_topic)
                 for key, (label, summary) in HELP_TOPICS.items()]))
-            if self.help_return:
-                self.button('返回原功能', self.help_return, 1)
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
             self.button('農耕', 'farming', 0)
