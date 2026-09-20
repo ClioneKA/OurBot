@@ -73,6 +73,25 @@ LEGEND_PITY = 100
 CORE1_PROOF_COST = 15
 BODY_ACCEL_GOLD_PER_HOUR = 500
 FUEL_CAPACITY = 1000
+BODY_MATERIAL_TIERS = tuple(range(10, 111, 10))
+
+
+def body_material_id(tier, stat_index):
+    return f'alchemy:body_material:{tier}:{stat_index}'
+
+
+def parse_body_material(item_id):
+    parts = item_id.split(':')
+    if len(parts) != 4 or parts[:2] != ['alchemy', 'body_material']:
+        return None
+    try:
+        tier, stat_index = int(parts[2]), int(parts[3])
+    except ValueError:
+        return None
+    if tier not in BODY_MATERIAL_TIERS or stat_index not in range(len(STAT_NAMES)):
+        return None
+    return tier, tuple(1.0 if index == stat_index else 0.0
+                       for index in range(len(STAT_NAMES)))
 LOW_FUEL_OPERATION_THRESHOLD = 5
 
 
@@ -125,6 +144,12 @@ def _register_items():
         ITEMS[CORE_ITEM[level]] = Item(
             f'Lv.{level} 思考核心胚', '', '', 0, (0,) * 5, category='製作材料',
             description='未定向時可交易；定向為戰鬥或生活面向後綁定。')
+    for tier in BODY_MATERIAL_TIERS:
+        for stat_index, name in enumerate(STAT_NAMES):
+            ITEMS[body_material_id(tier, stat_index)] = Item(
+                f'T{tier} {name}素體素材', '', '', 0, (0,) * 5, category='製作材料',
+                description=f'人偶遠征取得；製作素體時只提高{name}傾向。',
+                transferable=True)
     for domain, pool in (('combat', COMBAT_SKILLS), ('life', LIFE_SKILLS)):
         for key, name in pool.items():
             for rarity, (_, multiplier, _) in RARITIES.items():
@@ -176,6 +201,9 @@ def operation_fuel_cost(body, operations=1):
 
 def material_profile(item_id):
     """Return (tier, five tendency weights), or None when the item is ineligible."""
+    expedition_material = parse_body_material(item_id)
+    if expedition_material:
+        return expedition_material
     if item_id.startswith('alchemy:') or item_id not in ITEMS:
         return None
     item = ITEMS[item_id]
@@ -724,6 +752,8 @@ class AlchemyDolls:
             if existing:
                 return dict(status=existing[0], fuel=existing[1],
                             result=json.loads(existing[2]) if existing[2] else None)
+            from core.rpg_expeditions import require_doll_available
+            require_doll_available(self.db, guild, user, now)
             body_row = self.db.execute('''SELECT active_body,fuel,fuel_low_notified
                 FROM rpg_alchemy_dolls WHERE guild_id=? AND user_id=?''',
                                        (guild, user)).fetchone()
@@ -795,6 +825,9 @@ class AlchemyDolls:
         rows = self.db.execute('SELECT user_id,life_config FROM rpg_alchemy_dolls '
                                'WHERE guild_id=?', (raid['guild_id'],)).fetchall()
         for user, raw_config in rows:
+            from core.rpg_expeditions import is_doll_expedition_active
+            if is_doll_expedition_active(self.db, raid['guild_id'], user):
+                continue
             config = json.loads(raw_config).get('raid_signup', {})
             skill = self.life_skill(raid['guild_id'], user, 'raid_signup')
             if not config.get('enabled') or not skill or skill['work'] < threshold:
@@ -818,6 +851,9 @@ class AlchemyDolls:
         result = []
         for user, raw_config in self.db.execute('SELECT user_id,life_config FROM rpg_alchemy_dolls '
                                                 'WHERE guild_id=?', (raid['guild_id'],)):
+            from core.rpg_expeditions import is_doll_expedition_active
+            if is_doll_expedition_active(self.db, raid['guild_id'], user, now):
+                continue
             config = json.loads(raw_config).get('cooking', {})
             skill = self.life_skill(raid['guild_id'], user, 'cooking')
             if not config.get('enabled') or not skill or not config.get('preset_slot'):
@@ -1010,9 +1046,11 @@ class AlchemyDolls:
                                {'support': snapshot, 'fuel': receipt['fuel']})
         return snapshot
 
-__all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
+__all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'BODY_MATERIAL_TIERS',
+           'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
            'LIFE_SKILLS', 'RARITIES', 'COMBAT_RARITY_STATS',
-           'CORE_ITEM', 'POWDER_ITEM', 'material_profile', 'parse_stone', 'stone_id',
+           'CORE_ITEM', 'POWDER_ITEM', 'body_material_id', 'material_profile',
+           'parse_body_material', 'parse_stone', 'stone_id',
            'body_acceleration_cost', 'fuel_value', 'fuel_discount', 'operation_fuel_cost',
            'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
            'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work',

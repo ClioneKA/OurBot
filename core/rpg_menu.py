@@ -145,7 +145,6 @@ class AdventureView(discord.ui.View):
         elif self.page == 'life':
             self.button('釣魚', 'fishing', 0)
             self.button('農耕', 'farming', 0)
-            self.button('遠征', 'expedition', 0)
             self.button('煉金人偶', 'alchemy', 0)
         elif self.page == 'travel':
             self.button('瑪格的占卜室', 'divination', 0)
@@ -209,8 +208,8 @@ class AdventureView(discord.ui.View):
             embed = discord.Embed(title='安安大冒險｜生活', description=
                 '透過生活技能取得料理與製作素材。\n\n'
                 '**釣魚**：選擇釣場與時間開始釣魚；Lv.80／100 可前往沉沒神殿潮池／星蝕外海。\n'
-                '**遠征**：派遣 4／8／12 小時取得討伐之證、經驗與金幣；期間不能參加討伐，中斷沒有獎勵。\n'
                 '**農耕**：四塊既有田地可種植所有已解鎖植物；Lv.80 可為每塊田選擇豐收或研習專精。\n'
+                '**煉金人偶**：製作素體、設定自動化，或派遣人偶遠征取得金幣與定向素體素材。\n'
                 '魚、作物、水草與藥草都能帶到冒險者酒館，選擇五份食材製作公開料理。', color=0x38BDF8)
         elif self.page == 'travel':
             embed = discord.Embed(title='安安大冒險｜移動', description=

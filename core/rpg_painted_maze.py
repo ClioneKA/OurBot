@@ -6,7 +6,7 @@ import time
 import uuid
 
 from core.rpg_character import CharacterError
-from core.rpg_expeditions import require_not_expedition
+from core.rpg_expeditions import require_not_legacy_expedition
 from core.rpg_maze_traits import descriptions as trait_descriptions
 
 
@@ -196,7 +196,7 @@ class PaintedMazeStore:
             self.db.execute('BEGIN IMMEDIATE')
             if self.active_for_user(guild_id, host_id):
                 raise PaintedMazeError('你已在這個伺服器的另一個繪境迷宮房間中。')
-            require_not_expedition(self.db, host_id, now)
+            require_not_legacy_expedition(self.db, host_id, now)
             if require_entry:
                 owned = self.db.execute('''SELECT quantity FROM rpg_inventory
                     WHERE guild_id=? AND user_id=? AND item_id=?''',
@@ -284,7 +284,7 @@ class PaintedMazeStore:
             else:
                 if level < MIN_LEVEL:
                     raise PaintedMazeError(f'繪境迷宮需要 Lv.{MIN_LEVEL} 才能進入。')
-                require_not_expedition(self.db, user_id, now)
+                require_not_legacy_expedition(self.db, user_id, now)
                 if user_id in room['members']:
                     raise PaintedMazeError('你已經在隊伍中。')
                 if len(room['members']) >= MAX_PARTICIPANTS:

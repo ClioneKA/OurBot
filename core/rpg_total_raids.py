@@ -19,7 +19,8 @@ from core.rpg_character import add_owned_item
 from core.rpg_witch_catalog import WITCH_BOSS, IDS, PROFILE
 from core.rpg_witch_embroideries import backfill_victories, record_victory
 from core.rpg_witch_battle import WitchRaidBattle, witch_battle_from_participants, ACTION_DEFEND, SPELL_DESCRIPTIONS, WITCH_TRAITS
-from core.rpg_expeditions import is_expedition_active, require_not_expedition
+from core.rpg_expeditions import (is_legacy_expedition_active,
+                                  require_not_legacy_expedition)
 from core.rpg_raids import channel_ids
 from core.rpg_total_battle import (
     ACTION_ATTACK,
@@ -337,7 +338,7 @@ class TotalRaidStore:
             if not saved or saved['status'] != 'lobby':
                 raise TotalRaidError('這個房間已經開始或關閉。')
             for uid in room['members']:
-                require_not_expedition(self.db, uid)
+                require_not_legacy_expedition(self.db, uid)
             self.db.execute('UPDATE rpg_total_raids SET status=?,data=? WHERE id=?',
                 (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
 
@@ -403,7 +404,7 @@ class TotalRaidStore:
         )
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            if is_expedition_active(self.db, host_id):
+            if is_legacy_expedition_active(self.db, host_id):
                 raise TotalRaidError('你正在遠征，請等待返回或先中斷遠征。')
             self.db.execute(
                 'INSERT INTO rpg_total_raids VALUES (?,?,?,?,?,?)',
@@ -424,7 +425,7 @@ class TotalRaidStore:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             if room['status'] in ('lobby', 'running'):
-                if any(is_expedition_active(self.db, user) for user in room['members']):
+                if any(is_legacy_expedition_active(self.db, user) for user in room['members']):
                     raise TotalRaidError('隊員正在遠征，請等待返回或先中斷遠征。')
             self.db.execute('UPDATE rpg_total_raids SET status=?, data=? WHERE id=?',
                             (room['status'], json.dumps(room, ensure_ascii=False), room['id']))
@@ -1085,7 +1086,7 @@ class TotalRaidService:
                 return await self._create_room(guild, host, boss)
 
     async def _create_room(self, guild, host, boss):
-        require_not_expedition(self.repo.db, host.id)
+        require_not_legacy_expedition(self.repo.db, host.id)
         if not self.settings.enabled:
             raise CharacterError('總力戰目前未開放。')
         if boss not in (*TOTAL_RAID_BOSSES, WITCH_BOSS):

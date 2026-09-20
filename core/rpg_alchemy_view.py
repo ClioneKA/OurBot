@@ -159,6 +159,7 @@ class AlchemyView(discord.ui.View):
                                else discord.ButtonStyle.secondary))
             self.button('分享人偶配置', 'share', 1)
             self.button('能力說明', 'stats', 1)
+            self.button('人偶遠征', 'expedition', 1)
         elif self.page == 'automation':
             fish = state['config'].get('fishing', {})
             farm = state['config'].get('farming', {})
@@ -623,6 +624,9 @@ class AlchemyView(discord.ui.View):
                     return
                 elif action == 'life':
                     await navigate(self, interaction, 'life')
+                    return
+                elif action == 'expedition':
+                    await navigate(self, interaction, 'expedition')
                     return
                 elif action == 'close':
                     await interaction.response.edit_message(content='煉金人偶面板已關閉。', embed=None, view=None)
