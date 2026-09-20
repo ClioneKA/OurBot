@@ -1,7 +1,7 @@
 """Currency-specific shops with explicit, transactional purchases."""
 import asyncio
 
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate
 
 import discord
 
@@ -72,6 +72,7 @@ class ShopView(discord.ui.View):
         for button in (self.buy_button, self.close_panel, self.sell_button):
             self.add_item(button)
         add_back(self, 2)
+        add_favorite_toggle(self, 3, 'shop')
 
     def expansion_description(self, key):
         status = self.expansion_status[key]

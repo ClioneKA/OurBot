@@ -38,9 +38,46 @@ FAVORITE_PAGES = {
 MAX_FAVORITES = 10
 
 
-class FavoriteSelect(discord.ui.Select):
-    async def callback(self, interaction):
-        await self.view.handle(interaction, 'set_favorites', self.values)
+def add_favorite_toggle(view, row, page):
+    """Add an in-place favorite toggle to a player-owned menu page."""
+    store = getattr(view.cog, 'store', None)
+    if store is None:
+        store = getattr(getattr(view.cog, 'characters', None), 'store', None)
+    if store is None:
+        return
+    favorites = store.menu_favorites(view.guild_id, view.owner.id)
+    selected = page in favorites
+    button = discord.ui.Button(
+        label='★ 移除最愛' if selected else '☆ 加入最愛', row=row,
+        style=discord.ButtonStyle.primary if selected else discord.ButtonStyle.secondary)
+
+    async def callback(interaction):
+        if interaction.guild_id != view.guild_id or interaction.user.id != view.owner.id:
+            await interaction.response.send_message('請使用 /冒險 開啟自己的安安大冒險。', ephemeral=True)
+            return
+        async with view.lock:
+            if view.closed or view.is_finished():
+                await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
+                return
+            current = list(store.menu_favorites(view.guild_id, view.owner.id))
+            if page in current:
+                current.remove(page)
+                selected_now = False
+            else:
+                if len(current) >= MAX_FAVORITES:
+                    await interaction.response.send_message(
+                        f'最愛最多 {MAX_FAVORITES} 個；請先到其他頁面移除一個。', ephemeral=True)
+                    return
+                current.append(page)
+                selected_now = True
+            store.set_menu_favorites(view.guild_id, view.owner.id, current)
+            button.label = '★ 移除最愛' if selected_now else '☆ 加入最愛'
+            button.style = (discord.ButtonStyle.primary if selected_now
+                            else discord.ButtonStyle.secondary)
+            await interaction.response.edit_message(view=view)
+
+    button.callback = callback
+    view.add_item(button)
 
 
 def add_help(view, row, topic, return_page):
@@ -162,15 +199,6 @@ class AdventureView(discord.ui.View):
                 self.button(label, action, i // 3)
             for i, page in enumerate(self._favorites()):
                 self.button('⭐ ' + FAVORITE_PAGES[page][0], page, 2 + i // 5)
-        elif self.page == 'favorites':
-            favorites = self._favorites()
-            self.add_item(FavoriteSelect(
-                placeholder='選擇要加入最愛的介面（最多 10 個）', row=0,
-                min_values=0, max_values=MAX_FAVORITES,
-                options=[discord.SelectOption(
-                    label=label, value=page, description=description,
-                    default=page in favorites)
-                    for page, (label, description) in FAVORITE_PAGES.items()]))
         elif self.page == 'character':
             for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
                                                  ('出戰配置', 'loadouts'), ('轉職', 'jobs'),
@@ -223,9 +251,9 @@ class AdventureView(discord.ui.View):
             add_help(self, 2, topic, self.page)
         if self.page != 'home':
             add_back(self, 4 if self.page == 'favorites' else 2)
-        utility_row = 4 if self.page in ('home', 'favorites') else 2
-        if self.page == 'home':
-            self.button('編輯最愛', 'favorites', utility_row)
+        utility_row = 4 if self.page == 'home' else 2
+        if self.page in FAVORITE_PAGES:
+            add_favorite_toggle(self, utility_row, self.page)
         self.button('重新整理', 'refresh', utility_row)
         self.button('關閉', 'close', utility_row)
 
@@ -238,17 +266,6 @@ class AdventureView(discord.ui.View):
         if self.page == 'home':
             embed = self.cog.character_embed(self.guild_id, self.owner)
             embed.title = '安安大冒險｜' + embed.title
-        elif self.page == 'favorites':
-            favorites = self._favorites()
-            description = ('從下拉選單勾選常用介面；設定會自動保存。\n'
-                           '儲存後，捷徑會直接顯示在冒險首頁。')
-            if favorites:
-                description += '\n\n**目前最愛**\n' + '、'.join(
-                    FAVORITE_PAGES[page][0] for page in favorites)
-            else:
-                description += '\n\n目前尚未加入任何最愛。'
-            embed = discord.Embed(title='安安大冒險｜⭐ 最愛',
-                                  description=description, color=0xF59E0B)
         elif self.page == 'backpack':
             chars = self.cog.characters
             all_owned = chars.inventory_entries(self.guild_id, self.owner.id)
@@ -321,8 +338,7 @@ class AdventureView(discord.ui.View):
             if action in ('home', 'character', 'items', 'equipment', 'skills', 'loadouts',
                           'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids',
                           'alchemy', 'divination', 'tavern', 'tailor', 'crystals', 'fishing',
-                          'farming', 'expedition', 'provisions', 'help', 'give', 'use_items',
-                          'favorites'):
+                          'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':
@@ -349,11 +365,6 @@ class AdventureView(discord.ui.View):
                     self.index = min(self.pages - 1, self.index + 1)
                 elif action == 'category' and self.page == 'backpack' and value in BACKPACK_CATEGORIES:
                     self.category, self.index = value, 0
-                elif action == 'set_favorites' and self.page == 'favorites':
-                    pages = [page for page in FAVORITE_PAGES if page in value][:MAX_FAVORITES]
-                    store = getattr(self.cog, 'store', self.cog.characters.store)
-                    store.set_menu_favorites(self.guild_id, self.owner.id, pages)
-                    notice = ('最愛已更新。' if pages else '已清空最愛。')
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

@@ -1,7 +1,7 @@
 """Private, immediately saved skill strategy controls."""
 import asyncio
 
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate
 
 import discord
 
@@ -122,6 +122,7 @@ class SkillView(discord.ui.View):
         for button in (self.change_skill, self.toggle, self.close_panel):
             self.add_item(button)
         add_back(self, 4)
+        add_favorite_toggle(self, 4, 'skills')
 
     def embed(self, notice=None):
         embed = self.cog.skills_embed(self.guild_id, self.owner.id)

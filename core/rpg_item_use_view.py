@@ -4,7 +4,7 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, ITEMS, MAZE_CHOICE_BOXES
-from core.rpg_menu import navigate
+from core.rpg_menu import add_favorite_toggle, navigate
 from core.rpg_painted_maze import ENTRY_CLOSED_NOTICE, ENTRY_ENABLED, ENTRY_ROUTES, MODE_NAME
 
 
@@ -81,6 +81,7 @@ class ItemUseView(discord.ui.View):
             await self.handle(interaction, 'backpack')
         back.callback = back_callback
         self.add_item(back)
+        add_favorite_toggle(self, 2, 'use_items')
         return counts
 
     def embed(self, notice=None):

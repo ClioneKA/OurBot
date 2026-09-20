@@ -9,7 +9,7 @@ from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_fishing import (BIG_FISH, DURATIONS, ISLAND_ANGLER_FISH, RECIPES, ROD_BONUS,
                               SPOTS, STAR_SEA_FISH, fishing_mastery, fishing_progress, next_rod)
-from core.rpg_menu import add_help, navigate
+from core.rpg_menu import add_favorite_toggle, add_help, navigate
 from core.rpg_fishing_bosses import encounter_notice
 
 
@@ -55,6 +55,7 @@ class FishingView(discord.ui.View):
             self._button('返回釣魚', 'records', 1, style=discord.ButtonStyle.primary)
             self._button('取消展示', 'clear_display', 1, disabled=not state['display_fish_id'])
             self._button('關閉', 'close', 1)
+            add_favorite_toggle(self, 1, 'fishing')
             return state
         self.add_item(PanelSelect('spot', row=0, placeholder='選擇釣場', options=[
             discord.SelectOption(label=spot.name, value=key,
@@ -83,12 +84,16 @@ class FishingView(discord.ui.View):
             self._button('確認中斷並放棄本次收穫', 'cancel_confirm', 3,
                          style=discord.ButtonStyle.danger)
         else:
-            self._button('開始釣魚', 'start', 3, bool(active), discord.ButtonStyle.success)
-            self._button('收竿', 'claim', 3, not ready, discord.ButtonStyle.primary)
+            if not active:
+                self._button('開始釣魚', 'start', 3, style=discord.ButtonStyle.success)
+            else:
+                self._button('收竿' if ready else '尚未可收竿', 'claim', 3, not ready,
+                             discord.ButtonStyle.primary)
             self._button('中斷釣魚', 'cancel', 3, not active, discord.ButtonStyle.danger)
             self._button(f'製作{ITEMS[target].name}' if target else '已是最高階釣竿', 'craft', 3, not target)
             self._button('關閉完成通知' if state['notify'] else '開啟完成通知', 'notify', 3)
         add_help(self, 4, 'gathering', 'fishing')
+        add_favorite_toggle(self, 3, 'fishing')
         self._button('返回生活', 'life', 4)
         self._button('大魚圖鑑', 'records', 4)
         self._button('重新整理', 'refresh', 4)

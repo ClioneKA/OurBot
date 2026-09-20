@@ -6,7 +6,7 @@ import discord
 
 from core.rpg_character import CharacterError, ITEMS
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import navigate
+from core.rpg_menu import add_favorite_toggle, navigate
 from core.rpg_provisions import (INGREDIENT_COUNT, INGREDIENTS,
                                  effect_text, guest_reward_target)
 
@@ -128,6 +128,7 @@ class ProvisionView(discord.ui.View):
         self._button('重新命名', 'preset_rename', 4)
         self._button('清空配方', 'preset_clear', 4, not preset['ingredients'],
                      discord.ButtonStyle.danger)
+        add_favorite_toggle(self, 2, 'provisions')
 
     def embed(self, notice=None):
         state = self.cog.provisions.state(self.guild_id, self.owner.id)

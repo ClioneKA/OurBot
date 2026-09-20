@@ -5,7 +5,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_divination import CARDS
-from core.rpg_menu import add_help, navigate
+from core.rpg_menu import add_favorite_toggle, add_help, navigate
 
 
 class DivinationView(discord.ui.View):
@@ -57,6 +57,7 @@ class DivinationView(discord.ui.View):
         refresh.callback, close.callback = refresh_callback, close_callback
         self.add_item(refresh)
         self.add_item(close)
+        add_favorite_toggle(self, 1, 'divination')
 
     def embed(self, notice=None):
         status = self.cog.divinations.status(self.guild_id, self.owner.id)

@@ -8,6 +8,7 @@ from core.rpg_character import CharacterError
 from core.rpg_total_battle import TotalRaidError
 from core.rpg_total_raids import WITCH_BOSS
 from core.rpg_witch_rest import MAX_ENRAGE, MIN_LEVEL, WITCHES
+from core.rpg_menu import add_favorite_toggle
 
 
 COMMON_ENRAGES = (0, 50, 99, 100, 250, 500, 750, 1000, 2000, 4000)
@@ -73,6 +74,7 @@ class RaidHubView(discord.ui.View):
         self.button('繪境／特殊召喚', 'items', 3)
         self.button('返回主選單', 'back', 4)
         self.button('關閉', 'close', 4)
+        add_favorite_toggle(self, 4, 'raids')
 
     def embed(self, notice=None):
         level = level_for(self.cog.store.xp(self.guild_id, self.owner.id))

@@ -7,7 +7,7 @@ from core.rpg_battle import Rule, TARGETS, FIXED_TARGETS, condition_text, passiv
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_loadouts import equipment_slot_key
-from core.rpg_menu import add_back, navigate
+from core.rpg_menu import add_back, add_favorite_toggle, navigate
 
 
 class RenameLoadoutModal(discord.ui.Modal):
@@ -60,6 +60,7 @@ class LoadoutView(discord.ui.View):
             button.callback = callback
             self.add_item(button)
         add_back(self, 4)
+        add_favorite_toggle(self, 4, 'loadouts')
         for label, action in (('關閉', 'close'),):
             button = discord.ui.Button(label=label, row=4)
             async def callback(interaction, action=action):

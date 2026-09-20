@@ -6,7 +6,7 @@ import discord
 
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import AdventureView
+from core.rpg_menu import AdventureView, add_favorite_toggle
 from core.rpg_training import COUNT_OPTIONS, DEFENSE_OPTIONS, ROUND_OPTIONS, train
 
 
@@ -28,6 +28,7 @@ class TrainingView(AdventureView):
                 for value in values]))
         self.button('開始測試／重新測試', 'run', 3)
         self.button('下載戰鬥紀錄', 'log', 3, self.battle is None)
+        add_favorite_toggle(self, 3, 'training')
         self.button('裝備／能力', 'equipment', 4)
         self.button('技能', 'skills', 4)
         self.button('出戰配置', 'loadouts', 4)

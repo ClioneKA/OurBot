@@ -8,7 +8,7 @@ from core.rpg_crystals import (CRYSTAL_TYPES,
                                QUALITY_SELL_PRICES, crystal_affix_name,
                                crystal_effect_text, crystal_has_unique_effect)
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import navigate
+from core.rpg_menu import add_favorite_toggle, navigate
 
 
 PAGE_SIZE = 20
@@ -140,6 +140,7 @@ class CrystalTailorView(discord.ui.View):
             self._button(label, f'mode:{mode}', 0,
                          style=(discord.ButtonStyle.primary if mode == self.mode
                                 else discord.ButtonStyle.secondary))
+        add_favorite_toggle(self, 0, 'crystals')
         if self.mode == 'socket':
             equipment_options = [discord.SelectOption(
                 label=inventory_entry_label(item, self.equipped_ids), value=item.reference,

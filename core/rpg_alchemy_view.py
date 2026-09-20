@@ -14,7 +14,7 @@ from core.rpg_alchemy import (COMBAT_RARITY_STATS, COMBAT_SKILLS, COMBAT_SKILL_D
                               material_profile, parse_stone)
 from core.rpg_character import CharacterError, ITEMS, item_sellable
 from core.rpg_equipment_view import PanelSelect
-from core.rpg_menu import navigate
+from core.rpg_menu import add_favorite_toggle, navigate
 
 
 def combat_stone_effect(skill_key, rarity, body):
@@ -353,6 +353,7 @@ class AlchemyView(discord.ui.View):
         if self.page != 'overview':
             self.button('返回人偶', 'overview', 4)
         self.button('返回生活', 'life', 4)
+        add_favorite_toggle(self, 4, 'alchemy')
         self.button('重新整理', 'refresh', 4)
         self.button('關閉', 'close', 4)
 

@@ -12,7 +12,7 @@ from core.rpg_character import CharacterError
 from core.rpg import record_gold
 from core.rpg_commissions import DailyCommissions
 from core.rpg_affinity import hanna_affinity
-from core.rpg_menu import add_help, add_back
+from core.rpg_menu import add_favorite_toggle, add_help
 from core.rpg_provisions import effect_text, guest_reward_target
 
 
@@ -527,7 +527,7 @@ class TavernView(discord.ui.View):
             self.children[-1].disabled = quest['claimed']
         add_help(self, 3, 'cooking', 'tavern')
         self._button('返回冒險', 'travel', 3)
-        add_back(self, 3)
+        add_favorite_toggle(self, 3, 'tavern')
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)
 

@@ -11,7 +11,7 @@ from core.rpg_character import (CharacterError, DYE_PRICE, EMBROIDERIES,
 from core.rpg_equipment_view import PanelSelect
 from core.rpg_witch_embroideries import DESCRIPTIONS, REQUIREMENTS
 from core.rpg_witch_catalog import PROFILE
-from core.rpg_menu import navigate
+from core.rpg_menu import add_favorite_toggle, navigate
 from core.rpg_affinity import hanna_affinity, tailoring_price
 
 
@@ -125,6 +125,7 @@ class TailorView(discord.ui.View):
                         or self.cog.store.gold(self.guild_id, self.owner.id) < self.lifestyle[self.recipe]['price']))
                     or (self.mode == 'affinity' and self.brooch['eligible_tier'] <= self.brooch['tier']))
         self._button(labels[self.mode], 'apply', 3, disabled=disabled, style=discord.ButtonStyle.success)
+        add_favorite_toggle(self, 3, 'tailor')
         self._button('上一頁', 'previous', 4,
                      disabled=self.page == 0 or self.mode not in ('dye', 'embroidery'))
         self._button('下一頁', 'next', 4,

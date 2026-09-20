@@ -11,7 +11,7 @@ from core.rpg import RPGStore
 from core.rpg_character import Characters, JOBS
 from core.rpg_divination import Divinations
 from core.rpg_divination_view import DivinationView
-from core.rpg_menu import AdventureView
+from core.rpg_menu import AdventureView, FAVORITE_PAGES
 from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
 from core.rpg_profile_view import ProfileCardView
@@ -88,7 +88,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
                 if isinstance(child, discord.ui.Button)}
         self.assertEqual([rows[label] for label in ('角色', '物品', '生活')], [0, 0, 0])
         self.assertEqual([rows[label] for label in ('冒險', '說明')], [1, 1])
-        self.assertEqual([rows[label] for label in ('編輯最愛', '重新整理', '關閉')], [4, 4, 4])
+        self.assertEqual([rows[label] for label in ('重新整理', '關閉')], [4, 4])
 
         await self.view.handle(self.interaction, 'character')
         character = self.interaction.response.edit_message.call_args.kwargs['view']
@@ -97,52 +97,56 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels[:5], ['裝備／能力', '技能', '出戰配置', '轉職', '訓練假人'])
 
     async def test_favorites_are_persistent_and_open_shortcuts(self):
-        await self.view.handle(self.interaction, 'favorites')
-        favorites = self.interaction.response.edit_message.call_args.kwargs['view']
-        self.addCleanup(favorites.stop)
-        self.assertIn('尚未加入', favorites.embed().description)
+        await self.view.handle(self.interaction, 'character')
+        character = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(character.stop)
+        toggle = next(child for child in character.children
+                      if getattr(child, 'label', '') == '☆ 加入最愛')
+        await toggle.callback(self.interaction)
+        self.assertEqual(self.store.menu_favorites(1, 1), ('character',))
+        self.assertEqual(toggle.label, '★ 移除最愛')
 
-        await favorites.handle(self.interaction, 'set_favorites', ['equipment', 'fishing'])
-        self.assertEqual(self.store.menu_favorites(1, 1), ('equipment', 'fishing'))
-        await favorites.handle(self.interaction, 'home')
+        await character.handle(self.interaction, 'home')
         home = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(home.stop)
         labels = [child.label for child in home.children
                   if isinstance(child, discord.ui.Button)]
-        self.assertIn('⭐ 裝備／能力', labels)
-        self.assertIn('⭐ 釣魚', labels)
-        self.assertLessEqual(len(favorites.to_components()), 5)
+        self.assertIn('⭐ 角色', labels)
 
-        favorites = AdventureView(self.cog, self.interaction, 'favorites')
-        self.addCleanup(favorites.stop)
-        await favorites.handle(self.interaction, 'set_favorites', [
+        self.store.set_menu_favorites(1, 1, [
             'character', 'equipment', 'skills', 'loadouts', 'jobs',
-            'training', 'items', 'backpack', 'shop', 'use_items',
-            'life', 'fishing'])
-        self.assertEqual(len(self.store.menu_favorites(1, 1)), 10)
-        await favorites.handle(self.interaction, 'home')
-        home = self.interaction.response.edit_message.call_args.kwargs['view']
+            'training', 'items', 'backpack', 'shop', 'use_items'])
+        home = AdventureView(self.cog, self.interaction)
         self.addCleanup(home.stop)
         self.assertEqual(len(home.to_components()), 5)
-        favorites = home
-        self.assertTrue(all(len(row['components']) <= 5 for row in favorites.to_components()))
+        self.assertTrue(all(len(row['components']) <= 5 for row in home.to_components()))
 
-        reopened = AdventureView(self.cog, self.interaction, 'favorites')
-        self.addCleanup(reopened.stop)
-        self.assertIn('角色、裝備／能力、技能', reopened.embed().description)
-        await reopened.handle(self.interaction, 'equipment')
+        await home.handle(self.interaction, 'equipment')
         panel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(panel.stop)
         self.assertIn('裝備', panel.embed().title)
+        self.assertTrue(any(getattr(child, 'label', '') == '★ 移除最愛'
+                            for child in panel.children))
 
-    async def test_favorites_ignore_unknown_pages_and_can_be_cleared(self):
-        self.store.set_menu_favorites(1, 1, ('unknown', 'shop'))
-        favorites = AdventureView(self.cog, self.interaction, 'favorites')
-        self.addCleanup(favorites.stop)
-        self.assertNotIn('unknown', favorites.embed().description)
-        await favorites.handle(self.interaction, 'set_favorites', [])
+    async def test_favorite_toggle_removes_and_enforces_limit(self):
+        self.store.set_menu_favorites(1, 1, ('character',))
+        character = AdventureView(self.cog, self.interaction, 'character')
+        self.addCleanup(character.stop)
+        toggle = next(child for child in character.children
+                      if getattr(child, 'label', '') == '★ 移除最愛')
+        await toggle.callback(self.interaction)
         self.assertEqual(self.store.menu_favorites(1, 1), ())
-        self.assertIn('尚未加入', favorites.embed().description)
+        self.assertEqual(toggle.label, '☆ 加入最愛')
+
+        self.store.set_menu_favorites(1, 1, list(FAVORITE_PAGES)[:10])
+        travel = AdventureView(self.cog, self.interaction, 'travel')
+        self.addCleanup(travel.stop)
+        toggle = next(child for child in travel.children
+                      if getattr(child, 'label', '') == '☆ 加入最愛')
+        self.interaction.response.send_message.reset_mock()
+        await toggle.callback(self.interaction)
+        self.interaction.response.send_message.assert_awaited_once()
+        self.assertEqual(len(self.store.menu_favorites(1, 1)), 10)
 
     async def test_help_topic_rejects_foreign_user_and_closed_panel(self):
         guide = AdventureView(self.cog, self.interaction, 'help')
