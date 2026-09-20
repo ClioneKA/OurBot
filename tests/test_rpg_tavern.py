@@ -394,13 +394,13 @@ class DedicatedTavernChannelTests(unittest.IsolatedAsyncioTestCase):
             edit_message=AsyncMock(), send_message=AsyncMock())
         view = TavernView(self.cog, self.interaction)
         self.addCleanup(view.stop)
-        button = next(item for item in view.children if item.label == '返回移動')
+        button = next(item for item in view.children if item.label == '返回冒險')
 
         await button.callback(self.interaction)
 
         travel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(travel.stop)
-        self.assertIn('移動', travel.embed().title)
+        self.assertIn('冒險', travel.embed().title)
 
     async def test_daily_delivery_button_updates_wallet_and_completed_state(self):
         self.store.create_player(1, 1)

@@ -43,7 +43,7 @@ class DivinationView(discord.ui.View):
             summon.callback = summon_callback
             self.add_item(summon)
         add_help(self, 1, 'life', 'divination')
-        back = discord.ui.Button(label='返回移動', row=1)
+        back = discord.ui.Button(label='返回冒險', row=1)
         async def back_callback(interaction):
             await self.handle(interaction, 'travel')
         back.callback = back_callback
@@ -86,7 +86,7 @@ class DivinationView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請從自己的移動頁進入占卜室。', ephemeral=True)
+            await interaction.response.send_message('請從自己的冒險頁進入占卜室。', ephemeral=True)
             return False
         return True
 

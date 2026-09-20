@@ -119,9 +119,12 @@ class LoadoutViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_main_menu_navigates_to_loadouts(self):
         menu = AdventureView(self.cog, self.interaction)
         self.addCleanup(menu.stop)
-        labels = [child.label for child in menu.children if isinstance(child, discord.ui.Button)]
+        await menu.handle(self.interaction, 'character')
+        character = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(character.stop)
+        labels = [child.label for child in character.children if isinstance(child, discord.ui.Button)]
         self.assertIn('出戰配置', labels)
-        await menu.handle(self.interaction, 'loadouts')
+        await character.handle(self.interaction, 'loadouts')
         panel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(panel.stop)
         self.assertIsInstance(panel, LoadoutView)

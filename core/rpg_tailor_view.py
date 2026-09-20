@@ -129,7 +129,7 @@ class TailorView(discord.ui.View):
                      disabled=self.page == 0 or self.mode not in ('dye', 'embroidery'))
         self._button('下一頁', 'next', 4,
                      disabled=self.page == pages - 1 or self.mode not in ('dye', 'embroidery'))
-        self._button('返回移動', 'travel', 4)
+        self._button('返回冒險', 'travel', 4)
         self._button('魔女裝備', 'witch_rest', 4)
         self._button('關閉', 'close', 4)
 
@@ -213,7 +213,7 @@ class TailorView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請從自己的移動頁進入漢娜的裁縫所。', ephemeral=True)
+            await interaction.response.send_message('請從自己的冒險頁進入漢娜的裁縫所。', ephemeral=True)
             return False
         return True
 

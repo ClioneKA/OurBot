@@ -99,8 +99,11 @@ class TrainingViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_navigation_layout_and_owner_guard(self):
         home = AdventureView(self.cog, self.interaction)
         self.addCleanup(home.stop)
-        self.assertIn('訓練假人', [c.label for c in home.children if isinstance(c, discord.ui.Button)])
-        await home.handle(self.interaction, 'training')
+        await home.handle(self.interaction, 'character')
+        character = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(character.stop)
+        self.assertIn('訓練假人', [c.label for c in character.children if isinstance(c, discord.ui.Button)])
+        await character.handle(self.interaction, 'training')
         opened = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(opened.stop)
         self.assertIsInstance(opened, TrainingView)

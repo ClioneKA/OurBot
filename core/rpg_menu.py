@@ -68,9 +68,6 @@ async def navigate(view, interaction, page='home', *, help_topic='intro', help_r
     elif page == 'use_items':
         from core.rpg_item_use_view import ItemUseView
         next_view = ItemUseView(view.cog, view.origin)
-    elif page == 'storage':
-        from core.rpg_storage_view import StorageView
-        next_view = StorageView(view.cog, view.origin)
     elif page == 'divination':
         from core.rpg_divination_view import DivinationView
         next_view = DivinationView(view.cog, view.origin)
@@ -83,9 +80,6 @@ async def navigate(view, interaction, page='home', *, help_topic='intro', help_r
     elif page == 'crystals':
         from core.rpg_crystal_view import CrystalTailorView
         next_view = CrystalTailorView(view.cog, view.origin)
-    elif page == 'profile':
-        from core.rpg_profile_view import ProfileView
-        next_view = ProfileView(view.cog, view.origin)
     elif page == 'raids':
         from core.rpg_raid_hub import RaidHubView
         next_view = RaidHubView(view.cog, view.origin)
@@ -129,11 +123,18 @@ class AdventureView(discord.ui.View):
     def rebuild(self):
         self.clear_items()
         if self.page == 'home':
-            for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
-                ('出戰配置', 'loadouts'), ('背包', 'backpack'), ('商店', 'shop'), ('展示名片', 'profile'),
-                ('生活', 'life'), ('移動', 'travel'), ('討伐', 'raids'), ('轉職', 'jobs'),
-                ('訓練假人', 'training'), ('說明', 'help'))):
+            for i, (label, action) in enumerate((('角色', 'character'), ('物品', 'items'),
+                                                 ('生活', 'life'), ('冒險', 'travel'),
+                                                 ('說明', 'help'))):
                 self.button(label, action, i // 3)
+        elif self.page == 'character':
+            for i, (label, action) in enumerate((('裝備／能力', 'equipment'), ('技能', 'skills'),
+                                                 ('出戰配置', 'loadouts'), ('轉職', 'jobs'),
+                                                 ('訓練假人', 'training'))):
+                self.button(label, action, i // 3)
+        elif self.page == 'items':
+            self.button('背包', 'backpack', 0)
+            self.button('商店', 'shop', 0)
         elif self.page == 'help':
             from core.rpg_equipment_view import PanelSelect
             self.add_item(PanelSelect('help_topic', row=0, placeholder='選擇說明主題', options=[
@@ -147,9 +148,10 @@ class AdventureView(discord.ui.View):
             self.button('農耕', 'farming', 0)
             self.button('煉金人偶', 'alchemy', 0)
         elif self.page == 'travel':
+            self.button('討伐', 'raids', 0)
             self.button('瑪格的占卜室', 'divination', 0)
             self.button('冒險者酒館', 'tavern', 0)
-            self.button('漢娜的裁縫所', 'tailor', 0)
+            self.button('漢娜的裁縫所', 'tailor', 1)
         elif self.page == 'jobs':
             from core.rpg_equipment_view import PanelSelect
             state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
@@ -171,8 +173,8 @@ class AdventureView(discord.ui.View):
             self.button('下一頁', 'next', 1, self.index == self.pages - 1)
             self.button('給予物品', 'give', 1)
             self.button('使用道具', 'use_items', 1)
-            self.button('倉庫', 'storage', 1)
-        topic = {'jobs': 'growth', 'backpack': 'combat', 'life': 'life', 'travel': 'life'}.get(self.page)
+        topic = {'character': 'growth', 'items': 'combat', 'jobs': 'growth',
+                 'backpack': 'combat', 'life': 'life', 'travel': 'life'}.get(self.page)
         if topic:
             add_help(self, 2, topic, self.page)
         if self.page != 'home':
@@ -211,8 +213,16 @@ class AdventureView(discord.ui.View):
                 '**農耕**：四塊既有田地可種植所有已解鎖植物；Lv.80 可為每塊田選擇豐收或研習專精。\n'
                 '**煉金人偶**：製作素體、設定自動化，或派遣人偶遠征取得金幣與定向素體素材。\n'
                 '魚、作物、水草與藥草都能帶到冒險者酒館，選擇五份食材製作公開料理。', color=0x38BDF8)
+        elif self.page == 'character':
+            embed = discord.Embed(title='安安大冒險｜角色', description=
+                '管理裝備、技能與出戰配置，或進行轉職與傷害測試。\n'
+                '公開名片與展示品請使用 `/冒險者` 設定。', color=0x8B5CF6)
+        elif self.page == 'items':
+            embed = discord.Embed(title='安安大冒險｜物品', description=
+                '查看、使用或給予背包物品，並前往商店購買與出售裝備。', color=0xD97706)
         elif self.page == 'travel':
-            embed = discord.Embed(title='安安大冒險｜移動', description=
+            embed = discord.Embed(title='安安大冒險｜冒險', description=
+                '**討伐**\n建立魔女安息、魔女試煉、繪境迷宮或特殊召喚。\n\n'
                 '**瑪格的占卜室**\n'
                 '支付金幣抽取一張塔羅牌，讓下一場討伐獲得特殊效果與額外經驗。\n'
                 '每日不限次數，但每次占卜都會比前一次多花 300 金幣。\n\n'
@@ -246,8 +256,10 @@ class AdventureView(discord.ui.View):
             if self.closed or self.is_finished():
                 await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
                 return
-            if action in ('home', 'equipment', 'skills', 'loadouts', 'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids', 'alchemy',
-                          'divination', 'tavern', 'tailor', 'crystals', 'profile', 'fishing', 'farming', 'expedition', 'provisions', 'help', 'give', 'use_items', 'storage'):
+            if action in ('home', 'character', 'items', 'equipment', 'skills', 'loadouts',
+                          'training', 'backpack', 'shop', 'jobs', 'life', 'travel', 'raids',
+                          'alchemy', 'divination', 'tavern', 'tailor', 'crystals', 'fishing',
+                          'farming', 'expedition', 'provisions', 'help', 'give', 'use_items'):
                 await navigate(self, interaction, action)
                 return
             if action == 'close':

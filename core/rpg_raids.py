@@ -482,11 +482,13 @@ class RaidService:
                 return
             else:
                 participants = []
-                for uid in raid['members']:
-                    member = channel.guild.get_member(uid)
-                    if not member or member.bot:
-                        continue
-                    state = self.cog.characters.snapshot(raid['guild_id'], uid)
+                members = [member for uid in raid['members']
+                           if (member := channel.guild.get_member(uid)) and not member.bot]
+                states = self.cog.characters.snapshot_many(
+                    raid['guild_id'], [member.id for member in members])
+                for member in members:
+                    uid = member.id
+                    state = states[uid]
                     if state['level'] < raid_min_level(raid):
                         continue
                     passive = self.cog.tactics.passive(raid['guild_id'], uid, state['job'])

@@ -1225,11 +1225,14 @@ class TotalRaidService:
             if not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 raise TotalRaidError('找不到總力戰文字頻道。')
             participants = []
-            for user_id in room['members']:
-                participant = channel.guild.get_member(user_id)
-                if participant is None or participant.bot:
-                    continue
-                state = self.cog.characters.snapshot(room['guild_id'], user_id)
+            members = [participant for user_id in room['members']
+                       if (participant := channel.guild.get_member(user_id)) is not None
+                       and not participant.bot]
+            states = self.cog.characters.snapshot_many(
+                room['guild_id'], [participant.id for participant in members])
+            for participant in members:
+                user_id = participant.id
+                state = states[user_id]
                 passive = self.cog.tactics.passive(room['guild_id'], user_id, state['job'])
                 participants.append(dict(
                     id=user_id, name=participant.display_name[:16], state=state,

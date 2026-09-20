@@ -503,7 +503,13 @@ class RPG(commands.Cog):
             await interaction.response.send_message(f'{member.display_name} 還沒有開始安安大冒險。', ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())
             return
+        view = None
+        if member.id == interaction.user.id:
+            from core.rpg_profile_view import ProfileCardView
+            view = ProfileCardView(self, member.id)
+            self.menu_views.add(view)
         await interaction.response.send_message(embed=self.adventurer_embed(interaction.guild_id, member),
+                                                view=view,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name='邀請', description='張貼安安大冒險邀請函，或私訊指定成員')

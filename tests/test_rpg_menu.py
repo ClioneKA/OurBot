@@ -14,6 +14,7 @@ from core.rpg_divination_view import DivinationView
 from core.rpg_menu import AdventureView
 from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
+from core.rpg_profile_view import ProfileCardView
 from core.settings import RPGSettings
 
 
@@ -67,9 +68,15 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_home_groups_features_and_keeps_utilities_last(self):
         rows = {child.label: child.row for child in self.view.children
                 if isinstance(child, discord.ui.Button)}
-        self.assertEqual([rows[label] for label in ('裝備／能力', '技能', '出戰配置')], [0, 0, 0])
-        self.assertEqual([rows[label] for label in ('背包', '商店', '展示名片')], [1, 1, 1])
+        self.assertEqual([rows[label] for label in ('角色', '物品', '生活')], [0, 0, 0])
+        self.assertEqual([rows[label] for label in ('冒險', '說明')], [1, 1])
         self.assertEqual([rows[label] for label in ('重新整理', '關閉')], [4, 4])
+
+        await self.view.handle(self.interaction, 'character')
+        character = self.interaction.response.edit_message.call_args.kwargs['view']
+        self.addCleanup(character.stop)
+        labels = [child.label for child in character.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(labels[:5], ['裝備／能力', '技能', '出戰配置', '轉職', '訓練假人'])
 
     async def test_help_topic_rejects_foreign_user_and_closed_panel(self):
         guide = AdventureView(self.cog, self.interaction, 'help')
@@ -172,10 +179,12 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(entry.item_id == 'maze:archer:weapon'
                             for entry in self.characters.inventory_entries(1, 1)))
 
-    async def test_profile_page_sets_and_clears_showcase(self):
+    async def test_public_profile_opens_private_showcase_settings(self):
         self.characters.grant_item(1, 1, 'paint:red')
-        await self.view.handle(self.interaction, 'profile')
-        profile = self.interaction.response.edit_message.call_args.kwargs['view']
+        card = ProfileCardView(self.cog, 1)
+        self.addCleanup(card.stop)
+        await card.children[0].callback(self.interaction)
+        profile = self.interaction.response.send_message.call_args.kwargs['view']
         self.addCleanup(profile.stop)
         await profile.handle(self.interaction, 'showcase', 'paint:red')
         self.assertEqual(self.characters.showcase(1, 1), 'paint:red')
@@ -185,22 +194,22 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_movement_page_opens_mag_divination_room(self):
         labels = [child.label for child in self.view.children if isinstance(child, discord.ui.Button)]
-        self.assertIn('移動', labels)
+        self.assertIn('冒險', labels)
         await self.view.handle(self.interaction, 'travel')
         travel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(travel.stop)
-        self.assertIn('移動', travel.embed().title)
+        self.assertIn('冒險', travel.embed().title)
         await travel.handle(self.interaction, 'divination')
         room = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(room.stop)
         self.assertIn('瑪格的占卜室', room.embed().title)
         self.assertIn('300 金幣', room.embed().description)
         labels = [child.label for child in room.children if isinstance(child, discord.ui.Button)]
-        self.assertIn('返回移動', labels)
+        self.assertIn('返回冒險', labels)
         await room.handle(self.interaction, 'travel')
         travel = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(travel.stop)
-        self.assertIn('移動', travel.embed().title)
+        self.assertIn('冒險', travel.embed().title)
 
     async def test_existing_divination_requires_confirmation_before_overwrite(self):
         with self.store.db:

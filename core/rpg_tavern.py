@@ -526,7 +526,7 @@ class TavernView(discord.ui.View):
                          discord.ButtonStyle.success)
             self.children[-1].disabled = quest['claimed']
         add_help(self, 3, 'life', 'tavern')
-        self._button('返回移動', 'travel', 3)
+        self._button('返回冒險', 'travel', 3)
         add_back(self, 3)
         self._button('重新整理', 'refresh', 3)
         self._button('關閉', 'close', 3)

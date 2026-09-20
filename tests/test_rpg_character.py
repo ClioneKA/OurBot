@@ -429,6 +429,16 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(reloaded.claim(1, 1), ['starter:club'])
         self.assertEqual(reloaded.inventory_counts(1, 1)['starter:club'], 1)
 
+    def test_team_snapshot_matches_individual_snapshots(self):
+        for user_id, job in ((1, '騎士'), (2, '弓兵'), (3, '僧侶')):
+            self.level(50, user=user_id)
+            self.characters.change_job(1, user_id, job)
+            self.characters.equip(1, user_id, 'accessory:0')
+        expected = {user_id: self.characters.snapshot(1, user_id)
+                    for user_id in (1, 2, 3)}
+
+        self.assertEqual(self.characters.snapshot_many(1, (1, 2, 3)), expected)
+
     def test_public_showcase_must_be_owned_and_persists(self):
         self.assertFalse(self.characters.has_character(1, 1))
         self.characters.snapshot(1, 1)

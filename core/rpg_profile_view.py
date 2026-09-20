@@ -4,10 +4,27 @@ import asyncio
 import discord
 
 from core.rpg_character import CharacterError, inventory_entry_label, item_text
-from core.rpg_menu import add_back, navigate
 
 
 PAGE_SIZE = 24
+
+
+class ProfileCardView(discord.ui.View):
+    """Public card control that opens private showcase settings for its owner."""
+    def __init__(self, cog, owner_id):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.owner_id = owner_id
+
+    @discord.ui.button(label='設定展示品', style=discord.ButtonStyle.secondary)
+    async def configure(self, interaction, _button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message('只有名片本人可以設定展示品。', ephemeral=True)
+            return
+        view = ProfileView(self.cog, interaction)
+        self.cog.menu_views.add(view)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
 
 
 class ShowcaseSelect(discord.ui.Select):
@@ -55,7 +72,6 @@ class ProfileView(discord.ui.View):
         self.button('上一頁', 'previous', disabled=self.index == 0)
         self.button('下一頁', 'next', disabled=self.index == self.pages - 1)
         self.button('取消展示', 'clear')
-        add_back(self, 2)
         self.button('關閉', 'close', 2)
 
     def embed(self, notice=None):
@@ -71,7 +87,7 @@ class ProfileView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.guild_id != self.guild_id or interaction.user.id != self.owner.id:
-            await interaction.response.send_message('請從自己的冒險面板設定展示名片。', ephemeral=True)
+            await interaction.response.send_message('請使用 `/冒險者` 設定自己的展示品。', ephemeral=True)
             return False
         return True
 
@@ -80,10 +96,7 @@ class ProfileView(discord.ui.View):
             return
         async with self.lock:
             if self.closed or self.is_finished():
-                await interaction.response.send_message('面板已關閉，請重新使用 /冒險。', ephemeral=True)
-                return
-            if action == 'home':
-                await navigate(self, interaction, 'home')
+                await interaction.response.send_message('面板已關閉，請重新使用 `/冒險者`。', ephemeral=True)
                 return
             if action == 'close':
                 await interaction.response.edit_message(content='展示名片設定已關閉。', embed=None, view=None)
