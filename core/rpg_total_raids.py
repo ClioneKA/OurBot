@@ -499,7 +499,7 @@ class TotalRaidLobbyView(discord.ui.View):
             try:
                 await self.service.cancel_lobby(self.room_id, interaction.user)
                 await self.service.cleanup_witch_rooms(time.time())
-                await interaction.followup.send('房間已關閉；紀錄送達魔女試煉頻道後會封存討論串。', ephemeral=True)
+                await interaction.followup.send('房間已關閉；紀錄送達魔女試煉頻道後會刪除討論串。', ephemeral=True)
             except (CharacterError, TotalRaidError) as exc:
                 await interaction.followup.send(str(exc), ephemeral=True)
             return
@@ -1586,7 +1586,7 @@ class TotalRaidService:
         embed.add_field(name='參戰成員', value=roster or '尚無成員', inline=False)
         embed.set_footer(text='房主建立房間時會自動加入；目前最多六人。')
         if room['boss'] == WITCH_BOSS:
-            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；戰鬥結束後戰報送至魔女試煉頻道並封存討論串。')
+            embed.set_footer(text='待機房建立 30 分鐘後自動關閉；戰鬥結束後戰報送至魔女試煉頻道並刪除討論串。')
         return embed
 
     def daily_embed(self):
@@ -1755,7 +1755,7 @@ class TotalRaidService:
         rows = self.repo.db.execute('SELECT data FROM rpg_total_raids').fetchall()
         for raw, in rows:
             room = json.loads(raw)
-            if room['boss'] != WITCH_BOSS or room.get('channel_deleted') or room['status'] == 'running':
+            if room['boss'] != WITCH_BOSS or room.get('thread_deleted') or room['status'] == 'running':
                 continue
             if room.get('public_pending') and room.get('battle'):
                 try:
@@ -1810,8 +1810,7 @@ class TotalRaidService:
                         continue
                 if isinstance(channel, discord.Thread):
                     try:
-                        await channel.edit(archived=True, locked=True,
-                                           reason='魔女試煉房間已結束')
+                        await channel.delete(reason='魔女試煉房間已結束且戰報已送達')
                     except discord.NotFound:
                         pass
                     except discord.HTTPException:
@@ -1827,9 +1826,10 @@ class TotalRaidService:
                         continue
                 await self._close_lobby_index(
                     room, '魔女試煉房間已關閉。' if room['status'] == 'lobby'
-                    else '魔女試煉已結束，討論串已封存。')
+                    else '魔女試煉已結束，討論串已刪除。')
                 room['status'] = 'cancelled' if room['status'] == 'lobby' else room['status']
                 room['channel_deleted'] = True
+                room['thread_deleted'] = True
                 self.repo.save(room)
                 for status in ('lobby', 'running'):
                     view = self.views.pop((room['id'], status), None)

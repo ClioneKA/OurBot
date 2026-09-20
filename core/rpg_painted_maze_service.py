@@ -187,7 +187,7 @@ class PaintedMazeService:
             try:
                 fetched = await guild.fetch_channel(room['thread_id'])
                 return fetched if isinstance(fetched, discord.Thread) else None
-            except discord.HTTPException:
+            except discord.NotFound:
                 return None
         return None
 
@@ -373,22 +373,19 @@ class PaintedMazeService:
 
     async def _post_battle_report(self, room):
         if room['status'] in ('lobby', 'running', 'contract') or room.get('report_message_id'):
-            return
-        thread = await self._thread(room)
-        if not thread:
-            return
+            return bool(room.get('report_message_id'))
         reports = list(room.get('battle_reports', ()))
         if not reports and room.get('last_battle'):
             reports.append({'title': '既有房間最後一戰', 'battle': room['last_battle']})
         if room.get('battle'):
             reports.append({'title': '結束時尚未完成的戰鬥', 'battle': room['battle']})
         if not reports:
-            message = await thread.send(
-                '探索已結束；討論串再保留 24 小時供隊員聊天，之後鎖定並封存。',
-                allowed_mentions=discord.AllowedMentions.none())
-            self.repo.mark_report_sent(room['id'], message.id)
-            room['report_message_id'] = message.id
-            return
+            return True
+        destination = self.bot.get_channel(room.get('channel_id'))
+        if destination is None and room.get('channel_id') and hasattr(self.bot, 'fetch_channel'):
+            destination = await self.bot.fetch_channel(room['channel_id'])
+        if destination is None:
+            return False
         lines, summaries = [], []
         for report in reports:
             battle = report['battle']
@@ -403,12 +400,13 @@ class PaintedMazeService:
         if reward_lines:
             embed.add_field(name='掉落結算', value='\n'.join(reward_lines)[:1024], inline=False)
         embed.set_footer(text='完整逐回合記錄收錄於附件；探索途中不發送戰報。')
-        message = await thread.send(embed=embed,
+        message = await destination.send(embed=embed,
             file=discord.File(io.BytesIO('\n'.join(lines).encode('utf-8')),
                               filename=f'maze-{room["number"]}-complete.txt'),
             allowed_mentions=discord.AllowedMentions.none())
         self.repo.mark_report_sent(room['id'], message.id)
         room['report_message_id'] = message.id
+        return True
 
     def _reward_report_lines(self, room):
         """Build one durable reward summary per participant after outbox recovery."""
@@ -496,16 +494,12 @@ class PaintedMazeService:
             allowed_mentions=discord.AllowedMentions.none())
 
     async def _archive(self, room):
-        await self._post_battle_report(room)
+        if not await self._post_battle_report(room):
+            return
         thread = await self._thread(room)
-        if time.time() < room.get('archive_at', 0):
-            if thread and (thread.archived or thread.locked):
-                await thread.edit(archived=False, locked=False,
-                                  reason='繪境迷宮結束後保留一天供隊員交流')
-        else:
-            if thread and (not thread.archived or not thread.locked):
-                await thread.edit(archived=True, locked=True, reason='繪境迷宮結束後已保留一天')
-            self.repo.mark_archived(room['id'])
+        if thread:
+            await thread.delete(reason='繪境迷宮結束且戰報已送達')
+        self.repo.mark_archived(room['id'])
         self.repo.mark_terminal_refreshed(room['id'])
 
     def lobby_embed(self, room):
@@ -630,8 +624,6 @@ class PaintedMazeService:
                         + risk), inline=False)
         else:
             embed.add_field(name='結果', value=room.get('end_reason', room['status']), inline=False)
-            if room.get('archive_at'):
-                embed.add_field(name='討論串關閉時間', value=f'<t:{int(room["archive_at"])}:R>', inline=False)
             if room['status'] == 'completed':
                 if room['route'] == 'noah':
                     embed.add_field(name='菁英裝備', value=(
@@ -643,7 +635,7 @@ class PaintedMazeService:
                     embed.add_field(name='路線飾品', value=(
                         '首次通關取得半影徽記；若已通關城崎諾亞路線，'
                         '會直接取得極彩光輪。'), inline=False)
-        embed.set_footer(text='探索期限為 24 小時；結束後討論串再保留 24 小時供聊天，之後鎖定並封存，隊員仍可查看。')
+        embed.set_footer(text='探索期限為 24 小時；結束後完整戰報會送至大廳，並刪除私人討論串。')
         return embed
 
     @tasks.loop(seconds=1)

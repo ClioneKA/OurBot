@@ -142,40 +142,25 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(PaintedMazeError, '暫停開放'):
             await self.service.begin(self.room['id'], SimpleNamespace(id=1))
 
-    async def test_terminal_thread_stays_open_until_one_day_after_end_across_restart(self):
+    async def test_terminal_thread_is_deleted_after_report_delivery(self):
         room = self.repo.close(self.room['id'], 1, administrator=True, now=self.now)
-        deadline = self.now + 24 * 60 * 60
-        self.assertEqual(room['archive_at'], deadline)
-        thread = SimpleNamespace(archived=False, locked=False, edit=AsyncMock())
+        self.assertEqual(room['archive_at'], self.now)
+        thread = SimpleNamespace(delete=AsyncMock())
         self.service._thread = AsyncMock(return_value=thread)
-        with patch('core.rpg_painted_maze_service.time.time', return_value=self.now):
-            await PaintedMazeService._archive(self.service, room)
+        self.service._post_battle_report.return_value = True
+        await PaintedMazeService._archive(self.service, room)
         self.service._post_battle_report.assert_awaited_once()
-        thread.edit.assert_not_awaited()
+        thread.delete.assert_awaited_once_with(reason='繪境迷宮結束且戰報已送達')
         self.assertEqual(self.repo.terminal_refreshes(), [])
+        self.assertEqual(self.repo.archives_due(now=self.now), [])
 
-        restarted = PaintedMazeService(self.cog)
-        restarted._thread = AsyncMock(return_value=thread)
-        restarted._post_battle_report = AsyncMock()
-        self.assertEqual(restarted.repo.archives_due(now=deadline - 1), [])
-        due = restarted.repo.archives_due(now=deadline)
-        self.assertEqual([item['id'] for item in due], [room['id']])
-        # Discord may have auto-archived an idle thread; it must still be locked.
-        thread.archived = True
-        with patch('core.rpg_painted_maze_service.time.time', return_value=deadline):
-            await restarted._archive(due[0])
-        thread.edit.assert_awaited_once_with(
-            archived=True, locked=True, reason='繪境迷宮結束後已保留一天')
-        self.assertEqual(restarted.repo.archives_due(now=deadline + 1), [])
-
-    async def test_delayed_archive_failure_remains_pending_for_retry(self):
+    async def test_thread_delete_failure_remains_pending_for_retry(self):
         room = self.repo.close(self.room['id'], 1, administrator=True, now=self.now)
-        thread = SimpleNamespace(archived=False, locked=False,
-                                 edit=AsyncMock(side_effect=RuntimeError('temporary failure')))
+        thread = SimpleNamespace(delete=AsyncMock(side_effect=RuntimeError('temporary failure')))
         self.service._thread = AsyncMock(return_value=thread)
-        with patch('core.rpg_painted_maze_service.time.time', return_value=room['archive_at']):
-            with self.assertRaisesRegex(RuntimeError, 'temporary failure'):
-                await PaintedMazeService._archive(self.service, room)
+        self.service._post_battle_report.return_value = True
+        with self.assertRaisesRegex(RuntimeError, 'temporary failure'):
+            await PaintedMazeService._archive(self.service, room)
         self.assertEqual(len(self.repo.archives_due(now=room['archive_at'])), 1)
 
     @patch('core.rpg_painted_maze_service.ENTRY_ENABLED', False)
@@ -324,14 +309,14 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reports_are_deferred_until_exit_and_sent_once(self):
         room = self.repo.get(self.room['id'])
-        thread = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=102)))
-        self.service._thread = AsyncMock(return_value=thread)
+        lobby = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=102)))
+        self.bot.get_channel = lambda channel_id: lobby
         await PaintedMazeService._post_battle_report(self.service, room)
-        thread.send.assert_not_awaited()
+        lobby.send.assert_not_awaited()
         room = self.repo.settle_painting(room['id'], 1, 0, '勝利',
             dict(log=['第一幕記錄'], round=5, result='勝利'), {})
         await PaintedMazeService._post_battle_report(self.service, room)
-        thread.send.assert_not_awaited()
+        lobby.send.assert_not_awaited()
         room = self.repo.close(room['id'], 1, administrator=True)
         with self.store.db:
             self.store.db.execute('''INSERT INTO rpg_painted_maze_currency_rewards
@@ -339,14 +324,14 @@ class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
                 VALUES (?,1,1,1,250,150,123,0)''', (room['id'],))
         await PaintedMazeService._post_battle_report(self.service, room)
         await PaintedMazeService._post_battle_report(self.service, self.repo.get(room['id']))
-        thread.send.assert_awaited_once()
-        report = thread.send.call_args.kwargs['file']
+        lobby.send.assert_awaited_once()
+        report = lobby.send.call_args.kwargs['file']
         self.addCleanup(report.close)
         report_text = report.fp.read().decode('utf-8')
         self.assertIn('第一幕記錄', report_text)
         self.assertIn('掉落結算：', report_text)
         self.assertIn('<@1>：250 XP、150 金幣', report_text)
-        reward_field = next(field.value for field in thread.send.call_args.kwargs['embed'].fields
+        reward_field = next(field.value for field in lobby.send.call_args.kwargs['embed'].fields
                             if field.name == '掉落結算')
         self.assertIn('<@1>：250 XP、150 金幣', reward_field)
         self.assertEqual(self.repo.get(room['id'])['report_message_id'], 102)

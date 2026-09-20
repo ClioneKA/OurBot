@@ -135,17 +135,20 @@ class WitchRestService:
                 except discord.HTTPException:
                     pass
             await self._close_index(room, '魔女安息儀式房間已逾時關閉。')
-            await self._archive_thread(room, '魔女安息儀式房間已逾時')
+            if await self._delete_thread(room, '魔女安息儀式房間已逾時'):
+                self.repo.mark_archived(room['id'])
         for room in self.repo.pending_reports():
             try:
-                await self._post_battle_report(room)
+                await self._deliver_report_and_delete(room)
             except discord.HTTPException:
                 logger.exception('Witch rest report delivery retry failed: %s', room['id'])
         for room in self.repo.archives_due(now=now):
-            if not room.get('report_message_id'):
+            if room['status'] == 'completed' and not room.get('report_message_id'):
                 continue
-            await self._archive_thread(room, '魔女安息儀式結束後已保留一天')
-            self.repo.mark_archived(room['id'])
+            reason = ('魔女安息儀式戰報已送達' if room['status'] == 'completed'
+                      else '魔女安息儀式房間已關閉')
+            if await self._delete_thread(room, reason):
+                self.repo.mark_archived(room['id'])
 
     @tick.before_loop
     async def before_tick(self):
@@ -191,8 +194,7 @@ class WitchRestService:
                         pass
                 if thread is not None:
                     try:
-                        await thread.edit(archived=True, locked=True,
-                                          reason='魔女安息儀式建立失敗')
+                        await thread.delete(reason='魔女安息儀式建立失敗')
                     except discord.HTTPException:
                         pass
                 raise
@@ -310,7 +312,7 @@ class WitchRestService:
         self.repo.save(room)
         await self._edit_auto(room, battle)
         try:
-            await self._post_battle_report(room, battle)
+            await self._deliver_report_and_delete(room, battle)
         except discord.HTTPException:
             logger.exception('Witch rest report delivery failed: %s', room['id'])
 
@@ -321,7 +323,7 @@ class WitchRestService:
         if battle.result:
             now = time.time()
             room.update(status='completed', result=battle.result, finished_at=now,
-                        archive_at=now + 86_400, expires_at=now + 86_400,
+                        archive_at=now, expires_at=now,
                         thread_archived=False, round_deadline=None)
             rewards = self._settle_rewards(room)
             room['rewards'] = rewards
@@ -337,7 +339,7 @@ class WitchRestService:
             await self.refresh_private_panels(room)
         if battle.result:
             try:
-                await self._post_battle_report(room, battle)
+                await self._deliver_report_and_delete(room, battle)
             except discord.HTTPException:
                 logger.exception('Witch rest report delivery failed: %s', room['id'])
 
@@ -357,8 +359,13 @@ class WitchRestService:
     async def _post_battle_report(self, room, battle=None):
         if room.get('report_message_id') or not room.get('battle'):
             return
-        channel = self.bot.get_channel(room['channel_id'])
-        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        channel = self.bot.get_channel(room.get('parent_channel_id'))
+        if channel is None and room.get('parent_channel_id') and hasattr(self.bot, 'fetch_channel'):
+            channel = await self.bot.fetch_channel(room['parent_channel_id'])
+        if channel is None:
+            thread = self.bot.get_channel(room.get('channel_id'))
+            channel = getattr(thread, 'parent', None)
+        if channel is None:
             return
         snapshot = room['battle']
         if battle is None and snapshot.get('fighters'):
@@ -378,7 +385,7 @@ class WitchRestService:
             report = '\n'.join(str(line) for line in lines)
         embed = self.result_embed(room, room.get('rewards', []))
         embed.title = f'魔女安息儀式 #{room["number"]}｜完整戰報'
-        embed.set_footer(text='完整逐回合記錄、個人戰鬥統計與獎勵收錄於附件；討論串保留 24 小時。')
+        embed.set_footer(text='完整逐回合記錄、個人戰鬥統計與獎勵收錄於附件。')
         message = await channel.send(
             embed=embed,
             file=discord.File(io.BytesIO(report.encode('utf-8')),
@@ -386,6 +393,14 @@ class WitchRestService:
             allowed_mentions=discord.AllowedMentions.none())
         room['report_message_id'] = message.id
         self.repo.save(room)
+
+    async def _deliver_report_and_delete(self, room, battle=None):
+        await self._post_battle_report(room, battle)
+        room = self.repo.get(room['id'])
+        if (room.get('report_message_id')
+                and await self._delete_thread(room, '魔女安息儀式戰報已送達')):
+            self.repo.mark_archived(room['id'])
+
     async def _edit_auto(self, room, battle):
         channel = self.bot.get_channel(room['channel_id'])
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
@@ -416,23 +431,26 @@ class WitchRestService:
         except discord.HTTPException:
             pass
 
-    async def _archive_thread(self, room, reason):
+    async def _delete_thread(self, room, reason):
         channel = self.bot.get_channel(room.get('channel_id'))
         if not isinstance(channel, discord.Thread):
             guild = self.bot.get_guild(room['guild_id']) if hasattr(self.bot, 'get_guild') else None
             if guild and room.get('channel_id'):
                 try:
                     channel = await guild.fetch_channel(room['channel_id'])
-                except (discord.HTTPException, discord.NotFound):
-                    return
+                except discord.NotFound:
+                    return True
+                except discord.HTTPException:
+                    return False
         if not isinstance(channel, discord.Thread):
-            return
+            return channel is None
         try:
-            if getattr(channel, 'archived', False):
-                await channel.edit(archived=False, reason=reason)
-            await channel.edit(archived=True, locked=True, reason=reason)
+            await channel.delete(reason=reason)
+            return True
+        except discord.NotFound:
+            return True
         except discord.HTTPException:
-            pass
+            return False
 
     def thread_lobby_embed(self, room):
         return discord.Embed(
@@ -472,7 +490,8 @@ class WitchRestService:
     async def close_room(self, room_id, member):
         async with self.lock(room_id):
             room = self.repo.close_room(room_id, member.id)
-            await self._archive_thread(room, '魔女安息儀式房間已關閉')
+            if await self._delete_thread(room, '魔女安息儀式房間已關閉'):
+                self.repo.mark_archived(room['id'])
             return room
 
     def lobby_embed(self, room):
@@ -505,7 +524,5 @@ class WitchRestService:
                 lines.append(f'<@{user_id}>：' + '、'.join(drops or ('無額外掉落',)))
             embed.add_field(name='個人獎勵', value='\n'.join(lines)[:1024], inline=False)
         embed.add_field(name='戰鬥摘要', value='\n'.join(room['battle'].get('log', [])[-8:])[-1024:] or '無。', inline=False)
-        if room.get('archive_at'):
-            embed.add_field(name='討論串封存時間', value=f'<t:{int(room["archive_at"])}:R>', inline=False)
-        embed.set_footer(text='戰鬥結束後討論串保留 24 小時供隊員聊天，之後鎖定並封存。')
+        embed.set_footer(text='戰鬥結束後完整戰報會送至魔女試煉大廳，並刪除私人討論串。')
         return embed

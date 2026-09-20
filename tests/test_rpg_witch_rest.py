@@ -642,9 +642,8 @@ class WitchRestStoreTests(unittest.TestCase):
             room['id'], 10, [WitchRestRulesTests.participant(10)], now=101)
         finished = self.rest.finish_room(
             running['id'], '勝利', {'rounds': 1, 'log': []}, now=102)
-        self.assertEqual(finished['archive_at'], 86_502)
-        self.assertEqual(self.rest.archives_due(now=86_501), [])
-        self.assertEqual([item['id'] for item in self.rest.archives_due(now=86_502)], [room['id']])
+        self.assertEqual(finished['archive_at'], 102)
+        self.assertEqual([item['id'] for item in self.rest.archives_due(now=101)], [room['id']])
         self.rest.mark_archived(room['id'])
         self.assertEqual(self.rest.archives_due(now=90_000), [])
 
@@ -733,7 +732,9 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.guild = SimpleNamespace(id=1)
         self.parent = FakeChannel(80, self.guild)
         self.thread = FakeThread(81, self.guild)
+        self.thread.parent = self.parent
         self.parent.create_thread.return_value = self.thread
+        self.bot.channels.update({self.parent.id: self.parent, self.thread.id: self.thread})
         total_raids = SimpleNamespace(
             repo=SimpleNamespace(active=lambda: []),
             witch_announcement_channels=AsyncMock(return_value=[self.parent]))
@@ -762,7 +763,9 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
     async def test_auto_battle_advances_one_round_and_keeps_thread_open(self):
         participant = WitchRestRulesTests.participant(10)
         room = self.rest.create_room(1, 10, 'ema', 99, practice=True, now=100)
-        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        room = self.rest.attach_room(
+            room['id'], self.thread.id, self.thread.message.id,
+            parent_channel_id=self.parent.id, index_message_id=self.parent.message.id)
         room = self.rest.start_room(room['id'], 10, [participant], now=101)
         battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
         room.update(battle=dump_total_battle(battle), round_deadline=102)
@@ -775,16 +778,19 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['battle']['rounds'], 1)
         self.assertIn('fighters', saved['battle'])
         self.assertTrue(saved['report_message_id'])
-        self.assertGreater(saved['archive_at'], saved['finished_at'])
+        self.assertEqual(saved['archive_at'], saved['finished_at'])
+        self.assertTrue(saved['thread_archived'])
         self.thread.edit.assert_not_awaited()
+        self.thread.delete.assert_awaited_once_with(reason='魔女安息儀式戰報已送達')
         self.thread.message.edit.assert_awaited_once()
-        self.thread.send.assert_awaited_once()
-        report = self.thread.send.call_args.kwargs['file'].fp.getvalue().decode('utf-8')
+        self.thread.send.assert_not_awaited()
+        self.parent.send.assert_awaited_once()
+        report = self.parent.send.call_args.kwargs['file'].fp.getvalue().decode('utf-8')
         self.assertIn('完整逐回合記錄：', report)
         self.assertIn('戰鬥結算：', report)
         self.assertIn('獎勵：', report)
         await self.service._post_battle_report(saved)
-        self.thread.send.assert_awaited_once()
+        self.parent.send.assert_awaited_once()
 
     async def test_offline_manual_players_are_not_immediately_switched_to_auto(self):
         members = {user_id: HashableMember(user_id) for user_id in (10, 11, 12)}

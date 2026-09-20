@@ -165,6 +165,14 @@ class WitchRoomTests(TotalRaidRoomTests):
         parent.send.assert_awaited_once()
         thread.send.assert_awaited_once()
 
+        room['status'] = 'cancelled'
+        self.service.repo.save(room)
+        with patch('core.rpg_total_raids.discord.TextChannel', FakeChannel), \
+             patch('core.rpg_total_raids.discord.Thread', FakeThread):
+            await self.service.cleanup_witch_rooms(room['created_at'] + 1)
+        thread.delete.assert_awaited_once_with(
+            reason='魔女試煉房間已結束且戰報已送達')
+
     async def test_existing_channel_lock_failure_backs_off(self):
         category, channel = self.announcement_fixture(existing=True)
         channel.edit.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'no permission')

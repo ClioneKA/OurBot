@@ -37,6 +37,7 @@ class FakeChannel:
         self.create_thread = AsyncMock()
         self.overwrites = {}
         self.edit = AsyncMock()
+        self.delete = AsyncMock()
 
     def get_partial_message(self, _message_id):
         return self.message

@@ -16,7 +16,6 @@ ENTRY_CLOSED_NOTICE = '繪境迷宮目前暫停開放，正在調整中；入場
 MIN_LEVEL = 50
 MAX_PARTICIPANTS = 8
 ROOM_LIFETIME_SECONDS = 24 * 60 * 60
-THREAD_RETENTION_SECONDS = 24 * 60 * 60
 CONTRACT_VOTE_SECONDS = 60
 ACTIVE_STATUSES = ('lobby', 'running', 'contract')
 ENTRY_ROUTES = {
@@ -657,7 +656,7 @@ class PaintedMazeStore:
     def _finish(room, status, actor_id, reason, now):
         room.update(status=status, ended_at=now, ended_by=actor_id, end_reason=reason)
         room['terminal_refresh_pending'] = True
-        room['archive_at'] = now + THREAD_RETENTION_SECONDS
+        room['archive_at'] = now
         room['archive_pending'] = True
         if room.get('reward_policy') == 'escrow_v2':
             room['loot_percent'] = 50 if room.get('final_entered') and status != 'completed' else 100
@@ -714,10 +713,9 @@ class PaintedMazeStore:
                 self._save(room)
 
     def archives_due(self, *, now=None):
-        now = time.time() if now is None else now
         rows = self.db.execute('SELECT data FROM rpg_painted_maze_rooms').fetchall()
-        return [room for row in rows if (room := json.loads(row[0])).get('archive_pending')
-                and room['archive_at'] <= now]
+        return [room for row in rows if (room := json.loads(row[0]))['status'] not in ACTIVE_STATUSES
+                and room.get('thread_id') and not room.get('thread_deleted')]
 
     def mark_archived(self, room_id):
         with self.db:
@@ -725,6 +723,7 @@ class PaintedMazeStore:
             room = self.get(room_id)
             if room:
                 room.pop('archive_pending', None)
+                room['thread_deleted'] = True
                 self._save(room)
 
     def mark_reward_complete(self, room_id, kind, checkpoint, *, now=None):
