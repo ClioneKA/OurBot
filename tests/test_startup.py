@@ -30,7 +30,7 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_loads_all_extensions_before_global_sync(self):
         async def sync(**kwargs):
-            self.assertEqual(loader.await_count, 3)
+            self.assertEqual(loader.await_count, 4)
             self.assertIsNone(kwargs['guild'])
             return [SimpleNamespace(name='ping', id=123)]
         with patch.object(self.bot, 'load_extension', side_effect=self.install_command) as loader, \
@@ -39,7 +39,7 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.on_ready()
             await self.bot.on_ready()
         self.assertEqual([call.args[0] for call in loader.await_args_list],
-                         ['cmds.ai', 'cmds.anan', 'cmds.rpg'])
+                         ['cmds.ai', 'cmds.anan', 'cmds.rpg', 'cmds.updates'])
         synchronizer.assert_awaited_once()
 
     async def test_guild_sync_copies_commands_without_global_sync(self):
