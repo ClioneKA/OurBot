@@ -1,3 +1,4 @@
+import asyncio
 import json
 import random
 import sqlite3
@@ -12,7 +13,7 @@ import discord
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_battle import rule_skill
-from core.rpg_character import Characters, ITEMS, add_owned_item
+from core.rpg_character import CharacterError, Characters, ITEMS, add_owned_item
 from core.settings import RPGSettings
 from core.rpg_witch_rest import (
     ENTRY_PROOFS,
@@ -803,6 +804,39 @@ class WitchRestThreadTests(unittest.IsolatedAsyncioTestCase):
         self.parent.create_thread.assert_awaited_once()
         self.thread.add_user.assert_awaited_once_with(self.host)
         self.thread.send.assert_awaited_once()
+
+    async def test_simultaneous_joins_fetch_thread_on_cache_miss(self):
+        room = self.rest.create_room(1, self.host.id, 'ema', 100, practice=True)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        self.bot.channels.pop(self.thread.id)
+        self.guild.fetch_channel = AsyncMock(return_value=self.thread)
+        members = [HashableMember(user_id) for user_id in (11, 12)]
+        for member in members:
+            member.guild = self.guild
+
+        with patch('core.rpg_witch_rest_service.level_for', return_value=70), \
+             patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            await asyncio.gather(*(self.service.change_member(room['id'], member)
+                                   for member in members))
+
+        self.assertEqual(self.rest.get(room['id'])['members'], [self.host.id, 11, 12])
+        self.assertEqual({call.args[0].id for call in self.thread.add_user.await_args_list}, {11, 12})
+        self.assertEqual(self.guild.fetch_channel.await_count, 2)
+
+    async def test_join_failure_does_not_leave_ghost_member(self):
+        room = self.rest.create_room(1, self.host.id, 'ema', 100, practice=True)
+        room = self.rest.attach_room(room['id'], self.thread.id, self.thread.message.id)
+        member = HashableMember(11)
+        member.guild = self.guild
+        self.thread.add_user.side_effect = discord.HTTPException(
+            SimpleNamespace(status=503, reason='Unavailable'), 'temporary failure')
+
+        with patch('core.rpg_witch_rest_service.level_for', return_value=70), \
+             patch('core.rpg_witch_rest_service.discord.Thread', FakeThread):
+            with self.assertRaisesRegex(CharacterError, '無法同步'):
+                await self.service.change_member(room['id'], member)
+
+        self.assertEqual(self.rest.get(room['id'])['members'], [self.host.id])
 
     async def test_auto_battle_advances_one_round_and_keeps_thread_open(self):
         participant = WitchRestRulesTests.participant(10)

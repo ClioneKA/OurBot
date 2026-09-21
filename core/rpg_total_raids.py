@@ -1188,6 +1188,7 @@ class TotalRaidService:
                 raise TotalRaidError('房間已經開始或關閉。')
             if member.bot:
                 raise TotalRaidError('機器人不能參加總力戰。')
+            previous = dict(room, members=list(room['members']))
             if leave:
                 if member.id == room['host_id']:
                     raise TotalRaidError('房主不能退出自己的隊伍。')
@@ -1207,11 +1208,23 @@ class TotalRaidService:
             self.repo.save(room)
             if room['boss'] == WITCH_BOSS:
                 thread = self.bot.get_channel(room['channel_id'])
-                if isinstance(thread, discord.Thread):
+                if not isinstance(thread, discord.Thread):
+                    try:
+                        thread = await member.guild.fetch_channel(room['channel_id'])
+                    except discord.HTTPException as exc:
+                        self.repo.save(previous)
+                        raise TotalRaidError('無法同步私人討論串，請再試一次。') from exc
+                if not isinstance(thread, discord.Thread):
+                    self.repo.save(previous)
+                    raise TotalRaidError('找不到魔女試煉的私人討論串。')
+                try:
                     if leave:
                         await thread.remove_user(member)
                     else:
                         await thread.add_user(member)
+                except discord.HTTPException as exc:
+                    self.repo.save(previous)
+                    raise TotalRaidError('無法同步私人討論串，請再試一次。') from exc
             return room
 
     async def begin(self, room_id, member):

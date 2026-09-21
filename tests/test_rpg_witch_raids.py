@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -172,6 +173,39 @@ class WitchRoomTests(TotalRaidRoomTests):
             await self.service.cleanup_witch_rooms(room['created_at'] + 1)
         thread.delete.assert_awaited_once_with(
             reason='魔女試煉房間已結束且戰報已送達')
+
+    async def test_simultaneous_witch_joins_fetch_thread_on_cache_miss(self):
+        guild = SimpleNamespace(id=1)
+        thread = FakeThread(70, guild)
+        guild.fetch_channel = AsyncMock(return_value=thread)
+        members = [HashableMember(user_id) for user_id in (2, 3)]
+        for member in members:
+            member.guild = guild
+        room = self.service.repo.create(1, 50, thread.id, 1, WITCH_BOSS, 1)
+
+        with patch('core.rpg_total_raids.discord.Thread', FakeThread):
+            await asyncio.gather(*(self.service.change_member(room['id'], member)
+                                   for member in members))
+
+        self.assertEqual(self.service.repo.get(room['id'])['members'], [1, 2, 3])
+        self.assertEqual({call.args[0].id for call in thread.add_user.await_args_list}, {2, 3})
+        self.assertEqual(guild.fetch_channel.await_count, 2)
+
+    async def test_witch_join_failure_does_not_leave_ghost_member(self):
+        guild = SimpleNamespace(id=1)
+        member = HashableMember(2)
+        member.guild = guild
+        thread = FakeThread(70, guild)
+        thread.add_user.side_effect = discord.HTTPException(
+            SimpleNamespace(status=503, reason='Unavailable'), 'temporary failure')
+        self.bot.channels[thread.id] = thread
+        room = self.service.repo.create(1, 50, thread.id, 1, WITCH_BOSS, 1)
+
+        with patch('core.rpg_total_raids.discord.Thread', FakeThread):
+            with self.assertRaisesRegex(TotalRaidError, '無法同步'):
+                await self.service.change_member(room['id'], member)
+
+        self.assertEqual(self.service.repo.get(room['id'])['members'], [1])
 
     async def test_existing_channel_lock_failure_backs_off(self):
         category, channel = self.announcement_fixture(existing=True)

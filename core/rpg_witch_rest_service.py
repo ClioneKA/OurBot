@@ -211,17 +211,31 @@ class WitchRestService:
                 if not leave and occupied_room(
                         self.cog, member.guild.id, member.id, exclude=('witch_rest', room_id)):
                     raise CharacterError('你已在另一個手動房間中。')
+                previous = self.repo.room(room_id)
                 room = self.repo.change_member(room_id, member.id, level, leave=leave)
             channel = self.bot.get_channel(room['channel_id'])
-            if isinstance(channel, discord.Thread):
-                if leave:
-                    await channel.remove_user(member)
+            if not isinstance(channel, (discord.Thread, discord.TextChannel)):
+                try:
+                    channel = await member.guild.fetch_channel(room['channel_id'])
+                except discord.HTTPException as exc:
+                    self.repo.save(previous)
+                    raise CharacterError('無法同步私人討論串，請再試一次。') from exc
+            if not isinstance(channel, (discord.Thread, discord.TextChannel)):
+                self.repo.save(previous)
+                raise CharacterError('找不到魔女安息儀式的私人討論串。')
+            try:
+                if isinstance(channel, discord.Thread):
+                    if leave:
+                        await channel.remove_user(member)
+                    else:
+                        await channel.add_user(member)
                 else:
-                    await channel.add_user(member)
-            elif isinstance(channel, discord.TextChannel):
-                await channel.set_permissions(member, overwrite=None if leave else discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, read_message_history=True),
-                    reason='更新魔女安息儀式隊員')
+                    await channel.set_permissions(member, overwrite=None if leave else discord.PermissionOverwrite(
+                        view_channel=True, send_messages=True, read_message_history=True),
+                        reason='更新魔女安息儀式隊員')
+            except discord.HTTPException as exc:
+                self.repo.save(previous)
+                raise CharacterError('無法同步私人討論串，請再試一次。') from exc
             return room
 
     async def begin(self, room_id, member):
