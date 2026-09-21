@@ -11,6 +11,8 @@ from core.rpg_alchemy import (AlchemyDolls, body_material_id, material_profile,
 from core.rpg_character import Characters, CharacterError, ITEMS, item_sellable
 from core.rpg_expeditions import (Expeditions, is_doll_expedition_active,
                                   is_legacy_expedition_active)
+from core.rpg_farming import Farming
+from core.rpg_fishing import Fishing
 from core.rpg_monsters import TIER_VICTORY_XP, prepare_monster
 from core.rpg_raid_store import RaidStore
 from core.settings import RPGSettings
@@ -122,6 +124,29 @@ class ExpeditionTests(unittest.TestCase):
         receipt = self.alchemy._reserve_operation(
             1, 1, 'fishing', 'after', 1, session['ready_at'])
         self.assertEqual(receipt['status'], 'reserved')
+
+    def test_life_completion_notifications_are_not_suppressed_while_doll_is_away(self):
+        fishing = Fishing(self.store)
+        farming = Farming(self.store)
+        fish = fishing.start(1, 1, 'pond', 'short', now=0)
+        crop = farming.plant(1, 1, 'courtyard', 'potato', now=0)
+        fishing.set_notify(1, 1, True)
+        farming.set_notify(1, 1, True)
+        expedition = self.expeditions.start(1, 1, 3, now=0)
+        self.assertLess(max(fish['ready_at'], crop['ready_at']), expedition['ready_at'])
+
+        with (patch.object(self.alchemy, 'automates_fishing', return_value=True),
+              patch.object(self.alchemy, 'automates_farming', return_value=True)):
+            self.assertEqual(
+                self.alchemy.fishing_notifications_due(fishing, now=fish['ready_at']),
+                fishing.notifications_due(now=fish['ready_at']))
+            self.assertEqual(
+                self.alchemy.farming_notifications_due(farming, now=crop['ready_at']),
+                farming.notifications_due(now=crop['ready_at']))
+            self.assertEqual(
+                self.alchemy.fishing_notifications_due(fishing, now=expedition['ready_at']), [])
+            self.assertEqual(
+                self.alchemy.farming_notifications_due(farming, now=expedition['ready_at']), [])
 
     def test_missing_body_bad_duration_and_insufficient_fuel_are_rejected(self):
         with self.assertRaises(CharacterError):

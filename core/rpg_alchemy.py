@@ -917,12 +917,16 @@ class AlchemyDolls:
         return self._life_automation_enabled(guild, user, 'farming', threshold)
 
     def fishing_notifications_due(self, fishing, now=None):
+        from core.rpg_expeditions import is_doll_expedition_active
         return [row for row in fishing.notifications_due(now)
-                if not self.automates_fishing(row[0], row[1], row[3])]
+                if (not self.automates_fishing(row[0], row[1], row[3])
+                    or is_doll_expedition_active(self.db, row[0], row[1], now))]
 
     def farming_notifications_due(self, farming, now=None):
+        from core.rpg_expeditions import is_doll_expedition_active
         return [row for row in farming.notifications_due(now)
-                if not self.automates_farming(row[0], row[1], row[2])]
+                if (not self.automates_farming(row[0], row[1], row[2])
+                    or is_doll_expedition_active(self.db, row[0], row[1], now))]
 
     def auto_fishing_due(self, now=None):
         now = time.time() if now is None else now
