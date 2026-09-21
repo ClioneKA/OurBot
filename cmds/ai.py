@@ -251,7 +251,7 @@ class AI(Cog_Extension):
         self.memory = MemoryStore(str(memory_path))
         rpg_knowledge_path = project_root / "config" / "RPG.md"
         try:
-            self.rpg_knowledge = RPGKnowledgeBase.from_markdown(rpg_knowledge_path)
+            self.rpg_knowledge = RPGKnowledgeBase.from_project(project_root)
         except OSError:
             logger.exception("讀取安安大冒險知識庫失敗：%s", rpg_knowledge_path)
             self.rpg_knowledge = RPGKnowledgeBase(())

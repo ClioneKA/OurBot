@@ -3,7 +3,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 
 _HEADING_RE = re.compile(r"^(#{1,4})\s+(.+?)\s*$")
@@ -89,8 +89,13 @@ def _chunk_section(heading: str, lines: Sequence[str], max_chars: int) -> Iterab
 class RPGKnowledgeBase:
     """Small local retriever for the player-facing RPG reference."""
 
-    def __init__(self, passages: Sequence[KnowledgePassage]):
+    def __init__(
+        self,
+        passages: Sequence[KnowledgePassage],
+        item_passages: Mapping[str, KnowledgePassage] | None = None,
+    ):
         self.passages = tuple(passages)
+        self.item_passages = dict(item_passages or {})
         self._passage_terms = tuple(_terms(f"{item.heading}\n{item.text}") for item in passages)
         document_frequency = Counter(
             term for passage_terms in self._passage_terms for term in passage_terms
@@ -128,6 +133,20 @@ class RPGKnowledgeBase:
         flush()
         return cls(passages)
 
+    @classmethod
+    def from_project(cls, project_root: Path) -> "RPGKnowledgeBase":
+        knowledge = cls.from_markdown(project_root / "config" / "RPG.md")
+        knowledge.item_passages = _build_item_passages()
+        return knowledge
+
+    def _matching_items(self, query: str) -> Tuple[KnowledgePassage, ...]:
+        matches = [
+            (name, passage) for name, passage in self.item_passages.items()
+            if name in query
+        ]
+        matches.sort(key=lambda item: (-len(item[0]), item[0]))
+        return tuple(passage for _, passage in matches[:3])
+
     @staticmethod
     def is_game_question(query: str) -> bool:
         if _EXPLICIT_GAME_RE.search(query):
@@ -143,6 +162,26 @@ class RPGKnowledgeBase:
     def search(
         self, query: str, *, limit: int = 3, max_total_chars: int = 6000
     ) -> Tuple[KnowledgePassage, ...]:
+        item_matches = self._matching_items(query)
+        if item_matches:
+            remaining = max(0, limit - len(item_matches))
+            general = self._search_rules(query, limit=remaining, max_total_chars=max_total_chars)
+            seen = {(item.heading, item.text) for item in item_matches}
+            matched_names = tuple(
+                name for name in self.item_passages if name in query
+            )
+            return item_matches + tuple(
+                item for item in general
+                if (item.heading, item.text) not in seen
+                and any(name in f"{item.heading}\n{item.text}" for name in matched_names)
+            )[:remaining]
+        return self._search_rules(query, limit=limit, max_total_chars=max_total_chars)
+
+    def _search_rules(
+        self, query: str, *, limit: int, max_total_chars: int
+    ) -> Tuple[KnowledgePassage, ...]:
+        if limit <= 0:
+            return ()
         if not self.passages or not self.is_game_question(query):
             return ()
         explicit_game_question = _EXPLICIT_GAME_RE.search(query) is not None
@@ -195,3 +234,88 @@ class RPGKnowledgeBase:
         return "\n\n".join(
             f"### {passage.heading}\n{passage.text}" for passage in passages
         )
+
+
+def _build_item_passages() -> Dict[str, KnowledgePassage]:
+    """Build item facts from the same runtime tables used by the game."""
+    # These imports are intentionally lazy. Several feature modules register
+    # their item definitions when imported, and AI startup should see the full
+    # catalog regardless of cog load order.
+    from core import rpg_witch_rest  # noqa: F401
+    from core.rpg_character import ITEMS, LIFESTYLE_ACCESSORY_PRICE, LIFESTYLE_ACCESSORY_RECIPES
+    from core.rpg_farming import PLANTS, STAR_FIBER_CHANCES, STAR_FIBER_ID
+    from core.rpg_fishing import GLIMMER_PEARL_CHANCE_PER_BASE_CATCH, GLIMMER_PEARL_ID, RECIPES, SPOTS
+    from core.rpg_raid_store import CHANCE_DROPS, DROP_TABLES, FIXED_DROPS
+
+    sources: Dict[str, List[str]] = {item_id: [] for item_id in ITEMS}
+    for monster, item_ids in DROP_TABLES.items():
+        for item_id in item_ids:
+            sources.setdefault(item_id, []).append(f"討伐「{monster}」的裝備掉落池")
+    for monster, item_id in FIXED_DROPS.items():
+        sources.setdefault(item_id, []).append(f"擊敗「{monster}」後由全隊隨機一人取得")
+    for monster, rule in CHANCE_DROPS.items():
+        chance = float(rule.get("chance", 0)) * 100
+        for item_id in rule.get("pool", ()):
+            sources.setdefault(item_id, []).append(
+                f"擊敗「{monster}」時，每次抽選有 {chance:g}% 機率取得"
+            )
+
+    for spot in SPOTS.values():
+        for item_id, weight in spot.loot:
+            sources.setdefault(item_id, []).append(
+                f"在「{spot.name}」釣魚的一般掉落（基礎權重 {weight:g}%）"
+            )
+    for rod_id, materials in RECIPES.items():
+        material_names = "、".join(ITEMS[item_id].name for item_id in materials)
+        sources.setdefault(rod_id, []).append(f"使用 {material_names} 製作")
+    sources.setdefault(GLIMMER_PEARL_ID, []).append(
+        f"釣魚 Lv.60 後在「魔女島海灣」收竿，每次基礎捕獲有 "
+        f"{GLIMMER_PEARL_CHANCE_PER_BASE_CATCH * 100:g}% 機率額外取得"
+    )
+
+    for plant in PLANTS.values():
+        sources.setdefault(plant.item_id, []).append(
+            f"農耕 Lv.{plant.level} 解鎖種植「{plant.name}」，成熟後收成"
+        )
+    fiber_chances = sorted(set(int(chance * 100) for chance in STAR_FIBER_CHANCES.values()))
+    sources.setdefault(STAR_FIBER_ID, []).append(
+        "農耕 Lv.60 後收成指定高階作物時額外取得；依作物時長機率為 "
+        + "／".join(f"{chance}%" for chance in fiber_chances)
+    )
+
+    for _, (product_id, material_id, amount) in LIFESTYLE_ACCESSORY_RECIPES.items():
+        sources.setdefault(product_id, []).append(
+            f"在漢娜的裁縫所使用 {ITEMS[material_id].name} ×{amount} 與 "
+            f"{LIFESTYLE_ACCESSORY_PRICE:,} 金幣製作"
+        )
+
+    witch_rewards = {
+        "witch_rest:fragment": "魔女安息儀式勝利後的隨機個人獎勵",
+        "witch_rest:dust": "魔女安息儀式勝利後的隨機個人獎勵",
+        "witch_rest:crystal_shard": "魔女化 100% 以上的魔女安息儀式勝利獎勵池",
+    }
+    for witch_id, witch in rpg_witch_rest.WITCHES.items():
+        witch_rewards[f"witch_rest:{witch_id}:core"] = (
+            f"挑戰「{witch.name}」的魔女安息儀式勝利後隨機取得"
+        )
+    for item_id, source in witch_rewards.items():
+        sources.setdefault(item_id, []).append(source)
+
+    passages: Dict[str, KnowledgePassage] = {}
+    for item_id, item in ITEMS.items():
+        facts = [f"名稱：{item.name}", f"分類：{item.category or item.slot or '其他'}"]
+        if item.job:
+            facts.append(f"限定職業：{item.job}")
+        if item.required_level:
+            facts.append(f"需求等級：Lv.{item.required_level}")
+        if item.price:
+            facts.append(f"商店價格：{item.price:,} 金幣")
+            sources.setdefault(item_id, []).append("從金幣商店購買")
+        if item.description:
+            facts.append(f"說明：{item.description}")
+        item_sources = list(dict.fromkeys(sources.get(item_id, ())))
+        facts.append("取得方式：" + ("；".join(item_sources) if item_sources else "目前資料未列出"))
+        passages[item.name] = KnowledgePassage(
+            f"道具資料 > {item.name}", "\n".join(facts)
+        )
+    return passages

@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 class RPGKnowledgeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.knowledge = RPGKnowledgeBase.from_markdown(PROJECT_ROOT / "config" / "RPG.md")
+        cls.knowledge = RPGKnowledgeBase.from_project(PROJECT_ROOT)
 
     def test_fishing_question_retrieves_fishing_rules(self):
         context = self.knowledge.context("安安，釣魚要怎麼開始？")
@@ -49,6 +49,12 @@ class RPGKnowledgeTests(unittest.TestCase):
         self.assertEqual(self.knowledge.context("咖啡豆哪裡買？"), "")
         self.assertEqual(self.knowledge.context("咖啡豆是什麼？"), "")
 
+    def test_runtime_item_catalog_covers_item_missing_from_player_guide(self):
+        context = self.knowledge.context("魔女殘片是什麼？")
+        self.assertIn("道具資料 > 魔女殘片", context)
+        self.assertIn("魔女裝備詞條重鑄材料", context)
+        self.assertIn("魔女安息儀式勝利後", context)
+
 
 class RPGKnowledgePromptTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_rpg_question_injects_reference(self):
@@ -65,7 +71,7 @@ class RPGKnowledgePromptTests(unittest.IsolatedAsyncioTestCase):
         ai._vision_input = AsyncMock(return_value=([], ""))
         ai._wants_web_search = Mock(return_value=True)
         ai._enforce_media_policy = Mock(side_effect=lambda reply, *args: reply)
-        ai.rpg_knowledge = RPGKnowledgeBase.from_markdown(PROJECT_ROOT / "config" / "RPG.md")
+        ai.rpg_knowledge = RPGKnowledgeBase.from_project(PROJECT_ROOT)
         ai.memory = Mock()
         ai.memory.relevant_personal_memories.return_value = []
         ai.memory.list_guild_memories.return_value = []
