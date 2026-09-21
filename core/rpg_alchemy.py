@@ -56,7 +56,12 @@ COMBAT_SKILL_DETAILS = {
     'interrupt': '造成 120% 攻擊傷害，命中後打斷蓄力',
 }
 LIFE_SKILLS = {'fishing': '自律釣魚', 'farming': '自律農耕',
-               'cooking': '自動備餐', 'raid_signup': '討伐響應'}
+               'cooking': '自動備餐', 'raid_signup': '討伐響應',
+               'fishing_study': '垂釣研習', 'farming_study': '農藝研習',
+               'cooking_study': '烹飪研習'}
+LIFE_XP_SKILLS = {'fishing': 'fishing_study', 'farming': 'farming_study',
+                  'cooking': 'cooking_study'}
+LIFE_XP_THRESHOLDS = ((20, 5), (50, 8), (90, 12), (140, 16), (200, 20))
 FARMING_WORK_THRESHOLDS = {'courtyard': 19, 'prison': 47, 'greenhouse': 94, 'ruins': 145}
 LIFE_WORK_UNLOCKS = {
     'fishing': ((19, '30 分鐘'), (65, '2 小時'), (133, '8 小時')),
@@ -119,6 +124,9 @@ def parse_stone(item_id):
 
 def life_skill_unlocks(key, work):
     """Return the automation capabilities unlocked by an effective work score."""
+    if key in LIFE_XP_SKILLS.values():
+        percent = life_xp_percent(work)
+        return (f'XP +{percent}%',) if percent else ()
     if key == 'cooking':
         return (f'美味度 {work} 以下的保存配方',)
     return tuple(label for threshold, label in LIFE_WORK_UNLOCKS.get(key, ())
@@ -129,11 +137,21 @@ def life_work(body, key, rarity):
     """Calculate a life skill's effective work for an arbitrary body and stone."""
     if not body or key not in LIFE_SKILLS or rarity not in RARITIES:
         return None
-    primary, secondary = {'fishing': (3, 2), 'farming': (1, 0),
-                          'cooking': (3, 4), 'raid_signup': (3, 0)}[key]
+    primary, secondary = {
+        'fishing': (3, 2), 'fishing_study': (3, 2),
+        'farming': (1, 0), 'farming_study': (1, 0),
+        'cooking': (3, 4), 'cooking_study': (3, 4),
+        'raid_signup': (3, 0),
+    }[key]
     stats = body['stats']
     multiplier = RARITIES[rarity][1]
     return math.floor((stats[primary] * 2 + stats[secondary]) / 3 * multiplier)
+
+
+def life_xp_percent(work):
+    """Return the highest life-XP bonus unlocked by a study work score."""
+    return max((percent for threshold, percent in LIFE_XP_THRESHOLDS
+                if work >= threshold), default=0)
 
 
 def _register_items():
@@ -154,6 +172,8 @@ def _register_items():
         for key, name in pool.items():
             for rarity, (_, multiplier, _) in RARITIES.items():
                 detail = (COMBAT_SKILL_DETAILS[key] if domain == 'combat'
+                          else '依工作力增加對應生活技能 XP'
+                          if key in LIFE_XP_SKILLS.values()
                           else '最終工作力由素體能力與稀有度共同決定')
                 if domain == 'combat':
                     combat_rarity = COMBAT_RARITY_STATS[rarity]
@@ -686,6 +706,16 @@ class AlchemyDolls:
         work = life_work(state['active_body'], key, saved['rarity'])
         return dict(key=key, rarity=saved['rarity'], work=work)
 
+    def life_xp_bonus_percent(self, guild, user, activity):
+        """Return the equipped doll study bonus for one life skill."""
+        key = LIFE_XP_SKILLS.get(activity)
+        if key:
+            from core.rpg_expeditions import is_doll_expedition_active
+            if is_doll_expedition_active(self.db, guild, user):
+                return 0
+        skill = self.life_skill(guild, user, key) if key else None
+        return life_xp_percent(skill['work']) if skill else 0
+
     def configure_life(self, guild, user, key, *, enabled=None, preset_slot=None,
                        pools=None, qualities=None, scheduled=None, bounty=None,
                        require_no_effect=None):
@@ -1066,10 +1096,11 @@ class AlchemyDolls:
 
 __all__ = ['AlchemyDolls', 'BODY_BUDGETS', 'BODY_MATERIAL_TIERS',
            'COMBAT_SKILLS', 'COMBAT_SKILL_DETAILS',
-           'LIFE_SKILLS', 'RARITIES', 'COMBAT_RARITY_STATS',
+           'LIFE_SKILLS', 'LIFE_XP_SKILLS', 'LIFE_XP_THRESHOLDS', 'RARITIES',
            'CORE_ITEM', 'POWDER_ITEM', 'body_material_id', 'material_profile',
            'parse_body_material', 'parse_stone', 'stone_id',
            'body_acceleration_cost', 'fuel_value', 'fuel_discount', 'operation_fuel_cost',
            'FUEL_CAPACITY', 'LIFE_WORK_UNLOCKS',
            'FARMING_WORK_THRESHOLDS', 'life_skill_unlocks', 'life_work',
+           'life_xp_percent',
            'raid_signup_pool']

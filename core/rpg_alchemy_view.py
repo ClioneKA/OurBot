@@ -404,7 +404,8 @@ class AlchemyView(discord.ui.View):
             embed.add_field(name='使用流程',
                             value='製作並安裝素體 → 定向並裝備思考核心 → '
                                   '取得技能石並刻入對應迴路。\n'
-                                  '生活技能還需在「自動化設定」開啟；'
+                                  '自動化類生活技能還需在「自動化設定」開啟；'
+                                  '研習類技能刻入後被動生效；'
                                   '戰鬥技能可在戰鬥中有限次數發動。', inline=False)
         elif self.page == 'body':
             counts = Counter(self.materials)
@@ -531,7 +532,8 @@ class AlchemyView(discord.ui.View):
             discount = fuel_discount(body['stats'][2]) if body else 0
             embed = discord.Embed(title='煉金人偶｜自動化設定', color=0xB8864B,
                 description='生活技能必須已刻入目前核心才會執行。釣魚與農耕會持續到燃料不足；'
-                            '自動備餐與討伐響應另外使用討伐觸發條件。\n\n'
+                            '自動備餐與討伐響應另外使用討伐觸發條件。'
+                            '三種研習技能刻入後被動生效，不消耗燃料。\n\n'
                             '每次「收竿＋再出發」、「收成＋重種」、備餐或討伐響應'
                             f'皆為基礎 100 燃料。目前耐久減免 {discount}%，'
                             f'每次實際消耗 **{cost}** 燃料。')
@@ -551,6 +553,8 @@ class AlchemyView(discord.ui.View):
                              '**生活技能石**　普通 70%｜稀有 80%｜史詩 90%｜傳說 100%。\n'
                              '生活工作力 = ⌊（主能力×2＋副能力）÷3×稀有度倍率⌋；'
                              '計算後數值會顯示在人偶主介面。\n'
+                             '**研習 XP 門檻**　工作力 20／50／90／140／200 時，'
+                             '對應技能 XP +5%／8%／12%／16%／20%。\n'
                              f'**農耕工作力門檻**　{farming_thresholds}；'
                              '每塊田獨立檢查。\n'
                              '命中依素體 Tier 固定，不受精密影響；暴擊率 10%、閃避率 0%。'))

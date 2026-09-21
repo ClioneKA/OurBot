@@ -9,11 +9,12 @@ from core.rpg import RPGStore, level_floor
 from core.rpg_alchemy import (AlchemyDolls, BODY_BUDGETS, CORE_ITEM, FUEL_CAPACITY, POWDER_ITEM,
                               RARITY_ORDER, body_acceleration_cost, fuel_value,
                               fuel_discount, operation_fuel_cost,
-                              life_skill_unlocks, material_profile, parse_stone,
+                              life_skill_unlocks, life_xp_percent, material_profile, parse_stone,
                               raid_signup_pool, stat_caps, stone_id)
 from core.rpg_character import Characters, CharacterError, ITEMS
 from core.rpg_farming import Farming
 from core.rpg_fishing import Fishing
+from core.rpg_provisions import Provisions
 from core.rpg_battle import raid_battle
 from core.rpg_alchemy_view import AlchemyView, combat_stone_effect
 from core.rpg_monsters import prepare_monster
@@ -41,6 +42,11 @@ class AlchemyAutomationPoolTests(unittest.TestCase):
     def test_paint_set_raid_uses_mid_tier_filters(self):
         self.assertEqual(raid_signup_pool({'pool': 'special'}), 'mid')
         self.assertEqual(raid_signup_pool({'pool': 'regular'}), 'regular')
+
+    def test_life_xp_study_thresholds(self):
+        self.assertEqual([life_xp_percent(work) for work in
+                          (0, 19, 20, 49, 50, 89, 90, 139, 140, 199, 200, 999)],
+                         [0, 0, 5, 5, 8, 8, 12, 12, 16, 16, 20, 20])
 
 
 class AlchemyDollTests(unittest.TestCase):
@@ -284,6 +290,52 @@ class AlchemyDollTests(unittest.TestCase):
         gacha = view.embed().description
         self.assertIn('史詩以上保底剩 **8** 抽', gacha)
         self.assertIn('傳說保底剩 **13** 抽', gacha)
+
+    def test_study_stones_increase_each_matching_life_skill_xp(self):
+        body = self.make_body()
+        body['stats'] = [100, 100, 100, 100, 100]
+        with self.store.db:
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET active_body=? '
+                                  'WHERE guild_id=1 AND user_id=10',
+                                  (__import__('json').dumps(body),))
+        self.characters.grant_item(1, 10, CORE_ITEM[1])
+        core_id = self.alchemy.orient_core(1, 10, 1, '生活')
+        for slot, key in enumerate(('fishing_study', 'farming_study', 'cooking_study'), 1):
+            item_id = stone_id('life', key, '普通')
+            self.characters.grant_item(1, 10, item_id)
+            self.alchemy.engrave(1, 10, core_id, 'life', slot, item_id)
+        for activity in ('fishing', 'farming', 'cooking'):
+            self.assertEqual(self.alchemy.life_xp_bonus_percent(1, 10, activity), 8)
+        self.assertEqual(life_skill_unlocks('fishing_study', 70), ('XP +8%',))
+
+        fishing = Fishing(self.store, rng=FixedRng(.99), boss_rng=FixedRng(.99),
+                          material_rng=FixedRng(.99),
+                          xp_bonus=self.alchemy.life_xp_bonus_percent)
+        trip = fishing.start(1, 10, 'pond', 'short', now=0)
+        fish_result = fishing.claim(1, 10, now=trip['ready_at'])
+        self.assertEqual((fish_result['study_bonus_xp'], fish_result['xp']), (10, 140))
+
+        farming = Farming(self.store, rng=FixedRng(.99), material_rng=FixedRng(.99),
+                          specialization_rng=FixedRng(.99),
+                          xp_bonus=self.alchemy.life_xp_bonus_percent)
+        crop = farming.plant(1, 10, 'courtyard', 'potato', now=0)
+        farm_result = farming.harvest(1, 10, 'courtyard', now=crop['ready_at'])
+        self.assertEqual((farm_result['study_bonus_xp'], farm_result['xp']), (16, 216))
+
+        provisions = Provisions(self.store, xp_bonus=self.alchemy.life_xp_bonus_percent)
+        self.characters.grant_item(1, 10, 'fishing:pond:common', 5)
+        cooking_result = provisions.donate(1, 10, ['fishing:pond:common'] * 5)
+        self.assertEqual((cooking_result['study_bonus_xp'], cooking_result['xp']), (10, 135))
+
+        self.characters.grant_item(1, 10, 'fishing:pond:common', 5)
+        meal = provisions.cook(1, 10, 9, ['fishing:pond:common'] * 5, now=100)
+        self.assertEqual((meal['data']['base_cooking_xp'], meal['data']['study_bonus_xp'],
+                          meal['data']['cooking_xp'], meal['data']['initial_cooking_xp']),
+                         (200, 16, 216, 54))
+        provisions.publish(meal['id'], 99)
+        provisions.claim(meal['id'], 1, 11, now=101)
+        provisions.claim(meal['id'], 1, 12, now=102)
+        self.assertEqual(provisions.state(1, 10)['xp'], 135 + 216)
 
     def test_auto_farming_checks_each_plots_work_unlock(self):
         self.make_body()

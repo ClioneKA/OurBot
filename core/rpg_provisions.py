@@ -288,8 +288,9 @@ def evaluate_ingredients(ingredient_ids, cooking_level=1):
 class Provisions:
     """The historical name remains as the public cooking service attribute."""
 
-    def __init__(self, store):
+    def __init__(self, store, xp_bonus=None):
         self.store, self.db = store, store.db
+        self.xp_bonus = xp_bonus
         from core.rpg_slot_expansions import SlotExpansions
         self.expansions = SlotExpansions(store)
         with self.db:
@@ -357,7 +358,23 @@ class Provisions:
 
     def preview(self, ingredient_ids, guild=None, user=None):
         level = self.state(guild, user)['level'] if guild is not None and user is not None else 1
-        return evaluate_ingredients(ingredient_ids, level)
+        data = evaluate_ingredients(ingredient_ids, level)
+        return self._apply_study_bonus(data, guild, user)
+
+    def _apply_study_bonus(self, data, guild, user):
+        if guild is None or user is None:
+            return data
+        percent = int(self.xp_bonus(guild, user, 'cooking')) if self.xp_bonus else 0
+        if not percent:
+            return data
+        base_xp = data['cooking_xp']
+        bonus_xp = base_xp * percent // 100
+        total_xp = base_xp + bonus_xp
+        data.update(base_cooking_xp=base_xp, cooking_xp=total_xp,
+                    initial_cooking_xp=total_xp * COOKING_INITIAL_XP_PERCENT // 100,
+                    immediate_cooking_xp=total_xp * COOKING_INITIAL_XP_PERCENT // 100,
+                    study_bonus_percent=percent, study_bonus_xp=bonus_xp)
+        return data
 
     def preset_capacity(self, guild, user):
         return self.expansions.capacity(guild, user, 'expansion:recipe', COOKING_PRESET_SLOTS)
@@ -485,7 +502,8 @@ class Provisions:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.state(guild, user)
-            data = evaluate_ingredients(ingredient_ids, state['level'])
+            data = self._apply_study_bonus(
+                evaluate_ingredients(ingredient_ids, state['level']), guild, user)
             if self._host_has_open_table(guild, user, now):
                 raise CharacterError('你已有一桌尚未客滿的公開料理，請等待客滿、開桌時間結束，或按「倒掉」提早結束。')
             required = Counter(ingredient_ids)
@@ -526,7 +544,10 @@ class Provisions:
             raise CharacterError('請至少選擇一份有效的料理素材。')
         required = Counter(ingredient_ids)
         quality = sum(INGREDIENTS[key].quality * amount for key, amount in required.items())
-        awarded_xp = quality * COOKING_XP_PER_QUALITY * DONATION_XP_PERCENT // 100
+        base_xp = quality * COOKING_XP_PER_QUALITY * DONATION_XP_PERCENT // 100
+        study_percent = int(self.xp_bonus(guild, user, 'cooking')) if self.xp_bonus else 0
+        study_bonus_xp = base_xp * study_percent // 100
+        awarded_xp = base_xp + study_bonus_xp
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             counts = dict(self.db.execute('''SELECT item_id,quantity FROM rpg_inventory
@@ -544,7 +565,10 @@ class Provisions:
                 VALUES (?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET xp=xp+excluded.xp''',
                             (guild, user, awarded_xp))
             self._remember_recipe(guild, user, ingredient_ids)
-        return {'quantity': len(ingredient_ids), 'quality': quality, 'xp': awarded_xp}
+        result = {'quantity': len(ingredient_ids), 'quality': quality, 'xp': awarded_xp}
+        if study_bonus_xp:
+            result.update(study_bonus_percent=study_percent, study_bonus_xp=study_bonus_xp)
+        return result
 
     def publish(self, meal_id, message_id):
         with self.db:

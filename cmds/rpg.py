@@ -50,6 +50,9 @@ class RPG(commands.Cog):
         self.provisions = Provisions(self.store)
         self.divinations = Divinations(self.store)
         self.alchemy = AlchemyDolls(self.store, self.settings)
+        self.fishing.xp_bonus = self.alchemy.life_xp_bonus_percent
+        self.farming.xp_bonus = self.alchemy.life_xp_bonus_percent
+        self.provisions.xp_bonus = self.alchemy.life_xp_bonus_percent
         self.tracker = VoiceTracker()
         self.manual_room_lock = asyncio.Lock()
         self.menu_views = WeakSet()

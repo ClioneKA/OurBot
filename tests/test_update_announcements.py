@@ -13,7 +13,7 @@ from core.update_announcements import Release, UpdateAnnouncementStore
 class ReleaseTests(unittest.TestCase):
     def test_project_release_is_valid(self):
         release = Release.load(Path(__file__).parent.parent / "config/update.toml")
-        self.assertEqual(release.channel_name, "安安大冒險更新")
+        self.assertEqual(release.channel_name, "更新資訊")
         self.assertIn("更新內容", release.description)
 
     def test_store_remembers_each_guild_and_version(self):
@@ -39,8 +39,9 @@ class UpdateAnnouncementTests(unittest.IsolatedAsyncioTestCase):
         release_path = root / "update.toml"
         release_path.write_text(
             'version = "v1"\ntitle = "新功能"\nsummary = "摘要"\n'
-            'changes = ["項目一"]\nchannel_name = "安安大冒險更新"\n', encoding="utf-8")
-        self.bot = SimpleNamespace(wait_until_ready=AsyncMock(), guilds=[])
+            'changes = ["項目一"]\nchannel_name = "更新資訊"\n', encoding="utf-8")
+        self.bot = SimpleNamespace(wait_until_ready=AsyncMock(), guilds=[],
+                                   get_cog=Mock(return_value=None))
         self.cog = UpdateAnnouncements(
             self.bot, release_path=release_path, database_path=root / "updates.db")
         self.addAsyncCleanup(self.cog.cog_unload)
@@ -49,16 +50,26 @@ class UpdateAnnouncementTests(unittest.IsolatedAsyncioTestCase):
         sent = SimpleNamespace(id=30)
         channel = Mock(spec=discord.TextChannel)
         channel.id = 20
+        channel.name = "更新資訊"
+        channel.category_id = 40
         channel.send = AsyncMock(return_value=sent)
+        channel.overwrites_for = Mock(side_effect=lambda _target: discord.PermissionOverwrite())
+        channel.set_permissions = AsyncMock()
+        category = Mock(spec=discord.CategoryChannel)
+        category.id = 40
+        category.name = "安安大冒險"
         guild = SimpleNamespace(
             id=10, unavailable=False, me=object(), default_role=object(), text_channels=[],
+            categories=[category],
             get_channel=Mock(return_value=None),
             create_text_channel=AsyncMock(return_value=channel))
 
         self.assertTrue(await self.cog.publish_to(guild))
+        guild.get_channel.return_value = channel
         self.assertFalse(await self.cog.publish_to(guild))
         guild.create_text_channel.assert_awaited_once()
-        overwrite = guild.create_text_channel.await_args.kwargs["overwrites"][guild.default_role]
+        self.assertIs(guild.create_text_channel.await_args.kwargs["category"], category)
+        overwrite = channel.set_permissions.await_args_list[0].kwargs["overwrite"]
         self.assertFalse(overwrite.send_messages)
         channel.send.assert_awaited_once()
         self.assertEqual(channel.send.await_args.kwargs["embed"].footer.text, "版本 v1")
@@ -66,13 +77,44 @@ class UpdateAnnouncementTests(unittest.IsolatedAsyncioTestCase):
     async def test_reuses_saved_channel(self):
         channel = Mock(spec=discord.TextChannel)
         channel.id = 20
+        channel.name = "更新資訊"
+        channel.category_id = 40
         channel.send = AsyncMock(return_value=SimpleNamespace(id=30))
+        channel.overwrites_for = Mock(side_effect=lambda _target: discord.PermissionOverwrite())
+        channel.set_permissions = AsyncMock()
         self.cog.store.save_channel(10, 20)
+        category = Mock(spec=discord.CategoryChannel)
+        category.id = 40
+        category.name = "安安大冒險"
         guild = SimpleNamespace(
             id=10, unavailable=False, me=object(), default_role=object(), text_channels=[],
+            categories=[category],
             get_channel=Mock(return_value=channel), create_text_channel=AsyncMock())
 
         self.assertTrue(await self.cog.publish_to(guild))
+        guild.create_text_channel.assert_not_awaited()
+
+    async def test_renames_and_moves_legacy_channel(self):
+        channel = Mock(spec=discord.TextChannel)
+        channel.id = 20
+        channel.name = "安安大冒險更新"
+        channel.category_id = None
+        channel.send = AsyncMock(return_value=SimpleNamespace(id=30))
+        channel.edit = AsyncMock()
+        channel.overwrites_for = Mock(side_effect=lambda _target: discord.PermissionOverwrite())
+        channel.set_permissions = AsyncMock()
+        category = Mock(spec=discord.CategoryChannel)
+        category.id = 40
+        category.name = "安安大冒險"
+        guild = SimpleNamespace(
+            id=10, unavailable=False, me=object(), default_role=object(),
+            text_channels=[channel], categories=[category], get_channel=Mock(return_value=None),
+            create_text_channel=AsyncMock())
+
+        self.assertTrue(await self.cog.publish_to(guild))
+        channel.edit.assert_awaited_once_with(
+            name="更新資訊", category=category, sync_permissions=True,
+            reason="統一更新資訊頻道名稱與分類")
         guild.create_text_channel.assert_not_awaited()
 
 

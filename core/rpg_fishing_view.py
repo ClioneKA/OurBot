@@ -179,6 +179,8 @@ class FishingView(discord.ui.View):
         if result.get('mastery_bonus', 0):
             header += f'\n熟練產量發動：額外獲得 {result["mastery_bonus"]} 份物品！'
         text = header + '\n' + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。'
+        if result.get('study_bonus_xp'):
+            text += f'（人偶垂釣研習 +{result["study_bonus_xp"]:,} XP）'
         if result.get('accessory_material'):
             text += f'\n額外獲得 {ITEMS["life:fishing:glimmer_pearl"].name} ×{result["accessory_material"]}！'
         for spot in SPOTS.values():

@@ -88,11 +88,13 @@ def growth_text(seconds):
 
 
 class Farming:
-    def __init__(self, store, rng=None, material_rng=None, specialization_rng=None):
+    def __init__(self, store, rng=None, material_rng=None, specialization_rng=None,
+                 xp_bonus=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
         self.material_rng = material_rng or random.Random()
         self.specialization_rng = specialization_rng or random.Random()
+        self.xp_bonus = xp_bonus
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -246,7 +248,10 @@ class Farming:
             base_xp = (crop.base_yield + level_bonus) * crop.xp_each
             training_bonus_xp = (base_xp * (15 if planted_level >= 100 else 10) // 100
                                  if specialization == 'study' else 0)
-            gained_xp = base_xp + training_bonus_xp
+            xp_before_study = base_xp + training_bonus_xp
+            study_percent = int(self.xp_bonus(guild, user, 'farming')) if self.xp_bonus else 0
+            study_bonus_xp = xp_before_study * study_percent // 100
+            gained_xp = xp_before_study + study_bonus_xp
             old_xp = self.db.execute('SELECT xp FROM rpg_farming_players WHERE guild_id=? AND user_id=?',
                                      (guild, user)).fetchone()[0]
             self.db.execute('''INSERT INTO rpg_inventory(guild_id,user_id,item_id,quantity)
@@ -269,6 +274,9 @@ class Farming:
                           lucky=lucky, accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
+            if study_bonus_xp:
+                result.update(study_bonus_percent=study_percent,
+                              study_bonus_xp=study_bonus_xp)
             self.db.execute('''UPDATE rpg_farming_sessions SET status='harvested',result=?
                 WHERE guild_id=? AND user_id=? AND location_id=?''',
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')),

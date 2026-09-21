@@ -148,11 +148,12 @@ def _big_fish_weight(spot_id, duration_id, rod_id, rng):
 
 
 class Fishing:
-    def __init__(self, store, rng=None, boss_rng=None, material_rng=None):
+    def __init__(self, store, rng=None, boss_rng=None, material_rng=None, xp_bonus=None):
         self.store, self.db = store, store.db
         self.rng = rng or random.Random()
         self.boss_rng = boss_rng or random.Random()
         self.material_rng = material_rng or random.Random()
+        self.xp_bonus = xp_bonus
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_encounters (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -340,8 +341,12 @@ class Fishing:
                 if mastery_percent and self.rng.random() * 100 < mastery_percent:
                     items[key] += 1
                     mastery_bonus += 1
-            gained_xp = sum(count * (spot.base_xp * 3 // 2 if key == spot.rare_item else spot.base_xp)
-                            for key, count in caught.items())
+            base_xp = sum(count * (spot.base_xp * 3 // 2
+                                   if key == spot.rare_item else spot.base_xp)
+                          for key, count in caught.items())
+            study_percent = int(self.xp_bonus(guild, user, 'fishing')) if self.xp_bonus else 0
+            study_bonus_xp = base_xp * study_percent // 100
+            gained_xp = base_xp + study_bonus_xp
             old_xp = self.db.execute('SELECT xp FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
                                      (guild, user)).fetchone()[0]
             for key, count in items.items():
@@ -366,6 +371,9 @@ class Fishing:
                           accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
+            if study_bonus_xp:
+                result.update(study_bonus_percent=study_percent,
+                              study_bonus_xp=study_bonus_xp)
             # Separate RNG keeps encounter rolls independent of fish/rod quality.
             # Duplicate mastery items are not additional catches; a trophy is.
             trials = catches + int(big_fish is not None)
