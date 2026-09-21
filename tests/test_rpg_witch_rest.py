@@ -10,9 +10,10 @@ from types import SimpleNamespace
 
 import discord
 
-from core.rpg import RPGStore
+from core.rpg import RPGStore, level_floor
 from core.rpg_battle import rule_skill
 from core.rpg_character import Characters, ITEMS, add_owned_item
+from core.settings import RPGSettings
 from core.rpg_witch_rest import (
     ENTRY_PROOFS,
     WitchRestStore,
@@ -572,7 +573,7 @@ class WitchRestStoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.store = RPGStore(Path(self.temp.name) / 'rpg.db')
         self.store.create_player(1, 10)
-        Characters(self.store, SimpleNamespace(stage_levels=(1, 10, 20, 50)))
+        self.characters = Characters(self.store, RPGSettings())
         self.rest = WitchRestStore(self.store)
 
     def quantity(self, user_id, item_id):
@@ -591,6 +592,26 @@ class WitchRestStoreTests(unittest.TestCase):
             self.store.db.execute('INSERT INTO rpg_witch_rest_equipment VALUES (?,?,?,?,?,?)',
                                   (instance_id, 'ema', 0, 0, source, 0))
         return instance_id
+
+    def test_t80_weapon_prowess_affix_increases_critical_damage(self):
+        self.store.award_voice([(1, 10, level_floor(80))])
+        self.characters.change_job(1, 10, '騎士')
+        instance_id = self.equipment()
+        with self.store.db:
+            self.store.db.execute('''UPDATE rpg_instance_affixes
+                SET affix_id='witch:prowess:4', effect_key='critical_damage_percent_add',
+                    rolled_value=8
+                WHERE instance_id=? AND affix_index=1''', (instance_id,))
+
+        self.characters.equip(1, 10, instance_id)
+        state = self.characters.snapshot(1, 10)
+        battle = auto_battle_from_participants([
+            {'id': 10, 'name': 'P10', 'state': state, 'rules': [],
+             'basic_target': 'boss', 'passive_id': None}
+        ], 'ema', 99, seed=7)
+
+        self.assertEqual(state['critical_damage_percent'], 133)
+        self.assertEqual(battle.living(0)[0].critical_damage_percent, 133)
 
     def tearDown(self):
         self.store.close()

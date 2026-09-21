@@ -1434,7 +1434,8 @@ class Characters:
                     first_skill_cooldown_reduction=max(
                         (item.first_skill_cooldown_reduction for item in resolved.values()), default=0),
                     active_set=active_set, set_bonus_text=set_bonus_text,
-                    critical_damage_percent=CRITICAL_DAMAGE_PERCENT[job],
+                    critical_damage_percent=(CRITICAL_DAMAGE_PERCENT[job]
+                        + sum(item.critical_damage_percent_add for item in resolved.values())),
                     crystal_effects=crystal_effects,
                     embroideries=sorted({affix[1].split(':', 1)[1]
                         for instance_id in equipped_instances.values()
