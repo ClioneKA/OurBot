@@ -79,6 +79,7 @@ class DivinationView(discord.ui.View):
         status = self.cog.divinations.status(self.guild_id, self.owner.id)
         mastery = self.cog.divinations.mastery(self.guild_id, self.owner.id)
         affinity = self.cog.divinations.affinity_status(self.guild_id, self.owner.id)
+        gold = self.cog.store.gold(self.guild_id, self.owner.id)
         next_reward = affinity['next_reward']
         affinity_text = (f'**{affinity["score"]}／100**｜今日 +{affinity["today"]}／3\n'
                          f'{affinity["reward_name"]}・燃料上限 **{affinity["fuel_capacity"]:,}**')
@@ -110,6 +111,7 @@ class DivinationView(discord.ui.View):
         embed = discord.Embed(
             title='安安大冒險｜瑪格的占卜室',
             description=(f'{active}\n\n今日已揭牌 **{status["draws"]}** 次；下一次為 **{price}**。\n'
+                         f'目前持有 **{gold:,} 金幣**。\n'
                          '每次揭示三張牌並選擇一張，命運持續 6 小時；戰鬥、生活與特殊牌混在同一個牌組。'),
             color=0x6D3A8D)
         if status['offer']:

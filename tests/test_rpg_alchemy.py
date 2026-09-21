@@ -519,6 +519,12 @@ class AlchemyDollTests(unittest.TestCase):
         raid = {'id': 'r1', 'guild_id': 1, 'source': None, 'pool': 'regular',
                 'monster': {'quality': '普通'}}
         self.assertEqual(self.alchemy.auto_signup_candidates(raid), [10])
+        raid['source'] = 'divination'
+        self.assertEqual(self.alchemy.auto_signup_candidates(raid), [10])
+        self.alchemy.configure_life(1, 10, 'raid_signup', scheduled=False)
+        self.assertEqual(self.alchemy.auto_signup_candidates(raid), [])
+        self.alchemy.configure_life(1, 10, 'raid_signup', scheduled=True)
+        raid['source'] = None
         with self.store.db:
             for index in range(4):
                 self.store.db.execute('''INSERT INTO rpg_alchemy_operations

@@ -656,7 +656,7 @@ class RaidService:
                                                                                  roles=[role] if role else [], replied_user=False))
             raid.update(message_id=message.id, status='lobby', deadline=time.time() + 300)
             self.repo.save(raid)
-            if source in (None, 'bounty'):
+            if source in (None, 'bounty', 'divination'):
                 joined = await self.apply_alchemy_signups(raid, channel)
                 if joined:
                     raid = self.repo.get(raid['id'])

@@ -855,7 +855,7 @@ class AlchemyDolls:
 
     def auto_signup_candidates(self, raid):
         pool = raid_signup_pool(raid)
-        if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
+        if raid.get('source') not in (None, 'bounty', 'divination') or pool not in ('regular', 'mid', 'high'):
             return []
         threshold = {'regular': 19, 'mid': 70, 'high': 122}[pool]
         result = []

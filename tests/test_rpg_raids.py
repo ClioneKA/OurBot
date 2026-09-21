@@ -41,6 +41,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
             service = RaidService(self.cog)
         service.notifications.ensure = AsyncMock(return_value=None)
+        service.apply_alchemy_signups = AsyncMock(return_value=[])
         user = SimpleNamespace(id=1, bot=False)
         with patch('core.rpg_raids.discord.TextChannel', FakeChannel), \
                 patch.dict('os.environ', {'OPENAI_API_KEY': ''}), \
@@ -49,6 +50,7 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel.id, 3)
         self.assertEqual((raid['pool'], raid['members'], raid['status']), ('mid', [1], 'lobby'))
         self.assertNotIn(raid['monster']['kind'], HIGH_KINDS)
+        service.apply_alchemy_signups.assert_awaited_once()
         self.assertEqual(self.cog.divinations.status(1, 1)['summon_raid_id'], raid['id'])
         await service.close()
 

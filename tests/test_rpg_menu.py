@@ -357,6 +357,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(room.stop)
         self.assertIn('瑪格的占卜室', room.embed().title)
         self.assertIn('免費', room.embed().description)
+        self.assertIn('0 金幣', room.embed().description)
         labels = [child.label for child in room.children if isinstance(child, discord.ui.Button)]
         self.assertIn('返回冒險', labels)
         await room.handle(self.interaction, 'travel')
