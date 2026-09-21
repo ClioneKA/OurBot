@@ -40,8 +40,14 @@ class RPGKnowledgeTests(unittest.TestCase):
         self.assertIn("生活技能：釣魚", context)
         self.assertIn("魔女島海灣", context)
 
+    def test_item_purpose_question_finds_recipe_and_source(self):
+        context = self.knowledge.context("浮光珍珠是什麼？")
+        self.assertIn("浮光墜飾", context)
+        self.assertIn("魔女島海灣", context)
+
     def test_unrelated_item_source_question_has_no_context(self):
         self.assertEqual(self.knowledge.context("咖啡豆哪裡買？"), "")
+        self.assertEqual(self.knowledge.context("咖啡豆是什麼？"), "")
 
 
 class RPGKnowledgePromptTests(unittest.IsolatedAsyncioTestCase):

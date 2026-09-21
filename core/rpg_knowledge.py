@@ -22,6 +22,10 @@ _ITEM_SOURCE_HINT_RE = re.compile(
     r"從哪(?:裡|里)(?:拿|取得|獲得|获得)|哪(?:隻|只).{0,8}掉)",
     re.IGNORECASE,
 )
+_ITEM_INFO_HINT_RE = re.compile(
+    r"(?:是什麼|是什么|有什麼用|有什么用|能做什麼|能做什么|作用|用途|效果)",
+    re.IGNORECASE,
+)
 _GAME_TERMS = (
     "冒險", "冒险", "角色", "職業", "职业", "轉職", "转职", "民兵", "裝甲步兵",
     "弓兵", "騎士", "骑士", "僧侶", "僧侣", "能力值", "裝備", "装备", "武器",
@@ -130,6 +134,8 @@ class RPGKnowledgeBase:
             return True
         if _ITEM_SOURCE_HINT_RE.search(query):
             return True
+        if _ITEM_INFO_HINT_RE.search(query):
+            return True
         return _QUESTION_HINT_RE.search(query) is not None and any(
             term in query for term in _GAME_TERMS
         )
@@ -142,6 +148,7 @@ class RPGKnowledgeBase:
         explicit_game_question = _EXPLICIT_GAME_RE.search(query) is not None
         focused_query = _EXPLICIT_GAME_RE.sub("", query)
         focused_query = _ITEM_SOURCE_HINT_RE.sub("", focused_query)
+        focused_query = _ITEM_INFO_HINT_RE.sub("", focused_query)
         query_terms = _terms(focused_query)
         domain_terms = {
             term.lower() for term in _GAME_TERMS if term.lower() in focused_query.lower()
