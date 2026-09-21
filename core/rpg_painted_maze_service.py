@@ -287,9 +287,7 @@ class PaintedMazeService:
             fortunes = self.cog.divinations.prepare_for_raid(room_id, room['guild_id'], user_ids)
             drinks = self.cog.tavern.store.prepare_for_raid(room_id, room['guild_id'], user_ids)
             meals = self.cog.provisions.prepare_for_raid(
-                room_id, room['guild_id'], user_ids,
-                preserve_users=[uid for uid in user_ids
-                                if fortunes.get(uid, {}).get('id') == 'temperance'])
+                room_id, room['guild_id'], user_ids)
             for participant in participants:
                 uid = participant['id']
                 if uid in fortunes:

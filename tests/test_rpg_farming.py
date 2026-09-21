@@ -4,6 +4,7 @@ import unittest
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import CharacterError, Characters
+from core.rpg_divination import Divinations
 from core.rpg_farming import Farming, PLANTS, SPECIALIZATIONS
 from core.settings import RPGSettings
 
@@ -77,6 +78,18 @@ class FarmingTests(unittest.TestCase):
             other.close()
         self.assertEqual(self.characters.inventory_counts(1, 1)['farming:potato'], 2)
         self.assertEqual(self.farming.state(1, 1)['xp'], 200)
+
+    def test_empress_is_snapshotted_at_planting_and_gains_resonance(self):
+        divinations = Divinations(self.store)
+        self.farming.divinations = divinations
+        with self.store.db:
+            self.store.db.execute('''INSERT INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at,selected_at)
+                VALUES (1,1,?,1,'empress',9999,0)''', (self.store.day_key(0),))
+        self.farming.plant(1, 1, 'courtyard', 'potato', now=0)
+        result = self.farming.harvest(1, 1, 'courtyard', now=3600)
+        self.assertEqual((result['fortune_bonus'], result['quantity']), (1, 3))
+        self.assertEqual(divinations.mastery(1, 1)['empress'], 1)
 
     def test_level_snapshot_yield_bonus_and_cap(self):
         self.set_level(16)

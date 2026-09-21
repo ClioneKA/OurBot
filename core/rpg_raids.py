@@ -513,9 +513,8 @@ class RaidService:
                 provisions = getattr(self.cog, 'provisions', None)
                 if participants and provisions is not None:
                     prepared = provisions.prepare_for_raid(
-                        raid['id'], raid['guild_id'], [participant['id'] for participant in participants],
-                        preserve_users=[participant['id'] for participant in participants
-                                        if participant.get('fortune', {}).get('id') == 'temperance'])
+                        raid['id'], raid['guild_id'],
+                        [participant['id'] for participant in participants])
                     for participant in participants:
                         if participant['id'] in prepared:
                             participant['meal'] = prepared[participant['id']]

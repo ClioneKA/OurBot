@@ -8,7 +8,7 @@ import discord
 from core.rpg_alchemy import (COMBAT_RARITY_STATS, COMBAT_SKILLS, COMBAT_SKILL_DETAILS,
                               CORE_ITEM, LIFE_SKILLS,
                               LIFE_WORK_UNLOCKS, RARITIES,
-                              STAT_NAMES, FUEL_CAPACITY, body_acceleration_cost,
+                              STAT_NAMES, body_acceleration_cost,
                               fuel_discount, fuel_value, life_skill_unlocks, life_work,
                               operation_fuel_cost,
                               material_profile, parse_stone)
@@ -309,7 +309,7 @@ class AlchemyView(discord.ui.View):
             owned = inventory.get(self.fuel_item_id, 0)
             per_item = fuel_value(ITEMS[self.fuel_item_id]) if self.fuel_item_id in ITEMS else 0
             maximum = owned if per_item else 0
-            remaining_capacity = max(0, FUEL_CAPACITY - state['fuel'])
+            remaining_capacity = max(0, state['fuel_capacity'] - state['fuel'])
             near_capacity = min(maximum, remaining_capacity // per_item) if per_item else 0
             quantities = sorted({amount for amount in (1, 5, 10, near_capacity, maximum)
                                  if 0 < amount <= maximum})
@@ -566,13 +566,21 @@ class AlchemyView(discord.ui.View):
         else:
             cost = operation_fuel_cost(body) if body else 100
             discount = fuel_discount(body['stats'][2]) if body else 0
+            affinity = state['mag_affinity']
+            next_reward = affinity['next_reward']
+            affinity_line = (f'瑪格親密度：**{affinity["score"]}／100**｜'
+                             f'{affinity["reward_name"]}')
+            if next_reward:
+                affinity_line += (f'（下階 {next_reward[0]}：'
+                                  f'{next_reward[2]} {next_reward[1]:,}）')
             cycles = state['fuel'] // cost
             endurance = '｜'.join(
                 f'{label}約 {duration_text(cycles * seconds)}'
                 for label, seconds in (('30 分鐘釣魚', 1800), ('2 小時釣魚', 7200),
                                        ('8 小時釣魚', 28800)))
             embed = discord.Embed(title='煉金人偶｜燃料', color=0xB8864B,
-                description=f'目前燃料：**{state["fuel"]:,}／{FUEL_CAPACITY:,}**\n'
+                description=f'目前燃料：**{state["fuel"]:,}／{state["fuel_capacity"]:,}**\n'
+                            f'{affinity_line}\n'
                             f'目前耐久減免：**{discount}%**｜每次自動操作：**{cost}** 燃料\n'
                             f'剩餘可執行：**{cycles} 次**（收竿、收成、備餐或討伐響應）\n'
                             f'{endurance}\n\n'
@@ -750,23 +758,24 @@ class AlchemyView(discord.ui.View):
                     self.confirm_fuel = False
                 elif action == 'convert_fuel':
                     raw_fuel = fuel_value(ITEMS[self.fuel_item_id]) * self.fuel_quantity
-                    current_fuel = self.cog.alchemy.state(
-                        self.guild_id, self.owner.id)['fuel']
-                    actual_fuel = min(raw_fuel, max(0, FUEL_CAPACITY - current_fuel))
+                    fuel_state = self.cog.alchemy.state(self.guild_id, self.owner.id)
+                    current_fuel = fuel_state['fuel']
+                    capacity = fuel_state['fuel_capacity']
+                    actual_fuel = min(raw_fuel, max(0, capacity - current_fuel))
                     overflow = raw_fuel - actual_fuel
                     if not self.confirm_fuel:
                         self.confirm_fuel = True
                         warning = ('；這是常用的幸運／盛宴食材' if any(
                             word in ITEMS[self.fuel_item_id].description for word in ('幸運', '盛宴')) else '')
                         notice = (f'將消耗 {self.fuel_quantity} 個 {ITEMS[self.fuel_item_id].name}{warning}，'
-                                  f'實際增加 {actual_fuel} 燃料並補至最多 {FUEL_CAPACITY:,}。'
+                                  f'實際增加 {actual_fuel} 燃料並補至最多 {capacity:,}。'
                                   + (f'其中 {overflow} 燃料會溢出消失。' if overflow else '') +
                                   '此操作不可逆，請再次確認。')
                     else:
                         fuel = self.cog.alchemy.convert_fuel(
                             self.guild_id, self.owner.id, self.fuel_item_id, self.fuel_quantity)
                         self.confirm_fuel = False
-                        notice = (f'已增加 {fuel} 燃料，目前最多為 {FUEL_CAPACITY:,}。' +
+                        notice = (f'已增加 {fuel} 燃料，目前最多為 {capacity:,}。' +
                                   (f'另有 {overflow} 燃料溢出。' if overflow else ''))
                 elif action == 'toggle_combat_support':
                     current = self.cog.alchemy.state(

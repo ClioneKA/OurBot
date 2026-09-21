@@ -9,6 +9,7 @@ from core.rpg import RPGStore, level_floor
 from core.rpg_alchemy import (AlchemyDolls, body_material_id, material_profile,
                               operation_fuel_cost)
 from core.rpg_character import Characters, CharacterError, ITEMS, item_sellable
+from core.rpg_divination import Divinations
 from core.rpg_expeditions import (Expeditions, is_doll_expedition_active,
                                   is_legacy_expedition_active)
 from core.rpg_farming import Farming
@@ -86,6 +87,18 @@ class ExpeditionTests(unittest.TestCase):
         self.assertEqual(self.store.gold(1, 1), 140)
         with self.assertRaises(CharacterError):
             self.expeditions.finish(1, 1, session['id'], now=session['ready_at'])
+
+    def test_hermit_increases_frozen_expedition_reward_and_gains_resonance(self):
+        divinations = Divinations(self.store)
+        self.expeditions.divinations = divinations
+        with self.store.db:
+            self.store.db.execute('''INSERT INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at,selected_at)
+                VALUES (1,1,?,1,'hermit',9999,0)''', (self.store.day_key(100),))
+        session = self.expeditions.start(1, 1, 2, 'gold', now=100)
+        self.assertEqual(session['gold'], 168)
+        self.expeditions.finish(1, 1, session['id'], now=session['ready_at'])
+        self.assertEqual(divinations.mastery(1, 1)['hermit'], 1)
 
     def test_material_claim_is_atomic_and_cancel_does_not_refund_fuel(self):
         session = self.expeditions.start(1, 1, 3, 'spirit', now=0)

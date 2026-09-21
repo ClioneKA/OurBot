@@ -8,7 +8,8 @@ import unittest
 from core.rpg import RPGStore
 from core.rpg_battle import Battle, Fighter, Rule, SKILLS, dump_battle, load_battle, raid_battle
 from core.rpg_character import CharacterError, Characters
-from core.rpg_divination import CARDS, Divinations
+from core.rpg_divination import CARDS, Divinations, card_rarity
+from core.rpg_mag_affinity import fuel_capacity
 from core.rpg_provisions import Provisions
 from core.rpg_raid_store import RaidStore
 from core.settings import RPGSettings
@@ -45,33 +46,97 @@ class DivinationTests(unittest.TestCase):
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,5000)')
 
-    def test_draw_price_increases_overwrite_and_resets_next_day(self):
-        service = Divinations(self.store, FixedCards('strength', 'world', 'moon'))
-        first, cost = service.draw(1, 1, now=0)
-        self.assertEqual((first, cost, self.store.gold(1, 1)), ('strength', 300, 4700))
-        second, cost = service.draw(1, 1, now=1)
-        self.assertEqual((second, cost, self.store.gold(1, 1)), ('world', 600, 4100))
-        self.assertEqual((service.status(1, 1, now=1)['draws'], service.status(1, 1, now=1)['next_price']),
-                         (2, 900))
-        third, cost = service.draw(1, 1, now=86400)
-        self.assertEqual((third, cost, service.status(1, 1, now=86400)['draws']), ('moon', 300, 1))
+    def test_complete_major_arcana_has_mixed_unique_effects(self):
+        self.assertEqual(len(CARDS), 22)
+        self.assertIn('hierophant', CARDS)
+        self.assertEqual({card.category for card in CARDS.values()}, {'戰鬥', '生活', '特殊'})
+        self.assertEqual(len({card.effect for card in CARDS.values()}), 22)
+        self.assertEqual((card_rarity(CARDS['strength']), card_rarity(CARDS['empress']),
+                          card_rarity(CARDS['wheel']), card_rarity(CARDS['world'])),
+                         ('常見', '少見', '稀有', '傳說'))
 
-    def test_binding_blocks_redraw_and_completion_only_clears_effect(self):
-        service = Divinations(self.store, FixedCards('death'))
-        service.draw(1, 1, now=0)
-        snapshot = service.prepare_for_raid('raid-1', 1, [1])
-        self.assertEqual(snapshot[1], {'id': 'death', 'name': '死神', 'xp_percent': 10})
-        self.assertEqual(service.prepare_for_raid('raid-1', 1, [1]), snapshot)
-        with self.assertRaisesRegex(CharacterError, '正在進行'):
-            service.draw(1, 1, now=2)
+    def test_high_priestess_bonus_lasts_but_summon_remains_spent(self):
+        service = Divinations(self.store)
+        with self.store.db:
+            self.store.db.execute('''INSERT INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,summon_raid_id,expires_at,selected_at)
+                VALUES (1,1,?,1,'high_priestess','raid-1',9999,10)''',
+                (self.store.day_key(10),))
+        summoned = service.prepare_for_raid('raid-1', 1, [1], now=11)[1]
+        ordinary = service.prepare_for_raid('raid-2', 1, [1], now=11)[1]
+        self.assertEqual((summoned['xp_percent'], ordinary['xp_percent']), (15, 15))
         service.clear_raid('raid-1')
-        status = service.status(1, 1, now=2)
-        self.assertIsNone(status['card'])
-        self.assertEqual((status['draws'], status['next_price']), (1, 600))
+        status = service.status(1, 1, now=11)
+        self.assertEqual(status['card'], 'high_priestess')
+        self.assertEqual(status['summon_raid_id'], 'raid-1')
+
+    def test_draw_price_increases_overwrite_and_resets_next_day(self):
+        service = Divinations(self.store, FixedCards(
+            'strength', 'emperor', 'empress', 'world', 'moon', 'sun',
+            'death', 'tower', 'star'))
+        offer, cost = service.reveal(1, 1, now=0)
+        service.choose(1, 1, offer[0], now=0)
+        self.assertEqual((offer, cost, self.store.gold(1, 1)),
+                         (('strength', 'emperor', 'empress'), 0, 5000))
+        offer, cost = service.reveal(1, 1, now=1)
+        service.choose(1, 1, offer[0], now=1)
+        self.assertEqual((offer[0], cost, self.store.gold(1, 1)), ('world', 300, 4700))
+        self.assertEqual((service.status(1, 1, now=1)['draws'], service.status(1, 1, now=1)['next_price']),
+                         (2, 600))
+        offer, cost = service.reveal(1, 1, now=86400)
+        self.assertEqual((offer[0], cost, service.status(1, 1, now=86400)['draws']), ('death', 0, 1))
+
+    def test_mag_affinity_awards_selection_and_resonance_up_to_three_per_day(self):
+        service = Divinations(self.store, FixedCards(
+            'strength', 'emperor', 'empress', 'world', 'moon', 'sun',
+            'death', 'tower', 'star', 'fool', 'lovers', 'chariot'))
+        offer, _ = service.reveal(1, 1, now=0)
+        service.choose(1, 1, offer[0], now=0)
+        service.resonate(1, 1, offer[0], now=1, activation=0)
+        offer, _ = service.reveal(1, 1, now=2)
+        service.choose(1, 1, offer[0], now=2)
+        service.resonate(1, 1, offer[0], now=3, activation=2)
+        offer, _ = service.reveal(1, 1, now=4)
+        service.choose(1, 1, offer[0], now=4)
+        service.resonate(1, 1, offer[0], now=5, activation=4)
+        self.assertEqual(service.affinity_status(1, 1, now=5)['score'], 3)
+        self.assertEqual(service.affinity_status(1, 1, now=5)['today'], 3)
+
+        offer, _ = service.reveal(1, 1, now=86400)
+        service.choose(1, 1, offer[0], now=86400)
+        self.assertEqual(service.affinity_status(1, 1, now=86400)['score'], 4)
+
+    def test_mag_affinity_fuel_capacity_milestones(self):
+        Divinations(self.store)
+        for score, expected in ((0, 1000), (25, 1250), (50, 1500),
+                                (75, 1750), (100, 2000)):
+            with self.store.db:
+                self.store.db.execute('''INSERT INTO rpg_mag_affinity VALUES (1,1,?)
+                    ON CONFLICT(guild_id,user_id) DO UPDATE SET score=excluded.score''', (score,))
+            self.assertEqual(fuel_capacity(self.store.db, 1, 1), expected)
+
+    def test_snapshot_effect_awards_affinity_on_completion_day(self):
+        service = Divinations(self.store, FixedCards('star', 'moon', 'sun'))
+        service.draw(1, 1, now=0)
+        self.assertTrue(service.resonate(1, 1, 'star', now=0, activation=0,
+                                          award_now=86400))
+        self.assertEqual(service.affinity_status(1, 1, now=0)['today'], 1)
+        self.assertEqual(service.affinity_status(1, 1, now=86400)['today'], 1)
+        self.assertEqual(service.affinity_status(1, 1, now=86400)['score'], 2)
+
+    def test_timed_card_survives_raid_and_expires(self):
+        service = Divinations(self.store, FixedCards('death', 'strength', 'emperor'))
+        service.draw(1, 1, now=0)
+        snapshot = service.prepare_for_raid('raid-1', 1, [1], now=1)
+        self.assertEqual(snapshot[1], {
+            'id': 'death', 'name': '死神', 'activation': 0, 'xp_percent': 0})
+        service.clear_raid('raid-1')
+        self.assertEqual(service.status(1, 1, now=2)['card'], 'death')
+        self.assertIsNone(service.status(1, 1, now=21601)['card'])
 
     def test_restart_releases_interrupted_high_priestess_reservation(self):
-        service = Divinations(self.store, FixedCards('high_priestess'))
-        service.draw(1, 1, now=0)
+        service = Divinations(self.store, FixedCards('high_priestess', 'strength', 'emperor'))
+        service.draw(1, 1)
         service.reserve_summon(1, 1)
         self.assertEqual(service.status(1, 1, now=0)['summon_raid_id'], ':reserved:')
         restarted = Divinations(self.store)
@@ -93,15 +158,15 @@ class DivinationTests(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_combat_cards_apply_and_survive_snapshot(self):
-        battle = raid_battle([participant(1, 'world'), participant(2, 'lovers')],
+        battle = raid_battle([participant(1, 'strength'), participant(2, 'lovers')],
                              {'kind': '巨獸', 'name': '巨獸', 'strength': 1}, seed=7)
-        world, lover, enemy = battle.fighters
-        self.assertEqual((world.stats['HP'], world.stats['攻擊'], world.speed), (1100, 110, 55))
-        self.assertEqual((lover.linked_user_id, world.linked_user_id), (1, 2))
-        before = (lover.hp, world.hp)
+        strong, lover, enemy = battle.fighters
+        self.assertEqual(strong.stats['攻擊'], 108)
+        self.assertEqual((lover.linked_user_id, strong.linked_user_id), (1, 2))
+        before = (lover.hp, strong.hp)
         battle.hit(enemy, lover, precise=True)
         self.assertLess(lover.hp, before[0])
-        self.assertLess(world.hp, before[1])
+        self.assertLess(strong.hp, before[1])
 
         restored = load_battle(json.loads(json.dumps(dump_battle(battle))))
         self.assertEqual(restored.fighters[1].linked_user_id, 1)
@@ -129,7 +194,7 @@ class DivinationTests(unittest.TestCase):
         battle.hit(enemy, attacker, precise=True)
         self.assertEqual(attacker.hp, 0)
 
-    def test_settlement_adds_xp_and_clears_card(self):
+    def test_settlement_keeps_timed_card_and_adds_resonance(self):
         divinations = Divinations(self.store)
         repo = RaidStore(self.store)
         policy = dict(victory_xp=100, victory_gold=0, drop_chance=1.0)
@@ -144,15 +209,20 @@ class DivinationTests(unittest.TestCase):
         enemy.hp = 0
         battle_data = dict(result='勝利', round=1, fighters=[asdict(player), asdict(enemy)])
         with self.store.db:
-            self.store.db.execute("INSERT OR REPLACE INTO rpg_divinations VALUES (1,1,'1970-01-01',1,'wheel',?,NULL)",
-                                  (raid['id'],))
+            self.store.db.execute('''INSERT OR REPLACE INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at,selected_at)
+                VALUES (1,1,'1970-01-01',1,'wheel',999999,0)''')
         repo.save(raid)
         settled = repo.settle(raid['id'], battle_data, SimpleNamespace(**policy))
         self.assertEqual(settled['rewards'][0]['xp'], 110)
         self.assertIsNotNone(settled['rewards'][0]['item'])
         self.assertEqual(self.store.xp(1, 1), 110)
-        self.assertIsNone(divinations.status(1, 1, now=0)['card'])
+        self.assertEqual(divinations.status(1, 1, now=0)['card'], 'wheel')
         self.assertEqual(divinations.status(1, 1, now=0)['draws'], 1)
+        self.assertEqual(divinations.mastery(1, 1)['wheel'], 1)
+        self.assertEqual(divinations.affinity_status(1, 1)['score'], 1)
+        repo.settle(raid['id'], battle_data, SimpleNamespace(**policy))
+        self.assertEqual(divinations.affinity_status(1, 1)['score'], 1)
 
     def test_settlement_stacks_drink_with_meal_xp_gold_and_drop_effects(self):
         repo = RaidStore(self.store)

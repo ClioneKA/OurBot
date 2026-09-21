@@ -78,6 +78,7 @@ def require_doll_idle(db, guild, user):
 class Expeditions:
     def __init__(self, store, settings):
         self.store, self.db, self.settings = store, store.db, settings
+        self.divinations = None
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_expeditions (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -133,6 +134,15 @@ class Expeditions:
                 raise CharacterError('這具人偶已有遠征，請先中斷或領取完成獎勵。')
             require_doll_idle(self.db, guild, user)
             result = self.preview(guild, user, hours, route)
+            fortune_status = self.divinations.status(guild, user, now) if self.divinations else {}
+            fortune_card = fortune_status.get('card')
+            result['fortune_card'] = fortune_card
+            result['fortune_selected_at'] = fortune_status.get('selected_at')
+            if fortune_card == 'hermit':
+                if result['gold']:
+                    result['gold'] = result['gold'] * 120 // 100
+                if result.get('quantity'):
+                    result['quantity'] = (result['quantity'] * 120 + 99) // 100
             paid = self.db.execute('''UPDATE rpg_alchemy_dolls SET fuel=fuel-?
                 WHERE guild_id=? AND user_id=? AND fuel>=?''',
                                    (result['fuel'], guild, user, result['fuel']))
@@ -180,6 +190,10 @@ class Expeditions:
                     record_gold(self.db, guild, user, result['gold'],
                                 'expedition_reward', session_id, now)
                     add_owned_item(self.db, guild, user, 'proof:raid', result['proofs'])
+                if self.divinations and result.get('fortune_card') == 'hermit':
+                    self.divinations.resonate(guild, user, 'hermit', now=result['started_at'],
+                                              activation=result.get('fortune_selected_at'),
+                                              award_now=now)
             result['status'] = 'cancelled' if cancel else 'claimed'
             self.db.execute('UPDATE rpg_expeditions SET status=?,data=? WHERE id=?',
                             (result['status'], json.dumps(result, ensure_ascii=False), session_id))

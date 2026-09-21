@@ -11,6 +11,7 @@ from core.rpg_monsters import TIER_VICTORY_XP
 from core.rpg_fishing_bosses import boss_ingredient
 from core.rpg_expeditions import (is_legacy_expedition_active,
                                   require_not_legacy_expedition)
+from core.rpg_mag_affinity import award_resonance, initialize_mag_affinity
 
 
 MID_RAID_MIN_LEVEL = 30
@@ -86,6 +87,7 @@ def equipment_drop_chance(base_chance, meal=None, fortune=None):
 class RaidStore:
     def __init__(self, store):
         self.store, self.db = store, store.db
+        initialize_mag_affinity(self.db)
         from core.rpg_commissions import DailyCommissions
         self.commissions = DailyCommissions(store)
         with self.db:
@@ -463,11 +465,21 @@ class RaidStore:
                 if raid_proofs:
                     reward['raid_proofs'] = raid_proofs
                 rewards.append(reward)
-            # A divination is consumed by completing the raid, regardless of
-            # victory.  Keep the daily draw count so later readings cost more.
-            self.db.execute('''UPDATE rpg_divinations
-                SET card=NULL,bound_raid_id=NULL,summon_raid_id=NULL
-                WHERE bound_raid_id=?''', (raid['id'],))
+                card = fortune.get('id')
+                if card in {'fool', 'magician', 'lovers', 'chariot', 'strength', 'emperor',
+                            'justice', 'hanged_man', 'death', 'devil', 'tower', 'judgement',
+                            'wheel', 'hierophant', 'world'}:
+                    resonated = self.db.execute('''UPDATE rpg_divinations SET resonated=1
+                        WHERE guild_id=? AND user_id=? AND card=? AND resonated=0
+                        AND (? IS NULL OR selected_at=?)''',
+                        (raid['guild_id'], p['id'], card,
+                         fortune.get('activation'), fortune.get('activation')))
+                    if resonated.rowcount:
+                        self.db.execute('''INSERT INTO rpg_divination_mastery VALUES (?,?,?,1)
+                            ON CONFLICT(guild_id,user_id,card)
+                            DO UPDATE SET resonance=resonance+1''',
+                            (raid['guild_id'], p['id'], card))
+                        award_resonance(self.db, self.store, raid['guild_id'], p['id'])
             if victory:
                 self.commissions.record_victory(raid)
             raid.update(status='completed', battle=battle_data, rewards=rewards)

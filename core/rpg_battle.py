@@ -2949,39 +2949,32 @@ def raid_battle(participants, monster, seed):
         card = fortune.get('id')
         if not card:
             continue
-        fighter.fortune_card = card
+        fighter.fortune_card = card if card in {
+            'fool', 'magician', 'lovers', 'chariot', 'strength', 'emperor',
+            'justice', 'hanged_man', 'death', 'devil', 'tower', 'judgement'} else ''
         if card == 'strength':
-            percent_stat(fighter, '攻擊', 6)
+            percent_stat(fighter, '攻擊', 8)
         elif card == 'emperor':
-            percent_stat(fighter, '防禦', 6)
-        elif card == 'empress':
-            percent_stat(fighter, 'HP', 6)
-        elif card == 'star':
-            percent_stat(fighter, '治療量', 8)
-            fighter.healing_received_percent = 5
+            percent_stat(fighter, '防禦', 8)
         elif card == 'chariot':
             fighter.speed += 8
             fighter.stats['命中率'] += 3
-        elif card == 'moon':
-            fighter.stats['閃避率'] = min(40, fighter.stats['閃避率'] + 4)
-        elif card == 'sun':
-            fighter.stability = (min(fighter.stability[1], fighter.stability[0] + 8), fighter.stability[1])
         elif card == 'justice':
-            fighter.damage_dealt_percent = 6
-            fighter.damage_taken_percent = 4
+            fighter.damage_dealt_percent = 8
+            fighter.damage_taken_percent = 5
         elif card == 'hanged_man':
             fighter.speed = max(1, fighter.speed - 10)
-            percent_stat(fighter, '防禦', 10)
+            percent_stat(fighter, '防禦', 12)
         elif card == 'devil':
-            percent_stat(fighter, '攻擊', 10)
-            percent_stat(fighter, '治療量', 10)
+            percent_stat(fighter, '攻擊', 12)
+            percent_stat(fighter, '治療量', 12)
             fighter.healing_received_percent = -20
         elif card == 'tower':
             percent_stat(fighter, 'HP', -10)
-            percent_stat(fighter, '攻擊', 12)
+            percent_stat(fighter, '攻擊', 15)
             fighter.stats['暴擊率'] = min(100, fighter.stats['暴擊率'] + 5)
         elif card == 'death':
-            fighter.lifesteal += 5
+            fighter.lifesteal += 6
         elif card == 'magician':
             fighter.cooldown_reduction = 1
         elif card == 'fool':
@@ -2998,13 +2991,10 @@ def raid_battle(participants, monster, seed):
             else:
                 percent_stat(fighter, lowered, -10)
             fortune['fool_result'] = dict(raised=raised, lowered=lowered)
-        elif card == 'world':
-            for stat in ('HP', '攻擊', '防禦', '治療量', '命中率', '閃避率', '暴擊率'):
-                percent_stat(fighter, stat, 10)
-            fighter.speed = max(1, fighter.speed * 110 // 100)
         for stat, cap in stat_caps.items():
             fighter.stats[stat] = min(cap, fighter.stats[stat])
-        fortune_logs.append(f'{fighter.name} 的占卜【{fortune.get("name", card)}】生效；本場結算經驗 +10%。')
+        if fighter.fortune_card:
+            fortune_logs.append(f'{fighter.name} 的占卜【{fortune.get("name", card)}】在本場生效。')
 
     # Lovers form exclusive two-person links.  A linked teammate cannot be
     # selected by another Lovers card, keeping damage sharing non-recursive.

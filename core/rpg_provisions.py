@@ -291,6 +291,7 @@ class Provisions:
     def __init__(self, store, xp_bonus=None):
         self.store, self.db = store, store.db
         self.xp_bonus = xp_bonus
+        self.divinations = None
         from core.rpg_slot_expansions import SlotExpansions
         self.expansions = SlotExpansions(store)
         with self.db:
@@ -499,6 +500,8 @@ class Provisions:
 
     def cook(self, guild, user, channel, ingredient_ids, now=None):
         now = time.time() if now is None else now
+        fortune_status = self.divinations.status(guild, user, now) if self.divinations else {}
+        fortune_card = fortune_status.get('card')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             state = self.state(guild, user)
@@ -537,6 +540,9 @@ class Provisions:
                     (meal_id,guild_id,user_id,claimed_at,valid_until,remaining)
                     VALUES (?,?,?,?,?,?)''',
                                 (meal_id, guild, user, now, now + MEAL_EFFECT_SECONDS, data['duration']))
+            if self.divinations and fortune_card in ('temperance', 'sun', 'hierophant', 'world'):
+                self.divinations.resonate(guild, user, fortune_card, now=now,
+                                          activation=fortune_status.get('selected_at'))
         return offer
 
     def donate(self, guild, user, ingredient_ids):

@@ -105,7 +105,22 @@ class RPGStore:
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             day TEXT NOT NULL, draws INTEGER NOT NULL DEFAULT 0,
             card TEXT, bound_raid_id TEXT, summon_raid_id TEXT,
+            offer_day TEXT, offered_cards TEXT, expires_at REAL,
+            selected_at REAL, resonated INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(guild_id,user_id))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_divination_mastery (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, card TEXT NOT NULL,
+            resonance INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(guild_id,user_id,card))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_mag_affinity (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            score INTEGER NOT NULL DEFAULT 0 CHECK(score BETWEEN 0 AND 100),
+            PRIMARY KEY(guild_id,user_id))''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_mag_affinity_daily (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+            points INTEGER NOT NULL DEFAULT 0 CHECK(points BETWEEN 0 AND 3),
+            selected INTEGER NOT NULL DEFAULT 0 CHECK(selected IN (0,1)),
+            PRIMARY KEY(guild_id,user_id,day))''')
         self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_menu_favorites (
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             page TEXT NOT NULL, position INTEGER NOT NULL,

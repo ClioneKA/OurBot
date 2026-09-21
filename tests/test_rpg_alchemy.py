@@ -450,6 +450,16 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(labels['7'], '補至接近上限')
         self.assertEqual(labels['20'], '全部持有數量')
 
+    def test_mag_affinity_increases_actual_fuel_capacity(self):
+        self.alchemy.state(1, 10)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_mag_affinity VALUES (1,10,100)')
+            self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=1000 '
+                                  'WHERE guild_id=1 AND user_id=10')
+        self.assertEqual(self.alchemy.state(1, 10)['fuel_capacity'], 2000)
+        self.characters.grant_item(1, 10, 'farming:wheat')
+        self.assertGreater(self.alchemy.convert_fuel(1, 10, 'farming:wheat', 1), 0)
+
     def test_durability_uses_smooth_fuel_discount_capped_at_seventy_percent(self):
         body = {'stats': [0, 0, 30, 0, 0]}
         self.assertEqual(fuel_discount(0), 0)

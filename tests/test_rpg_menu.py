@@ -356,7 +356,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         room = self.interaction.response.edit_message.call_args.kwargs['view']
         self.addCleanup(room.stop)
         self.assertIn('瑪格的占卜室', room.embed().title)
-        self.assertIn('300 金幣', room.embed().description)
+        self.assertIn('免費', room.embed().description)
         labels = [child.label for child in room.children if isinstance(child, discord.ui.Button)]
         self.assertIn('返回冒險', labels)
         await room.handle(self.interaction, 'travel')
@@ -364,17 +364,20 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(travel.stop)
         self.assertIn('冒險', travel.embed().title)
 
-    async def test_existing_divination_requires_confirmation_before_overwrite(self):
+    async def test_existing_divination_requires_confirmation_before_paid_reveal(self):
         with self.store.db:
             self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,1000)')
         room = DivinationView(self.cog, self.interaction)
         self.addCleanup(room.stop)
-        await room.handle(self.interaction, 'draw')
+        await room.handle(self.interaction, 'reveal')
         self.assertEqual(self.divinations.status(1, 1)['draws'], 1)
+        offer = self.divinations.status(1, 1)['offer']
+        await room.handle(self.interaction, 'choose', offer[0])
 
-        await room.handle(self.interaction, 'draw')
+        await room.handle(self.interaction, 'reveal')
         self.assertEqual(self.divinations.status(1, 1)['draws'], 1)
-        self.assertTrue(any(getattr(child, 'label', '').startswith('確認覆蓋')
+        self.assertTrue(any(getattr(child, 'label', '').startswith('確認揭牌')
                             for child in room.children))
-        await room.handle(self.interaction, 'draw_confirm')
+        await room.handle(self.interaction, 'reveal_confirm')
         self.assertEqual(self.divinations.status(1, 1)['draws'], 2)
+        self.assertEqual(self.divinations.status(1, 1)['card'], offer[0])

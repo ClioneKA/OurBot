@@ -10,6 +10,8 @@ from core.rpg_character import (CharacterError, GROWTH, ITEMS, Item, add_owned_i
                                 item_sell_price, item_sellable)
 from core.rpg_farming import LOCATIONS, PLANTS
 from core.rpg_fishing import SPOTS
+from core.rpg_mag_affinity import (BASE_FUEL_CAPACITY, affinity_status,
+                                   fuel_capacity, initialize_mag_affinity)
 from core.settings import RPGSettings
 
 
@@ -77,7 +79,7 @@ EPIC_PITY = 50
 LEGEND_PITY = 100
 CORE1_PROOF_COST = 15
 BODY_ACCEL_GOLD_PER_HOUR = 500
-FUEL_CAPACITY = 1000
+FUEL_CAPACITY = BASE_FUEL_CAPACITY
 BODY_MATERIAL_TIERS = tuple(range(10, 111, 10))
 
 
@@ -296,6 +298,7 @@ class AlchemyDolls:
         self.store, self.db = store, store.db
         self.settings = settings or RPGSettings()
         self.rng = rng or random.Random()
+        initialize_mag_affinity(self.db)
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_alchemy_dolls (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '煉金人偶',
@@ -343,9 +346,12 @@ class AlchemyDolls:
                               (guild, user)).fetchone()
         core = self.db.execute('''SELECT id,level,orientation,skills FROM rpg_alchemy_cores
             WHERE guild_id=? AND user_id=? AND equipped=1''', (guild, user)).fetchone()
+        affinity = affinity_status(self.db, self.store, guild, user)
         return dict(name=row[0], active_body=json.loads(row[1]) if row[1] else None,
                     candidate_body=json.loads(row[2]) if row[2] else None,
                     crafting=json.loads(row[3]) if row[3] else None, fuel=row[4],
+                    fuel_capacity=fuel_capacity(self.db, guild, user),
+                    mag_affinity=affinity,
                     config=json.loads(row[5]),
                     core=(dict(id=core[0], level=core[1], orientation=core[2],
                                skills=json.loads(core[3])) if core else None))
@@ -673,9 +679,10 @@ class AlchemyDolls:
             row = self.db.execute('SELECT fuel,active_body FROM rpg_alchemy_dolls '
                                   'WHERE guild_id=? AND user_id=?', (guild, user)).fetchone()
             current, body_raw = row
-            if current >= FUEL_CAPACITY:
-                raise CharacterError(f'燃料已達上限 {FUEL_CAPACITY:,}。')
-            gained = min(fuel, FUEL_CAPACITY - current)
+            capacity = fuel_capacity(self.db, guild, user)
+            if current >= capacity:
+                raise CharacterError(f'燃料已達上限 {capacity:,}。')
+            gained = min(fuel, capacity - current)
             paid = self.db.execute('''UPDATE rpg_inventory SET quantity=quantity-?
                 WHERE guild_id=? AND user_id=? AND item_id=? AND quantity>=?''',
                                    (quantity, guild, user, item_id, quantity))

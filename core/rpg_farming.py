@@ -95,6 +95,7 @@ class Farming:
         self.material_rng = material_rng or random.Random()
         self.specialization_rng = specialization_rng or random.Random()
         self.xp_bonus = xp_bonus
+        self.divinations = None
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_players (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -104,7 +105,8 @@ class Farming:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_sessions (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, location_id TEXT NOT NULL,
                 plant_id TEXT NOT NULL, planted_at REAL NOT NULL, ready_at REAL NOT NULL,
-                level_snapshot INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', result TEXT,
+                level_snapshot INTEGER NOT NULL, fortune_card TEXT, fortune_selected_at REAL,
+                status TEXT NOT NULL DEFAULT 'active', result TEXT,
                 notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0,1)),
                 PRIMARY KEY (guild_id,user_id,location_id))''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_farming_specializations (
@@ -119,6 +121,10 @@ class Farming:
                 self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN notified INTEGER NOT NULL DEFAULT 0')
             if 'specialization' not in session_columns:
                 self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN specialization TEXT')
+            if 'fortune_card' not in session_columns:
+                self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN fortune_card TEXT')
+            if 'fortune_selected_at' not in session_columns:
+                self.db.execute('ALTER TABLE rpg_farming_sessions ADD COLUMN fortune_selected_at REAL')
 
     def _ensure_player(self, guild, user):
         self.db.execute('INSERT OR IGNORE INTO rpg_farming_players(guild_id,user_id) VALUES (?,?)',
@@ -202,10 +208,13 @@ class Farming:
                 specialization = specialization_row[0] if specialization_row else None
             self.db.execute('''DELETE FROM rpg_farming_sessions
                 WHERE guild_id=? AND user_id=? AND location_id=?''', (guild, user, location_id))
+            fortune_status = self.divinations.status(guild, user, now) if self.divinations else {}
+            fortune = fortune_status.get('card')
             self.db.execute('''INSERT INTO rpg_farming_sessions
-                (guild_id,user_id,location_id,plant_id,planted_at,ready_at,level_snapshot,specialization)
-                VALUES (?,?,?,?,?,?,?,?)''',
-                (guild, user, location_id, plant_id, now, now + crop.seconds, level, specialization))
+                (guild_id,user_id,location_id,plant_id,planted_at,ready_at,level_snapshot,
+                 specialization,fortune_card,fortune_selected_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (guild, user, location_id, plant_id, now, now + crop.seconds, level,
+                 specialization, fortune, fortune_status.get('selected_at')))
         return dict(location=LOCATIONS[location_id], plant=crop, ready_at=now + crop.seconds,
                     level_snapshot=level, specialization=specialization)
 
@@ -215,12 +224,14 @@ class Farming:
             raise CharacterError('請重新選擇農耕地點。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT plant_id,planted_at,ready_at,level_snapshot,status,result,specialization
+            row = self.db.execute('''SELECT plant_id,planted_at,ready_at,level_snapshot,status,
+                result,specialization,fortune_card,fortune_selected_at
                 FROM rpg_farming_sessions WHERE guild_id=? AND user_id=? AND location_id=?''',
                 (guild, user, location_id)).fetchone()
             if not row:
                 raise CharacterError(f'{LOCATIONS[location_id]}目前沒有可以收成的植物。')
-            plant_id, planted_at, ready_at, planted_level, status, saved, specialization = row
+            (plant_id, planted_at, ready_at, planted_level, status, saved,
+             specialization, fortune_card, fortune_selected_at) = row
             if expected_planted_at is not None and planted_at != expected_planted_at:
                 raise CharacterError('這則通知的植物已經收成，請查看目前的農耕狀態。')
             if expected_planted_at is not None and status == 'harvested':
@@ -245,6 +256,8 @@ class Farming:
                 if planted_level >= 100 and self.specialization_rng.random() < 0.10:
                     specialization_bonus += 1
             quantity = crop.base_yield + level_bonus + specialization_bonus
+            fortune_bonus = int(fortune_card == 'empress')
+            quantity += fortune_bonus
             base_xp = (crop.base_yield + level_bonus) * crop.xp_each
             training_bonus_xp = (base_xp * (15 if planted_level >= 100 else 10) // 100
                                  if specialization == 'study' else 0)
@@ -270,6 +283,7 @@ class Farming:
                           base_yield=crop.base_yield, level_bonus=level_bonus,
                           specialization=specialization,
                           specialization_bonus=specialization_bonus,
+                          fortune_bonus=fortune_bonus,
                           training_bonus_xp=training_bonus_xp,
                           lucky=lucky, accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
@@ -277,6 +291,14 @@ class Farming:
             if study_bonus_xp:
                 result.update(study_bonus_percent=study_percent,
                               study_bonus_xp=study_bonus_xp)
+            active_card = self.divinations.status(guild, user, now)['card'] if self.divinations else None
+            resonance_card = 'empress' if fortune_card == 'empress' else active_card
+            if self.divinations and resonance_card in ('empress', 'sun', 'hierophant', 'world'):
+                self.divinations.resonate(guild, user, resonance_card,
+                    now=planted_at if resonance_card == 'empress' else now,
+                    activation=fortune_selected_at if resonance_card == 'empress'
+                    else self.divinations.status(guild, user, now)['selected_at'],
+                    award_now=now)
             self.db.execute('''UPDATE rpg_farming_sessions SET status='harvested',result=?
                 WHERE guild_id=? AND user_id=? AND location_id=?''',
                 (json.dumps(result, ensure_ascii=False, separators=(',', ':')),

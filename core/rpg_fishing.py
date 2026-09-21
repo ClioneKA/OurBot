@@ -154,6 +154,7 @@ class Fishing:
         self.boss_rng = boss_rng or random.Random()
         self.material_rng = material_rng or random.Random()
         self.xp_bonus = xp_bonus
+        self.divinations = None
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_encounters (
                 id TEXT PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -175,6 +176,7 @@ class Fishing:
                 started_at REAL NOT NULL, ready_at REAL NOT NULL,
                 rod_id TEXT NOT NULL, base_catches INTEGER NOT NULL,
                 level_snapshot INTEGER NOT NULL DEFAULT 1,
+                fortune_card TEXT, fortune_selected_at REAL,
                 status TEXT NOT NULL DEFAULT 'active',
                 notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0,1)),
                 result TEXT,
@@ -183,6 +185,10 @@ class Fishing:
             if 'level_snapshot' not in columns:
                 self.db.execute('ALTER TABLE rpg_fishing_sessions ADD COLUMN level_snapshot INTEGER NOT NULL DEFAULT 1')
                 self.db.execute("UPDATE rpg_fishing_sessions SET level_snapshot=20 WHERE spot_id='lake'")
+            if 'fortune_card' not in columns:
+                self.db.execute('ALTER TABLE rpg_fishing_sessions ADD COLUMN fortune_card TEXT')
+            if 'fortune_selected_at' not in columns:
+                self.db.execute('ALTER TABLE rpg_fishing_sessions ADD COLUMN fortune_selected_at REAL')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_fishing_records (
                 guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, fish_id TEXT NOT NULL,
                 best_weight_g INTEGER NOT NULL CHECK(best_weight_g > 0),
@@ -270,10 +276,13 @@ class Fishing:
                 raise CharacterError('目前正在釣魚；完成後請先收竿。')
             label, seconds, catches = DURATIONS[duration_id]
             self.db.execute('DELETE FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?', (guild, user))
+            fortune_status = self.divinations.status(guild, user, now) if self.divinations else {}
+            fortune = fortune_status.get('card')
             self.db.execute('''INSERT INTO rpg_fishing_sessions
-                (guild_id,user_id,spot_id,duration_id,started_at,ready_at,rod_id,base_catches,level_snapshot)
-                VALUES (?,?,?,?,?,?,?,?,?)''',
-                (guild, user, spot_id, duration_id, now, now + seconds, rod, catches, level))
+                (guild_id,user_id,spot_id,duration_id,started_at,ready_at,rod_id,base_catches,
+                 level_snapshot,fortune_card,fortune_selected_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                (guild, user, spot_id, duration_id, now, now + seconds, rod, catches, level,
+                 fortune, fortune_status.get('selected_at')))
         return dict(spot=SPOTS[spot_id], duration=label, ready_at=now + seconds,
                     rod_id=rod, base_catches=catches, level_snapshot=level,
                     mastery_percent=fishing_mastery(level, SPOTS[spot_id]))
@@ -282,11 +291,13 @@ class Fishing:
         now = time.time() if now is None else now
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            row = self.db.execute('''SELECT spot_id,duration_id,rod_id,base_catches,level_snapshot,started_at,ready_at,status,result
+            row = self.db.execute('''SELECT spot_id,duration_id,rod_id,base_catches,level_snapshot,
+                started_at,ready_at,status,result,fortune_card,fortune_selected_at
                 FROM rpg_fishing_sessions WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
             if not row:
                 raise CharacterError('目前沒有可以收竿的釣魚行程。')
-            spot_id, duration_id, rod, base_catches, level_snapshot, started_at, ready_at, status, saved = row
+            (spot_id, duration_id, rod, base_catches, level_snapshot, started_at,
+             ready_at, status, saved, fortune_card, fortune_selected_at) = row
             if expected_started_at is not None and started_at != expected_started_at:
                 raise CharacterError('這則通知的釣魚行程已經結束，請查看目前的釣魚狀態。')
             if expected_started_at is not None and status == 'claimed':
@@ -301,6 +312,10 @@ class Fishing:
                 raise CharacterError('還沒釣完，時間結束後才能收竿。')
             spot = SPOTS[spot_id]
             bonus_chance, rare_multiplier = ROD_BONUS.get(rod, (0, 1))
+            if fortune_card == 'star':
+                rare_multiplier *= 1.5
+            if fortune_card == 'moon':
+                bonus_chance = min(1, bonus_chance + 0.10)
             bonus = self.rng.random() < bonus_chance
             big_fish = None
             bonus_catch = bonus
@@ -374,6 +389,14 @@ class Fishing:
             if study_bonus_xp:
                 result.update(study_bonus_percent=study_percent,
                               study_bonus_xp=study_bonus_xp)
+            active_card = self.divinations.status(guild, user, now)['card'] if self.divinations else None
+            resonance_card = fortune_card if fortune_card in ('star', 'moon') else active_card
+            if self.divinations and resonance_card in ('star', 'moon', 'sun', 'hierophant', 'world'):
+                self.divinations.resonate(guild, user, resonance_card,
+                    now=started_at if resonance_card in ('star', 'moon') else now,
+                    activation=fortune_selected_at if resonance_card in ('star', 'moon')
+                    else self.divinations.status(guild, user, now)['selected_at'],
+                    award_now=now)
             # Separate RNG keeps encounter rolls independent of fish/rod quality.
             # Duplicate mastery items are not additional catches; a trophy is.
             trials = catches + int(big_fish is not None)

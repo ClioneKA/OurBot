@@ -50,9 +50,14 @@ class RPG(commands.Cog):
         self.provisions = Provisions(self.store)
         self.divinations = Divinations(self.store)
         self.alchemy = AlchemyDolls(self.store, self.settings)
-        self.fishing.xp_bonus = self.alchemy.life_xp_bonus_percent
-        self.farming.xp_bonus = self.alchemy.life_xp_bonus_percent
-        self.provisions.xp_bonus = self.alchemy.life_xp_bonus_percent
+        for service in (self.fishing, self.farming, self.provisions, self.expeditions):
+            service.divinations = self.divinations
+        def life_xp_bonus(guild, user, source):
+            return (self.alchemy.life_xp_bonus_percent(guild, user, source)
+                    + self.divinations.xp_bonus_percent(guild, user, source))
+        self.fishing.xp_bonus = life_xp_bonus
+        self.farming.xp_bonus = life_xp_bonus
+        self.provisions.xp_bonus = life_xp_bonus
         self.tracker = VoiceTracker()
         self.manual_room_lock = asyncio.Lock()
         self.menu_views = WeakSet()

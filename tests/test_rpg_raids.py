@@ -35,7 +35,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.cog.divinations = Divinations(self.store)
         self.store.award_voice([(1, 1, level_floor(30))])
         with self.store.db:
-            self.store.db.execute("INSERT OR REPLACE INTO rpg_divinations VALUES (1,1,'2026-01-01',1,'high_priestess',NULL,NULL)")
+            self.store.db.execute('''INSERT OR REPLACE INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at)
+                VALUES (1,1,'2026-01-01',1,'high_priestess',9999999999)''')
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '2', 'RPG_MID_RAID_CHANNEL_IDS': '3'}):
             service = RaidService(self.cog)
         service.notifications.ensure = AsyncMock(return_value=None)
@@ -63,7 +65,9 @@ class RaidTests(unittest.IsolatedAsyncioTestCase):
         self.cog.divinations = Divinations(self.store)
         self.store.award_voice([(1, 1, level_floor(50))])
         with self.store.db:
-            self.store.db.execute("INSERT OR REPLACE INTO rpg_divinations VALUES (1,1,'2026-01-01',1,'high_priestess',NULL,NULL)")
+            self.store.db.execute('''INSERT OR REPLACE INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at)
+                VALUES (1,1,'2026-01-01',1,'high_priestess',9999999999)''')
         with patch.dict('os.environ', {'RPG_RAID_CHANNEL_IDS': '', 'RPG_MID_RAID_CHANNEL_IDS': '',
                                             'RPG_HIGH_RAID_CHANNEL_IDS': '4'}):
             service = RaidService(self.cog)

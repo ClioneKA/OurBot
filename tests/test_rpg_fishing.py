@@ -4,6 +4,7 @@ import unittest
 
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import CharacterError, Characters, ITEMS, item_sell_price
+from core.rpg_divination import Divinations
 from core.rpg_fishing import BIG_FISH, DURATIONS, Fishing, SPOTS, _weighted_pick, fishing_mastery
 from core.settings import RPGSettings
 
@@ -84,6 +85,20 @@ class FishingTests(unittest.TestCase):
         picked = _weighted_pick(SPOTS['lake'].loot, SPOTS['lake'].rare_item, 1.1,
                                 SequenceRandom([0.54]))
         self.assertEqual(picked, 'fishing:lake:rare')
+
+    def test_moon_is_snapshotted_and_can_create_a_bonus_catch(self):
+        divinations = Divinations(self.store)
+        self.fishing.divinations = divinations
+        with self.store.db:
+            self.store.db.execute('''INSERT INTO rpg_divinations
+                (guild_id,user_id,day,draws,card,expires_at,selected_at)
+                VALUES (1,1,?,1,'moon',9999,0)''', (self.store.day_key(0),))
+        self.fishing.start(1, 1, 'pond', 'short', now=0)
+        self.fishing.rng = SequenceRandom([0.05, 0.0, 0.0, 0.0])
+        result = self.fishing.claim(1, 1, now=1800)
+        self.assertTrue(result['bonus_catch'])
+        self.assertEqual(result['catches'], 3)
+        self.assertEqual(divinations.mastery(1, 1)['moon'], 1)
 
     def test_cancel_discards_all_progress_and_rewards(self):
         self.fishing.start(1, 1, 'pond', 'long', now=100)
