@@ -49,6 +49,12 @@ def affix_text(row):
     return affix_roll_text(kind, grade, value)
 
 
+def affix_name_text(row):
+    """Return the compact affix name used in equipment selection menus."""
+    kind, grade = row[1].split(':')[1:]
+    return f'{AFFIX_NAMES[kind]} {ROMAN[int(grade)]}'
+
+
 def improve_text(row):
     grade = int(row[1].rsplit(':', 1)[1])
     if grade >= 4:
@@ -62,7 +68,9 @@ class EquipmentSelect(discord.ui.Select):
         super().__init__(placeholder='選擇魔女裝備實例', row=0, options=[
             discord.SelectOption(
                 label=f'#{item["instance_id"]} {ITEMS[item["item_id"]].name}'[:100],
-                value=str(item['instance_id']), default=item['instance_id'] == view.selected)
+                value=str(item['instance_id']), default=item['instance_id'] == view.selected,
+                description=(f'前綴：{affix_name_text(item["affixes"][0])}｜'
+                             f'後綴：{affix_name_text(item["affixes"][1])}')[:100])
             for item in equipment[:25]])
 
     async def callback(self, interaction):
@@ -72,25 +80,98 @@ class EquipmentSelect(discord.ui.Select):
         await interaction.response.edit_message(embed=view.embed(), view=view)
 
 
-class DirectAffixModal(discord.ui.Modal, title='使用定向詞條記憶'):
-    kind = discord.ui.TextInput(label='目標詞條名稱', placeholder='例如：迅捷', max_length=12)
+class DirectAffixSelect(discord.ui.Select):
+    def __init__(self, view, choices):
+        side = '前綴' if view.affix_index == 0 else '後綴'
+        super().__init__(placeholder=f'選擇新{side}', row=0, options=[
+            discord.SelectOption(
+                label=f'{AFFIX_NAMES[kind]} {ROMAN[grade]}', value=kind,
+                description=affix_effect_text(kind, value)[:100])
+            for kind, grade, value in choices])
 
+    async def callback(self, interaction):
+        view = self.view
+        kind = self.values[0]
+        grade, value = next((grade, value) for choice, grade, value in view.choices
+                            if choice == kind)
+        confirm = DirectAffixConfirmView(view.panel, view.affix_index, kind, grade, value)
+        await interaction.response.edit_message(embed=confirm.embed(), view=confirm)
+
+
+class DirectAffixPickerView(discord.ui.View):
     def __init__(self, panel, affix_index):
-        super().__init__()
+        super().__init__(timeout=180)
         self.panel, self.affix_index = panel, affix_index
+        item = panel.item()
+        _, _, _, slug, slot = item['item_id'].split(':')
+        job = next(name for name, data in JOBS.items() if data[0] == slug)
+        current_kind, grade = item['affixes'][affix_index][1].split(':')[1:]
+        self.choices = [
+            (kind, int(grade), panel.cog.witch_rest._affix_value(
+                item['item_id'], job, affix_index, kind, int(grade)))
+            for kind, _weight in affix_kinds(job, slot, affix_index)
+            if kind != current_kind
+        ]
+        self.add_item(DirectAffixSelect(self, self.choices))
 
-    async def on_submit(self, interaction):
-        reverse = {name: key for key, name in AFFIX_NAMES.items()}
-        kind = reverse.get(str(self.kind).strip(), str(self.kind).strip().lower())
+    async def interaction_check(self, interaction):
+        if (interaction.user.id == self.panel.owner.id and
+                interaction.guild_id == self.panel.guild_id):
+            return True
+        await interaction.response.send_message('這不是你的魔女裝備工坊。', ephemeral=True)
+        return False
+
+    def embed(self):
+        side = '前綴' if self.affix_index == 0 else '後綴'
+        return self.panel.embed(f'請從下拉選單選擇新{side}；選擇後還會顯示確認預覽。')
+
+    @discord.ui.button(label='取消', style=discord.ButtonStyle.secondary, row=1)
+    async def cancel(self, interaction, _button):
+        self.stop()
+        self.panel.rebuild()
+        await interaction.response.edit_message(embed=self.panel.embed(), view=self.panel)
+
+
+class DirectAffixConfirmView(discord.ui.View):
+    def __init__(self, panel, affix_index, kind, grade, value):
+        super().__init__(timeout=180)
+        self.panel, self.affix_index = panel, affix_index
+        self.kind, self.grade, self.value = kind, grade, value
+
+    async def interaction_check(self, interaction):
+        if (interaction.user.id == self.panel.owner.id and
+                interaction.guild_id == self.panel.guild_id):
+            return True
+        await interaction.response.send_message('這不是你的魔女裝備工坊。', ephemeral=True)
+        return False
+
+    def embed(self):
+        item = self.panel.item()
+        old = affix_text(item['affixes'][self.affix_index])
+        new = affix_roll_text(self.kind, self.grade, self.value)
+        memory = ITEMS[f'witch_rest:{item["witch_id"]}:directed_memory'].name
+        return self.panel.embed(
+            f'{old}\n　↓\n{new}\n\n'
+            f'確認後將消耗：{memory} ×1、金幣 5,000。')
+
+    @discord.ui.button(label='確認指定', style=discord.ButtonStyle.success)
+    async def confirm(self, interaction, _button):
         try:
             result = self.panel.cog.witch_rest.direct_affix(
                 f'direct:{interaction.id}', self.panel.guild_id, self.panel.owner.id,
-                self.panel.selected, self.affix_index, kind)
-            notice = f'定向完成：{affix_roll_text(result["kind"], result["grade"], result["value"])}。'
+                self.panel.selected, self.affix_index, self.kind)
+            notice = f'指定完成：{affix_roll_text(result["kind"], result["grade"], result["value"])}。'
         except CharacterError as exc:
             notice = str(exc)
+        self.stop()
         self.panel.rebuild()
         await interaction.response.edit_message(embed=self.panel.embed(notice), view=self.panel)
+
+    @discord.ui.button(label='返回重選', style=discord.ButtonStyle.secondary)
+    async def back(self, interaction, _button):
+        self.stop()
+        picker = DirectAffixPickerView(self.panel, self.affix_index)
+        await interaction.response.edit_message(embed=picker.embed(), view=picker)
 
 
 class RerollDecisionView(discord.ui.View):
@@ -183,8 +264,8 @@ class WitchRestWorkshopView(discord.ui.View):
         self.button('重鑄後綴', 'reroll:1', 1)
         self.button('記憶強化前綴', 'improve:0', 1)
         self.button('記憶強化後綴', 'improve:1', 1)
-        self.button('定向前綴', 'direct:0', 2)
-        self.button('定向後綴', 'direct:1', 2)
+        self.button('指定前綴', 'direct:0', 2)
+        self.button('指定後綴', 'direct:1', 2)
         self.button('昇階 T90', 'upgrade', 2, discord.ButtonStyle.primary)
         self.button('分解', 'dismantle', 2, discord.ButtonStyle.danger)
         for label, action in (('合成魔女結晶', 'crystal'), ('合成高級記憶', 'memory'),
@@ -229,7 +310,7 @@ class WitchRestWorkshopView(discord.ui.View):
             job = next(name for name, data in JOBS.items() if data[0] == slug)
             prefix = '、'.join(AFFIX_NAMES[key] for key, _ in affix_kinds(job, slot, 0))
             suffix = '、'.join(AFFIX_NAMES[key] for key, _ in affix_kinds(job, slot, 1))
-            embed.add_field(name='定向詞條可輸入', inline=False,
+            embed.add_field(name='可指定詞條', inline=False,
                             value=f'前綴：{prefix}\n後綴：{suffix}')
         else:
             embed.add_field(name='沒有魔女裝備', value='仍可合成結晶或高級記憶。', inline=False)
@@ -256,7 +337,8 @@ class WitchRestWorkshopView(discord.ui.View):
                 await interaction.response.edit_message(content='工坊已關閉。', embed=None, view=None)
                 return
             if action.startswith('direct:'):
-                await interaction.response.send_modal(DirectAffixModal(self, int(action[-1])))
+                picker = DirectAffixPickerView(self, int(action[-1]))
+                await interaction.response.edit_message(embed=picker.embed(), view=picker)
                 return
             if action == 'dismantle':
                 item = self.item()
