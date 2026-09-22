@@ -66,7 +66,7 @@ class EquipmentView(discord.ui.View):
             label=(f'{"【已裝備】" if token in equipped else ""}'
                    f'{item_display_name(self.available_items[token])}')[:100],
             value=token,
-            description=(f'#{token.split(":")[1]}｜'
+            description=(f'#{token.split(":")[1]}｜{self.embroidery_text(token, prefix=True)}'
                          f'{item_text(self.available_items[token])}')[:100],
             default=token == self.item_id)
             for token in self.available]
@@ -93,14 +93,40 @@ class EquipmentView(discord.ui.View):
         self.remove.disabled = self.slot not in state['equipped']
         return state
 
+    def embroidery_text(self, reference, *, prefix=False):
+        labels = self.cog.characters.embroidery_labels(
+            self.guild_id, self.owner.id, reference)
+        if not labels:
+            return ''
+        slots = '｜'.join(f'{index}：{label}' for index, label in enumerate(labels, 1))
+        return f'刺繡 {slots}｜' if prefix else slots
+
     def embed(self, notice=None):
         state = self.cog.characters.snapshot(self.guild_id, self.owner.id)
         embed = self.cog.character_embed(self.guild_id, self.owner)
         embed.title = '裝備與能力值｜' + embed.title
         selected = self.available_items.get(self.item_id)
-        selection = (f'{item_display_name(selected)}\n{item_text(selected)}\n'
-                     f'編號 #{self.item_id.split(":")[1]}' if selected else '請選擇物品')
+        embroidery = self.embroidery_text(self.item_id) if selected else ''
+        if selected:
+            embroidery_line = f'\n刺繡：{embroidery}' if embroidery else ''
+            selection = (f'{item_display_name(selected)}\n{item_text(selected)}'
+                         f'{embroidery_line}\n編號 #{self.item_id.split(":")[1]}')
+        else:
+            selection = '請選擇物品'
         embed.add_field(name='目前選擇', value=f'{self.slot}：{selection}'[:1024], inline=False)
+        worn_embroidery = []
+        for slot, identity in state['equipped_instances'].items():
+            if not slot.startswith('飾品'):
+                continue
+            reference = f'instance:{identity}'
+            labels = self.embroidery_text(reference)
+            if labels:
+                item = self.cog.characters.item_for_reference(
+                    self.guild_id, self.owner.id, reference)
+                worn_embroidery.append(
+                    f'{slot}：{item_display_name(item)} #{identity}｜{labels}')
+        if worn_embroidery:
+            embed.add_field(name='目前裝備刺繡', value='\n'.join(worn_embroidery)[:1024], inline=False)
         if state.get('active_set'):
             embed.add_field(name='套裝效果：2/2（已啟動）', value=state['set_bonus_text'], inline=False)
         else:

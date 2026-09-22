@@ -450,6 +450,39 @@ class AlchemyDollTests(unittest.TestCase):
         self.assertEqual(labels['7'], '補至接近上限')
         self.assertEqual(labels['20'], '全部持有數量')
 
+    def test_fuel_page_can_sort_by_material_tier_or_unit_fuel(self):
+        owned = ('farming:wheat', 'farming:eclipse_pepper', 'fishing:pond:coin')
+        for key in owned:
+            self.characters.grant_item(1, 10, key)
+
+        provisions = SimpleNamespace(presets=lambda guild, user: [])
+        cog = SimpleNamespace(alchemy=self.alchemy, characters=self.characters,
+                              provisions=provisions, store=self.store)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=10, mention='<@10>'), guild_id=1)
+        view = AlchemyView(cog, interaction)
+        view.page = 'fuel'
+
+        view.fuel_sort = 'tier_desc'
+        view.rebuild()
+        picker = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'fuel_item')
+        self.assertEqual(picker.options[0].value, 'farming:eclipse_pepper')
+        self.assertIn('素材 T110', picker.options[0].description)
+
+        view.fuel_sort = 'fuel_desc'
+        view.rebuild()
+        picker = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'fuel_item')
+        self.assertEqual(picker.options[0].value, 'farming:eclipse_pepper')
+        view.fuel_sort = 'fuel_asc'
+        view.rebuild()
+        picker = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'fuel_item')
+        self.assertEqual(picker.options[0].value, 'farming:wheat')
+        sorter = next(child for child in view.children
+                      if getattr(child, 'action', None) == 'fuel_sort')
+        self.assertEqual(len(sorter.options), 4)
+
     def test_mag_affinity_increases_actual_fuel_capacity(self):
         self.alchemy.state(1, 10)
         with self.store.db:

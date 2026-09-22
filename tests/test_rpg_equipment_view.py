@@ -99,3 +99,27 @@ class EquipmentViewTests(unittest.IsolatedAsyncioTestCase):
         active = self.view.embed()
         self.assertIn('套裝效果：2/2（已啟動）', [field.name for field in active.fields])
         self.assertTrue(any('最低穩定度提高 15' in field.value for field in active.fields))
+
+    async def test_embroidery_is_visible_in_picker_selection_and_equipped_summary(self):
+        self.characters.grant_item(1, 1, 'raid:0')
+        reference = next(instance.token for instance in self.characters.equipment_instances(1, 1)
+                         if instance.item_id == 'raid:0')
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,500)')
+        self.characters.embroider_accessory(1, 1, reference, 'heart')
+
+        await self.view.handle(self.interaction, 'slot', '飾品1')
+        option = next(option for option in self.view.children[1].options
+                      if option.value == reference)
+        self.assertIn('刺繡 1：愛心刺繡', option.description)
+
+        await self.view.handle(self.interaction, 'item', reference)
+        selected = next(field.value for field in self.view.embed().fields
+                        if field.name == '目前選擇')
+        self.assertIn('刺繡：1：愛心刺繡', selected)
+
+        await self.view.handle(self.interaction, 'wear')
+        summary = next(field.value for field in self.view.embed().fields
+                       if field.name == '目前裝備刺繡')
+        self.assertIn('飾品1', summary)
+        self.assertIn('愛心刺繡', summary)

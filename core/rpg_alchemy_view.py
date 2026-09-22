@@ -17,6 +17,30 @@ from core.rpg_equipment_view import PanelSelect
 from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_current_page
 
 
+FUEL_SORTS = {
+    'tier_desc': '素材 T 階：高到低',
+    'tier_asc': '素材 T 階：低到高',
+    'fuel_desc': '單個燃料：高到低',
+    'fuel_asc': '單個燃料：低到高',
+}
+
+
+def fuel_sort_key(row, mode):
+    """Sort a (item id, owned quantity) row for the fuel conversion picker."""
+    key, _ = row
+    item = ITEMS[key]
+    profile = material_profile(key)
+    tier = profile[0] if profile else None
+    fuel = fuel_value(item)
+    if mode == 'tier_asc':
+        return (tier is None, tier or 0, -fuel, item.name, key)
+    if mode == 'fuel_desc':
+        return (-fuel, -(tier or 0), item.name, key)
+    if mode == 'fuel_asc':
+        return (fuel, -(tier or 0), item.name, key)
+    return (tier is None, -(tier or 0), -fuel, item.name, key)
+
+
 def combat_stone_effect(skill_key, rarity, body):
     """Describe a combat stone after applying rarity and installed body stats."""
     rarity_stats = COMBAT_RARITY_STATS[rarity]
@@ -116,6 +140,7 @@ class AlchemyView(discord.ui.View):
         self.item_id = None
         self.fuel_item_id = None
         self.fuel_quantity = 1
+        self.fuel_sort = 'tier_desc'
         self.decompose_items = []
         self.confirm_decompose = False
         self.confirm_core_dismantle = False
@@ -297,12 +322,17 @@ class AlchemyView(discord.ui.View):
             self.button(label, 'decompose_batch', 1, disabled=not self.decompose_items,
                         style=discord.ButtonStyle.danger if self.confirm_decompose else discord.ButtonStyle.secondary)
         elif self.page == 'fuel':
+            fuels = [(key, quantity) for key, quantity in inventory.items()
+                     if quantity and key in ITEMS and not key.startswith('alchemy:')
+                     and ITEMS[key].category not in ('裝備', '釣竿')
+                     and item_sellable(ITEMS[key])]
+            fuels.sort(key=lambda row: fuel_sort_key(row, self.fuel_sort))
             options = [discord.SelectOption(label=ITEMS[key].name[:100], value=key,
-                       description=f'持有 {quantity}｜每個 {fuel_value(ITEMS[key])} 燃料')
-                       for key, quantity in inventory.items() if quantity and key in ITEMS
-                       and not key.startswith('alchemy:')
-                       and ITEMS[key].category not in ('裝備', '釣竿')
-                       and item_sellable(ITEMS[key])]
+                       description=(
+                           (f'素材 T{material_profile(key)[0]}｜' if material_profile(key) else '')
+                           + f'持有 {quantity}｜每個 {fuel_value(ITEMS[key])} 燃料')[:100],
+                       default=key == self.fuel_item_id)
+                       for key, quantity in fuels]
             self.add_item(PanelSelect('fuel_item', row=0, placeholder='選擇要轉換的素材',
                 disabled=not options, options=options[:25] or [
                     discord.SelectOption(label='沒有可轉換素材', value='empty')]))
@@ -325,8 +355,11 @@ class AlchemyView(discord.ui.View):
                          if amount * per_item > remaining_capacity else ''))[:100],
                     default=amount == self.fuel_quantity) for amount in quantities] or [
                         discord.SelectOption(label='無可轉換數量', value='empty')]))
+            self.add_item(PanelSelect('fuel_sort', row=2, placeholder='選擇素材排序方式', options=[
+                discord.SelectOption(label=label, value=mode, default=mode == self.fuel_sort)
+                for mode, label in FUEL_SORTS.items()]))
             label = '確認不可逆轉換' if self.confirm_fuel else f'轉換 {self.fuel_quantity} 個'
-            self.button(label, 'convert_fuel', 2,
+            self.button(label, 'convert_fuel', 3,
                         disabled=(not self.fuel_item_id or not maximum or not remaining_capacity),
                         style=discord.ButtonStyle.danger if self.confirm_fuel else discord.ButtonStyle.secondary)
         elif self.page == 'triggers':
@@ -693,6 +726,11 @@ class AlchemyView(discord.ui.View):
                     self.item_id = value
                 elif action == 'fuel_item' and value != 'empty':
                     self.fuel_item_id = value
+                    self.fuel_quantity = 1
+                    self.confirm_fuel = False
+                elif action == 'fuel_sort' and value in FUEL_SORTS:
+                    self.fuel_sort = value
+                    self.fuel_item_id = None
                     self.fuel_quantity = 1
                     self.confirm_fuel = False
                 elif action == 'equip_core':
