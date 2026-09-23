@@ -399,6 +399,15 @@ class WitchRestStore:
                  json.dumps(room, ensure_ascii=False), *self._pending_flags(room)))
             return room
 
+    def last_enrage(self, guild_id, host_id, witch_id):
+        rows = self.db.execute('''SELECT data FROM rpg_witch_rest_rooms
+            WHERE guild_id=? ORDER BY rowid DESC''', (guild_id,))
+        for (raw,) in rows:
+            room = json.loads(raw)
+            if room.get('host_id') == host_id and room.get('witch_id') == witch_id:
+                return room['enrage']
+        return None
+
     def attach_room(self, room_id, channel_id, message_id, *, parent_channel_id=None,
                     index_message_id=None):
         with self.db:

@@ -173,6 +173,8 @@ class ProvisionView(discord.ui.View):
                 if data.get('study_bonus_xp'):
                     xp_text += (f'\n人偶烹飪研習 +{data["study_bonus_percent"]}%'
                                 f'（+{data["study_bonus_xp"]:,} XP）')
+                if data.get('tarot_bonus_xp'):
+                    xp_text += f'\n塔羅牌生活 XP +{data["tarot_bonus_xp"]:,}'
                 grade_text = data['grade']
                 if data['potential_grade'] != data['grade']:
                     required_level = {'SS': 40, 'SSS': 80}[data['potential_grade']]

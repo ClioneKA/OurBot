@@ -175,6 +175,8 @@ class FarmingView(discord.ui.View):
                         notice += f'（田地研習 +{result["training_bonus_xp"]:,} XP）'
                     if result.get('study_bonus_xp'):
                         notice += f'（人偶農藝研習 +{result["study_bonus_xp"]:,} XP）'
+                    if result.get('tarot_bonus_xp'):
+                        notice += f'（塔羅牌生活 XP +{result["tarot_bonus_xp"]:,}）'
                     if result.get('accessory_material'):
                         notice += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
                     for location_id, required_level in LOCATION_LEVELS.items():

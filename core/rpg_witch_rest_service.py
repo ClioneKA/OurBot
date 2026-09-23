@@ -258,6 +258,22 @@ class WitchRestService:
                         room['guild_id'], user_id, state['job'])],
                     'passive_id': passive.id if passive else None,
                     'basic_target': self.cog.tactics.basic_target(room['guild_id'], user_id, state['job'])})
+            user_ids = [participant['id'] for participant in participants]
+            fortunes = self.cog.divinations.prepare_for_raid(room_id, room['guild_id'], user_ids)
+            drinks = self.cog.tavern.store.prepare_for_raid(room_id, room['guild_id'], user_ids)
+            meals = self.cog.provisions.prepare_for_raid(room_id, room['guild_id'], user_ids)
+            for participant in participants:
+                user_id = participant['id']
+                support = self.cog.alchemy.prepare_support(
+                    room['guild_id'], user_id, f'witch_rest:{room_id}')
+                if support:
+                    participant['doll_support'] = support
+                if user_id in fortunes:
+                    participant['fortune'] = fortunes[user_id]
+                if user_id in drinks:
+                    participant['tavern'] = drinks[user_id]
+                if user_id in meals:
+                    participant['meal'] = meals[user_id]
             room = self.repo.start_room(room_id, member.id, participants)
             await self._close_index(room, '魔女安息儀式已開始。')
             old = self.views.pop(room_id, None)

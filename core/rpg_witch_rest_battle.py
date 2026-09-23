@@ -788,7 +788,9 @@ class WitchRestAutoBattle(Battle):
 def auto_battle_from_participants(participants, witch_id, enrage=0, seed=None):
     if witch_id not in WITCHES or not participants:
         raise CharacterError('無效的魔女安息儀式戰鬥。')
-    players, _, _, = participant_fighters(participants)
+    snapshot = raid_battle(
+        participants, {'kind': '魔女安息儀式參戰資料', 'name': '魔女安息儀式參戰資料', 'strength': 1.0}, seed)
+    players = [fighter for fighter in snapshot.fighters if fighter.team == 0]
     hp, attack, defense = PANEL_STATS[witch_id]
     size = len(participants)
     attack_scale = {1: .85, 2: .90, 3: .95, 4: 1, 5: 1.05, 6: 1.10}[size]
@@ -797,6 +799,7 @@ def auto_battle_from_participants(participants, witch_id, enrage=0, seed=None):
     boss = Fighter(WITCHES[witch_id].name, 1, f'witch_rest:{witch_id}', stats, 50, [], is_boss=True)
     battle = WitchRestAutoBattle(players + [boss], witch_id, seed)
     battle.mechanics.update(party_size=size, enrage=enrage)
+    battle.log.extend(snapshot.log)
     return battle
 
 

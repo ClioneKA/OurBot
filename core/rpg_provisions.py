@@ -370,11 +370,16 @@ class Provisions:
             return data
         base_xp = data['cooking_xp']
         bonus_xp = base_xp * percent // 100
+        tarot_percent = (self.divinations.xp_bonus_percent(guild, user, 'cooking')
+                         if self.divinations else 0)
+        doll_percent = max(0, percent - tarot_percent)
+        doll_bonus_xp = base_xp * doll_percent // 100
         total_xp = base_xp + bonus_xp
         data.update(base_cooking_xp=base_xp, cooking_xp=total_xp,
                     initial_cooking_xp=total_xp * COOKING_INITIAL_XP_PERCENT // 100,
                     immediate_cooking_xp=total_xp * COOKING_INITIAL_XP_PERCENT // 100,
-                    study_bonus_percent=percent, study_bonus_xp=bonus_xp)
+                    study_bonus_percent=doll_percent, study_bonus_xp=doll_bonus_xp,
+                    tarot_bonus_xp=bonus_xp - doll_bonus_xp)
         return data
 
     def preset_capacity(self, guild, user):
@@ -553,6 +558,10 @@ class Provisions:
         base_xp = quality * COOKING_XP_PER_QUALITY * DONATION_XP_PERCENT // 100
         study_percent = int(self.xp_bonus(guild, user, 'cooking')) if self.xp_bonus else 0
         study_bonus_xp = base_xp * study_percent // 100
+        tarot_percent = (self.divinations.xp_bonus_percent(guild, user, 'cooking')
+                         if self.divinations else 0)
+        doll_percent = max(0, study_percent - tarot_percent)
+        doll_bonus_xp = base_xp * doll_percent // 100
         awarded_xp = base_xp + study_bonus_xp
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -572,8 +581,10 @@ class Provisions:
                             (guild, user, awarded_xp))
             self._remember_recipe(guild, user, ingredient_ids)
         result = {'quantity': len(ingredient_ids), 'quality': quality, 'xp': awarded_xp}
-        if study_bonus_xp:
-            result.update(study_bonus_percent=study_percent, study_bonus_xp=study_bonus_xp)
+        if doll_bonus_xp:
+            result.update(study_bonus_percent=doll_percent, study_bonus_xp=doll_bonus_xp)
+        if study_bonus_xp > doll_bonus_xp:
+            result['tarot_bonus_xp'] = study_bonus_xp - doll_bonus_xp
         return result
 
     def publish(self, meal_id, message_id):

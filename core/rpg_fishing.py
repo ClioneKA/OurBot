@@ -360,7 +360,11 @@ class Fishing:
                                    if key == spot.rare_item else spot.base_xp)
                           for key, count in caught.items())
             study_percent = int(self.xp_bonus(guild, user, 'fishing')) if self.xp_bonus else 0
+            tarot_percent = (self.divinations.xp_bonus_percent(guild, user, 'fishing')
+                             if self.divinations else 0)
+            doll_percent = max(0, study_percent - tarot_percent)
             study_bonus_xp = base_xp * study_percent // 100
+            doll_bonus_xp = base_xp * doll_percent // 100
             gained_xp = base_xp + study_bonus_xp
             old_xp = self.db.execute('SELECT xp FROM rpg_fishing_players WHERE guild_id=? AND user_id=?',
                                      (guild, user)).fetchone()[0]
@@ -386,9 +390,11 @@ class Fishing:
                           accessory_material=material_count,
                           xp=gained_xp, old_level=level_for(old_xp),
                           new_level=level_for(old_xp + gained_xp), replayed=False)
-            if study_bonus_xp:
-                result.update(study_bonus_percent=study_percent,
-                              study_bonus_xp=study_bonus_xp)
+            if doll_bonus_xp:
+                result.update(study_bonus_percent=doll_percent,
+                              study_bonus_xp=doll_bonus_xp)
+            if study_bonus_xp > doll_bonus_xp:
+                result['tarot_bonus_xp'] = study_bonus_xp - doll_bonus_xp
             active_card = self.divinations.status(guild, user, now)['card'] if self.divinations else None
             resonance_card = fortune_card if fortune_card in ('star', 'moon') else active_card
             if self.divinations and resonance_card in ('star', 'moon', 'sun', 'hierophant', 'world'):

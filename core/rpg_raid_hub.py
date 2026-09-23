@@ -67,6 +67,10 @@ class RaidHubView(discord.ui.View):
         self.add_item(RaidHubSelect('enrage', [
             discord.SelectOption(label=f'{value:,}%', value=str(value), default=value == self.enrage)
             for value in COMMON_ENRAGES], '選擇常用魔女化', 1))
+        last_enrage = self.cog.witch_rest.last_enrage(
+            self.guild_id, self.owner.id, self.witch_id)
+        if last_enrage is not None:
+            self.button(f'上次魔女化：{last_enrage:,}%', 'last_enrage', 2)
         self.button('自訂魔女化', 'custom', 2)
         self.button(f'練習模式：{"開" if self.practice else "關"}', 'practice', 2)
         self.button('建立安息儀式', 'create_rest', 2, style=discord.ButtonStyle.danger)
@@ -121,6 +125,11 @@ class RaidHubView(discord.ui.View):
                 self.witch_id = value
             elif action == 'enrage' and int(value) in COMMON_ENRAGES:
                 self.enrage = int(value)
+            elif action == 'last_enrage':
+                last_enrage = self.cog.witch_rest.last_enrage(
+                    self.guild_id, self.owner.id, self.witch_id)
+                if last_enrage is not None:
+                    self.enrage = last_enrage
             elif action == 'practice':
                 self.practice = not self.practice
             elif action == 'create_rest':

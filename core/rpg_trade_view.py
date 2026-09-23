@@ -7,8 +7,7 @@ from core.rpg_menu import BACKPACK_CATEGORIES, add_back, navigate
 from core.rpg_equipment_view import PanelSelect
 
 
-TRADE_CATEGORIES = tuple(dict.fromkeys((*BACKPACK_CATEGORIES,
-                                      *(item.category for item in ITEMS.values()))))
+TRADE_CATEGORIES = BACKPACK_CATEGORIES
 BULK_TIERS = tuple(range(10, 101, 10))
 
 

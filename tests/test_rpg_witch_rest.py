@@ -55,6 +55,16 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertFalse(party_size_allowed(100, 7))
         self.assertEqual(ENTRY_PROOFS, 10)
 
+    def test_auto_battle_applies_meal_and_doll_snapshot(self):
+        participant = self.participant(attack=100)
+        participant['meal'] = {'name': '測試料理', 'attack_percent': 20}
+        participant['doll_support'] = {'name': '測試人偶', 'skills': [], 'stats': {}}
+        battle = auto_battle_from_participants([participant], 'ema', 99, seed=7)
+        fighter = battle.living(0)[0]
+        self.assertEqual(fighter.stats['攻擊'], 120)
+        self.assertEqual(fighter.doll_support['name'], '測試人偶')
+        self.assertTrue(any('測試料理' in line for line in battle.log))
+
     def test_low_enrage_cannot_roll_t90_material_or_directed_memory(self):
         kinds = {kind for kind, _ in treasure_weights(99)}
         self.assertNotIn('crystal', kinds)
@@ -626,6 +636,12 @@ class WitchRestStoreTests(unittest.TestCase):
         self.assertEqual(progress['total_wins'], 1)
         self.assertEqual(progress['eligible_wins'], 1)
         self.assertEqual(progress['highest_enrage'], 1000)
+
+    def test_last_enrage_is_scoped_to_host_and_witch(self):
+        self.rest.create_room(1, 10, 'ema', 250)
+        self.rest.create_room(1, 11, 'hiro', 500)
+        self.assertEqual(self.rest.last_enrage(1, 10, 'ema'), 250)
+        self.assertIsNone(self.rest.last_enrage(1, 10, 'hiro'))
 
     def test_auto_clear_does_not_advance_bad_luck_protection(self):
         self.rest.settle('clear-low', 1, 10, 'hiro', '弓兵', 99, seed=1)

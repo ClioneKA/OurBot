@@ -63,6 +63,8 @@ class FishingNotificationView(_NotificationView):
                            + '\n'.join(lines) + f'\n獲得 {result["xp"]:,} 釣魚 XP。')
             if result.get('study_bonus_xp'):
                 description += f'\n人偶垂釣研習額外取得 {result["study_bonus_xp"]:,} XP。'
+            if result.get('tarot_bonus_xp'):
+                description += f'\n塔羅牌生活經驗加成額外取得 {result["tarot_bonus_xp"]:,} XP。'
             if result.get('accessory_material'):
                 description += (f'\n額外獲得 {ITEMS["life:fishing:glimmer_pearl"].name} '
                                 f'×{result["accessory_material"]}！')
@@ -131,6 +133,8 @@ class FarmingNotificationView(_NotificationView):
                 description += f'\n研習專精額外取得 {result["training_bonus_xp"]:,} XP。'
             if result.get('study_bonus_xp'):
                 description += f'\n人偶農藝研習額外取得 {result["study_bonus_xp"]:,} XP。'
+            if result.get('tarot_bonus_xp'):
+                description += f'\n塔羅牌生活經驗加成額外取得 {result["tarot_bonus_xp"]:,} XP。'
             if result.get('accessory_material'):
                 description += f'\n額外獲得 {ITEMS["life:farming:star_fiber"].name} ×1！'
             if restart:
