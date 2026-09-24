@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import discord
+
 from core.rpg import RPGStore
 from core.rpg_battle import dump_battle, load_battle, Tactics
 from core.rpg_character import Characters, CharacterError
@@ -20,6 +22,23 @@ from tests.test_rpg_painted_maze_battle import participant
 
 
 class MazeLiveTests(unittest.IsolatedAsyncioTestCase):
+    async def test_join_syncs_thread_and_failure_restores_party(self):
+        room = dict(self.room, status='lobby', members=[1])
+        self.repo.save(room)
+        self.cog.characters = self.characters
+        thread = SimpleNamespace(add_user=AsyncMock(), send=AsyncMock())
+        member = SimpleNamespace(id=2, bot=False)
+        with patch.object(self.characters, 'snapshot', return_value={'level': 60}), \
+                patch.object(self.service, '_thread', return_value=thread):
+            joined = await self.service.change_member(room['id'], member)
+            self.assertEqual(joined['members'], [1, 2])
+            thread.add_user.assert_awaited_once_with(member)
+            thread.add_user.side_effect = discord.HTTPException(
+                SimpleNamespace(status=503, reason='Unavailable'), 'temporary failure')
+            with self.assertRaisesRegex(PaintedMazeError, '無法同步'):
+                await self.service.change_member(room['id'], SimpleNamespace(id=3, bot=False))
+        self.assertEqual(self.repo.get(room['id'])['members'], [1, 2])
+
     async def test_host_can_force_start_without_readiness(self):
         room = self.repo.get(self.room['id'])
         view = self.service.room_view(room)

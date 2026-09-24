@@ -7,7 +7,7 @@ import unittest
 from core.rpg import RPGStore, level_floor
 from core.rpg_character import (Characters, CharacterError, DYE_PRICE, EMBROIDERY_PRICE,
                                 GROWTH, JOBS, ITEMS,
-                                combat_from_stats, item_sell_price, item_sellable)
+                                combat_from_stats, equipment_tier, item_sell_price, item_sellable)
 from core.settings import RPGSettings, SettingsError
 
 
@@ -691,6 +691,23 @@ class CharacterTests(unittest.TestCase):
             self.characters.claim(1, 1)
             self.assertEqual(self.characters.claim(1, 1), [])
         self.assertEqual(len(self.characters.inventory(1, 1)), 8)
+
+    def test_t90_shop_equipment_requires_elite_level(self):
+        self.level(85)
+        self.characters.change_job(1, 1, '騎士')
+        key = '騎士:3:武器'
+        self.assertIsNone(ITEMS[key].required_level)
+        self.assertEqual(equipment_tier(ITEMS[key]), 90)
+        self.assertEqual(ITEMS[key].accuracy, 90)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_wallets VALUES (1,1,4000)')
+        with self.assertRaises(CharacterError):
+            self.characters.buy(1, 1, key)
+        self.level(90)
+        self.assertEqual(self.characters.snapshot(1, 1)['title'], '精銳騎士')
+        self.characters.buy(1, 1, key)
+        self.characters.equip(1, 1, key)
+        self.assertEqual(self.characters.snapshot(1, 1)['equipped']['武器'], key)
 
     def test_equipment_validation_and_unique_accessory(self):
         self.level(10)

@@ -65,7 +65,7 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertEqual(fighter.doll_support['name'], '測試人偶')
         self.assertTrue(any('測試料理' in line for line in battle.log))
 
-    def test_low_enrage_cannot_roll_t90_material_or_directed_memory(self):
+    def test_low_enrage_cannot_roll_t85_material_or_directed_memory(self):
         kinds = {kind for kind, _ in treasure_weights(99)}
         self.assertNotIn('crystal', kinds)
         self.assertNotIn('directed_memory', kinds)
@@ -88,8 +88,8 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertEqual(reroll_cost(6), {'fragment': 16, 'dust': 8, 'gold': 10500})
 
     def test_static_first_release_equipment_is_registered(self):
-        item = ITEMS[equipment_id('hiro', '僧侶', 'weapon', 90)]
-        self.assertEqual(item.required_level, 90)
+        item = ITEMS[equipment_id('hiro', '僧侶', 'weapon', 85)]
+        self.assertEqual(item.required_level, 85)
         self.assertEqual(item.combat, (0, 217, 0, 231))
         self.assertEqual(item.sell_price, 12000)
         self.assertEqual(ITEMS['witch_rest:ema:accessory'].embroidery_slots, 3)
@@ -151,8 +151,8 @@ class WitchRestRulesTests(unittest.TestCase):
         self.assertEqual(actual, player.stats['HP'])
         self.assertEqual(player.hp, 0)
 
-    def test_t80_and_t90_witch_weapons_and_suits_enable_their_effects(self):
-        for tier in (80, 90):
+    def test_t80_and_t85_witch_weapons_and_suits_enable_their_effects(self):
+        for tier in (80, 85):
             for witch_id in ('ema', 'hiro'):
                 participant = self.participant(attack=100)
                 participant['state']['equipped'] = {
@@ -681,11 +681,29 @@ class WitchRestStoreTests(unittest.TestCase):
         retry = self.rest.upgrade(1, 10, instance_id)
         self.assertEqual(result, retry)
         self.assertEqual(result['instance_id'], instance_id)
-        self.assertIn(':t90:', result['item_id'])
+        self.assertIn(':t85:', result['item_id'])
         rows = self.store.db.execute('''SELECT affix_id FROM rpg_instance_affixes
             WHERE instance_id=? ORDER BY affix_index''', (instance_id,)).fetchall()
         self.assertEqual(rows, [('witch:vitality:3',), ('witch:drain:3',)])
+        values = self.store.db.execute('''SELECT rolled_value FROM rpg_instance_affixes
+            WHERE instance_id=? ORDER BY affix_index''', (instance_id,)).fetchall()
+        self.assertEqual(values, [(self.rest._affix_value(result['item_id'], '騎士', 0, 'vitality', 3),), (3,)])
         self.assertEqual(self.quantity(10, 'witch_rest:ema:core'), 0)
+
+    def test_existing_t90_equipment_and_receipt_move_to_t85(self):
+        instance_id = self.equipment(tier=90, source='legacy-t90')
+        old_id = equipment_id('ema', '騎士', 'weapon', 90)
+        with self.store.db:
+            self.store.db.execute('INSERT INTO rpg_witch_rest_upgrade_receipts VALUES (?,?,?)',
+                                  (instance_id, 90, json.dumps({'instance_id': instance_id, 'item_id': old_id})))
+        WitchRestStore(self.store)
+        row = self.store.db.execute('SELECT item_id FROM rpg_equipment_instances WHERE instance_id=?',
+                                    (instance_id,)).fetchone()
+        self.assertEqual(row[0], equipment_id('ema', '騎士', 'weapon', 85))
+        receipt = self.store.db.execute('''SELECT target_tier,data FROM rpg_witch_rest_upgrade_receipts
+            WHERE instance_id=?''', (instance_id,)).fetchone()
+        self.assertEqual(receipt[0], 85)
+        self.assertEqual(json.loads(receipt[1])['item_id'], row[0])
 
     def test_practice_room_starts_without_fee_and_records_no_progress(self):
         room = self.rest.create_room(1, 10, 'ema', 99, practice=True, now=100)
@@ -772,8 +790,8 @@ class WitchRestStoreTests(unittest.TestCase):
         self.assertFalse(failed['success'])
         self.assertEqual(self.quantity(10, 'witch_rest:advanced_memory'), 1)
 
-    def test_t90_dismantle_returns_core_and_pages_but_no_crystal(self):
-        instance_id = self.equipment(tier=90, grades=(3, 4), source='dismantle')
+    def test_t85_dismantle_returns_core_and_pages_but_no_crystal(self):
+        instance_id = self.equipment(tier=85, grades=(3, 4), source='dismantle')
         result = self.rest.dismantle('dismantle-1', 1, 10, instance_id)
         retry = self.rest.dismantle('dismantle-1', 1, 10, instance_id)
         self.assertEqual(result, retry)

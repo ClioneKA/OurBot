@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 
 import discord
 from core.rpg import RPGStore
-from core.rpg_character import Characters, JOBS
+from core.rpg_character import Characters, ITEMS, JOBS
 from core.rpg_divination import Divinations
 from core.rpg_divination_view import DivinationView
 from core.rpg_item_use_view import ItemUseView
-from core.rpg_menu import AdventureView, FAVORITE_PAGES
+from core.rpg_menu import AdventureView, FAVORITE_PAGES, sorted_backpack_entries
 from core.rpg_help import HELP_TOPICS
 from core.rpg_painted_maze_rewards import PaintedMazeRewardStore
 from core.rpg_profile_view import ProfileCardView
@@ -20,6 +20,20 @@ from core.settings import RPGSettings
 
 
 class MenuTests(unittest.IsolatedAsyncioTestCase):
+    def test_backpack_sort_modes(self):
+        entries = [SimpleNamespace(item=ITEMS[key], item_id=key, instance_id=None,
+                                   quantity=quantity)
+                   for key, quantity in [('farming:wheat', 2), ('farming:potato', 8),
+                                         ('fishing:lake:common', 3), ('painting:balloon', 1)]]
+        self.assertEqual([entry.quantity for entry in sorted_backpack_entries(
+            entries, '數量多到少')], [8, 3, 2, 1])
+        self.assertEqual([entry.item_id for entry in sorted_backpack_entries(
+            entries, 'T 階高到低')][0], 'fishing:lake:common')
+        self.assertEqual([entry.item_id for entry in sorted_backpack_entries(
+            entries, 'T 階高到低')][-1], 'painting:balloon')
+        names = [entry.item.name for entry in sorted_backpack_entries(entries, '名稱 A→Z')]
+        self.assertEqual(names, sorted(names))
+
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

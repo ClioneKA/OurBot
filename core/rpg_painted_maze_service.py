@@ -241,18 +241,34 @@ class PaintedMazeService:
                 raise PaintedMazeError(ENTRY_CLOSED_NOTICE)
             from core.rpg_room_occupancy import occupied_room, room_lock
             level = self.cog.characters.snapshot(room['guild_id'], member.id)['level']
+            previous = room
             async with room_lock(self.cog):
                 if not leave and occupied_room(
                         self.cog, room['guild_id'], member.id, exclude=('maze', room_id)):
                     raise PaintedMazeError('你已在這個伺服器的另一個手動房間中。')
                 room = self.repo.change_member(room_id, member.id, level, leave=leave)
-            thread = await self._thread(room)
-            if thread:
+            try:
+                thread = await self._thread(room)
+            except discord.HTTPException as exc:
+                self.repo.save(previous)
+                raise PaintedMazeError('無法同步私人討論串，請再試一次。') from exc
+            if thread is None:
+                self.repo.save(previous)
+                raise PaintedMazeError('找不到私人討論串，請稍後再試。')
+            try:
                 if leave:
                     await thread.remove_user(member)
                 else:
                     await thread.add_user(member)
+            except discord.HTTPException as exc:
+                self.repo.save(previous)
+                raise PaintedMazeError('無法同步私人討論串，請再試一次。') from exc
+            if not leave:
+                try:
                     await thread.send(f'<@{member.id}> 進入了未完成的畫布。')
+                except discord.HTTPException:
+                    logger.warning('Painted maze thread entrance notice failed for room %s user %s',
+                                   room_id, member.id)
             return room
 
     async def begin(self, room_id, member):

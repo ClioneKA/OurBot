@@ -218,6 +218,11 @@ class PaintedMazeStore:
              json.dumps(room, ensure_ascii=False),
              *self._pending_flags(room), room['id']))
 
+    def save(self, room):
+        with self.db:
+            self._save(room)
+        return room
+
     def create(self, guild_id, host_id, entry_item, host_level, *, channel_id=None,
                now=None, seed=None, require_entry=True):
         if entry_item not in ENTRY_ROUTES:

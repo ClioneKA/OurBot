@@ -75,6 +75,9 @@ class AlchemyDollTests(unittest.TestCase):
         with patch.object(self.alchemy, 'life_skill', return_value={'work': 100}):
             self.assertEqual(self.alchemy.auto_cooking_candidates(raid, provisions),
                              [(10, ['farming:potato'] * 5)])
+            raid['source'] = 'divination'
+            self.assertEqual(self.alchemy.auto_cooking_candidates(raid, provisions),
+                             [(10, ['farming:potato'] * 5)])
             open_table[0] = True
             self.assertEqual(self.alchemy.auto_cooking_candidates(raid, provisions), [])
 
@@ -631,6 +634,12 @@ class AlchemyDollTests(unittest.TestCase):
         with self.store.db:
             self.store.db.execute('UPDATE rpg_alchemy_dolls SET fuel=76 '
                                   'WHERE guild_id=1 AND user_id=10')
+        fish = fishing.state(1, 10)['session']
+        crop = farming.state(1, 10)['sessions']['courtyard']
+        self.assertEqual(self.alchemy.fishing_notifications_due(
+            fishing, now=fish['ready_at']), fishing.notifications_due(now=fish['ready_at']))
+        self.assertEqual(self.alchemy.farming_notifications_due(
+            farming, now=crop['ready_at']), farming.notifications_due(now=crop['ready_at']))
         crop = farming.state(1, 10)['sessions']['courtyard']
         with self.assertRaisesRegex(CharacterError, '燃料不足'):
             self.alchemy.auto_farm(

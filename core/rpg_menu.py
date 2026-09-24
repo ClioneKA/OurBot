@@ -4,10 +4,35 @@ import asyncio
 import discord
 
 from core.rpg_help import HELP_TOPICS, guide_embed
-from core.rpg_character import CharacterError, ITEMS, JOBS, item_display_name, item_level, item_sell_price, item_sellable, item_text
+from core.rpg_character import CharacterError, ITEMS, JOBS, equipment_tier, item_display_name, item_level, item_sell_price, item_sellable, item_text
 
 
 BACKPACK_CATEGORIES = ('全部', '裝備', '料理素材', '製作材料', '換金道具', '釣竿')
+BACKPACK_SORTS = ('分類／名稱', '名稱 A→Z', '名稱 Z→A', 'T 階高到低', 'T 階低到高',
+                  '數量多到少', '數量少到多')
+
+
+def sorted_backpack_entries(entries, mode):
+    name = lambda entry: (entry.item.name, entry.instance_id or 0, entry.item_id)
+    if mode == '名稱 A→Z':
+        return sorted(entries, key=name)
+    if mode == '名稱 Z→A':
+        return sorted(entries, key=name, reverse=True)
+    if mode in ('T 階高到低', 'T 階低到高'):
+        from core.rpg_alchemy import material_profile
+        def tier(entry):
+            profile = material_profile(entry.item_id)
+            return equipment_tier(entry.item) or (profile[0] if profile else None)
+        def tier_key(entry):
+            value = tier(entry)
+            return (value is None,
+                    -(value or 0) if mode == 'T 階高到低' else value or 0,
+                    *name(entry))
+        return sorted(entries, key=tier_key)
+    if mode in ('數量多到少', '數量少到多'):
+        return sorted(entries, key=lambda entry: (
+            -entry.quantity if mode == '數量多到少' else entry.quantity, *name(entry)))
+    return sorted(entries, key=lambda entry: (entry.item.category, *name(entry)))
 
 # Keep this below Discord's 25-option select limit. Ten shortcuts use two rows
 # on the home view while leaving room for navigation and utilities.
@@ -296,6 +321,7 @@ class AdventureView(discord.ui.View):
         self.help_return = help_return
         self.navigation_history = ()
         self.category = '全部'
+        self.backpack_sort = BACKPACK_SORTS[0]
         self.closed = False
         self.lock = asyncio.Lock()
         self.rebuild()
@@ -356,18 +382,21 @@ class AdventureView(discord.ui.View):
             self.add_item(PanelSelect('category', row=0, placeholder='選擇背包分類', options=[
                 discord.SelectOption(label=category, value=category, default=category == self.category)
                 for category in BACKPACK_CATEGORIES]))
-            self.button('上一頁', 'previous', 1, self.index == 0)
-            self.button('下一頁', 'next', 1, self.index == self.pages - 1)
-            self.button('給予物品', 'give', 1)
-            self.button('使用道具', 'use_items', 1)
+            self.add_item(PanelSelect('backpack_sort', row=1, placeholder='選擇背包排序方式', options=[
+                discord.SelectOption(label=mode, value=mode, default=mode == self.backpack_sort)
+                for mode in BACKPACK_SORTS]))
+            self.button('上一頁', 'previous', 2, self.index == 0)
+            self.button('下一頁', 'next', 2, self.index == self.pages - 1)
+            self.button('給予物品', 'give', 2)
+            self.button('使用道具', 'use_items', 2)
         topic = {'character': 'growth', 'items': 'economy', 'jobs': 'growth',
                  'backpack': 'economy', 'life': 'gathering', 'travel': 'raids'}.get(self.page)
         if topic:
-            add_help(self, 2, topic, self.page)
+            add_help(self, 3 if self.page == 'backpack' else 2, topic, self.page)
         if self.page != 'home':
             parent, label = PARENT_PAGES.get(self.page, ('home', '返回主選單'))
-            add_back(self, 2, parent, label)
-        utility_row = 4 if self.page == 'home' else 2
+            add_back(self, 3 if self.page == 'backpack' else 2, parent, label)
+        utility_row = 4 if self.page == 'home' else 4 if self.page == 'backpack' else 2
         favorite_route = (f'help:{self.help_topic}' if self.page == 'help' else
                           f'backpack:{self.category}' if self.page == 'backpack' else self.page)
         if favorite_label(favorite_route):
@@ -392,6 +421,7 @@ class AdventureView(discord.ui.View):
             all_owned = chars.inventory_entries(self.guild_id, self.owner.id)
             owned = [entry for entry in all_owned
                      if self.category == '全部' or entry.item.category == self.category]
+            owned = sorted_backpack_entries(owned, self.backpack_sort)
             equipped = set(chars.snapshot(self.guild_id, self.owner.id)['equipped_instances'].values())
             lines = []
             for entry in owned[self.index * 10:(self.index + 1) * 10]:
@@ -404,7 +434,7 @@ class AdventureView(discord.ui.View):
                              f'{"【已裝備】" if entry.instance_id in equipped else ""}\n'
                              f'{requirement}｜{item_text(item)}'
                              + (f'｜收購 {sale} 金幣／件' if item_sellable(item) else '') + identity)
-            embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}',
+            embed = discord.Embed(title=f'安安大冒險｜背包 {self.index + 1}/{self.pages}・{self.category}｜{self.backpack_sort}',
                                   description='\n\n'.join(lines) or '目前沒有此類物品。', color=0x8B5CF6)
         elif self.page == 'life':
             embed = discord.Embed(title='安安大冒險｜生活', description=
@@ -491,6 +521,8 @@ class AdventureView(discord.ui.View):
                     if value != self.category:
                         remember_current_page(self)
                     self.category, self.index = value, 0
+                elif action == 'backpack_sort' and self.page == 'backpack' and value in BACKPACK_SORTS:
+                    self.backpack_sort, self.index = value, 0
             except CharacterError as exc:
                 notice = str(exc)
             self.rebuild()

@@ -48,7 +48,7 @@ BASE_COMBAT = {
         '弓兵': ((0, 170, 0, 0), (634, 49, 107, 0)),
         '僧侶': ((0, 177, 0, 188), (634, 0, 107, 152)),
     },
-    90: {
+    85: {
         '裝甲步兵': ((219, 276, 44, 0), (872, 46, 181, 0)),
         '騎士': ((416, 217, 95, 0), (998, 0, 227, 0)),
         '弓兵': ((0, 208, 0, 0), (769, 60, 128, 0)),
@@ -80,7 +80,7 @@ def _register_items():
         'witch_rest:fragment': Item('魔女殘片', '', '', 0, (0,) * 5, category='製作材料', description='魔女裝備詞條重鑄材料。'),
         'witch_rest:dust': Item('詞條重鑄粉塵', '', '', 0, (0,) * 5, category='製作材料', description='用於重鑄指定的一般詞條。'),
         'witch_rest:crystal_shard': Item('凝聚魔女結晶碎片', '', '', 0, (0,) * 5, category='製作材料', description='50 個可合成一顆凝聚魔女結晶。'),
-        'witch_rest:crystal': Item('凝聚魔女結晶', '', '', 0, (0,) * 5, category='製作材料', description='T80 魔女裝備昇階至 T90 的催化材料。'),
+        'witch_rest:crystal': Item('凝聚魔女結晶', '', '', 0, (0,) * 5, category='製作材料', description='T80 魔女裝備昇階至 T85 的催化材料。'),
         'witch_rest:advanced_memory': Item('高級詞條記憶', '', '', 0, (0,) * 5, category='製作材料', description='嘗試將指定詞條提高一級。', transferable=False),
         'witch_rest:memory_page': Item('高級詞條記憶殘頁', '', '', 0, (0,) * 5, category='製作材料', description='2 張可合成一個高級詞條記憶。'),
     }
@@ -95,7 +95,7 @@ def _register_items():
         ITEMS[f'witch_rest:{witch_id}:accessory'] = Item(
             witch.accessory, '飾品', '', 4, (0,) * 5, required_level=80,
             description=EFFECT_TEXT[witch_id]['accessory'], sell_price=10_000, embroidery_slots=3)
-        for tier in (80, 90):
+        for tier in (80, 85):
             for job, (_, weapon_name, suit_name) in JOBS.items():
                 for index, (slot, suffix) in enumerate((('weapon', weapon_name), ('suit', suit_name))):
                     chinese_slot = '武器' if slot == 'weapon' else '套裝'
@@ -105,6 +105,9 @@ def _register_items():
                         required_level=tier, speed=(15 if tier == 80 else 16) if slot == 'weapon' else 0,
                         accuracy=(80 if tier == 80 else 90) if slot == 'weapon' else 0,
                         description=EFFECT_TEXT[witch_id][slot], sell_price=10_000 if tier == 80 else 12_000)
+                    if tier == 85:
+                        # Historical rewards can still reference the old item ID.
+                        ITEMS[equipment_id(witch_id, job, slot, 90)] = ITEMS[equipment_id(witch_id, job, slot, 85)]
 
 
 _register_items()
@@ -260,6 +263,13 @@ class WitchRestStore:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_rest_upgrade_receipts (
                 instance_id INTEGER NOT NULL, target_tier INTEGER NOT NULL,
                 data TEXT NOT NULL, PRIMARY KEY(instance_id,target_tier))''')
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='rpg_equipment_instances'").fetchone():
+                self.db.execute('''UPDATE rpg_equipment_instances
+                    SET item_id=replace(item_id, ':t90:', ':t85:')
+                    WHERE item_id LIKE 'witch_rest:%:t90:%' ''')
+            self.db.execute('''UPDATE rpg_witch_rest_upgrade_receipts
+                SET target_tier=85, data=replace(data, ':t90:', ':t85:')
+                WHERE target_tier=90''')
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_witch_rest_reroll_receipts (
                 request_id TEXT PRIMARY KEY, instance_id INTEGER NOT NULL,
                 decided INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL)''')
@@ -607,6 +617,8 @@ class WitchRestStore:
     @staticmethod
     def _affix_value(item_id, job, index, kind, grade):
         tier = int(item_id.split(':')[2][1:])
+        if tier == 90:  # Historical reward or saved reroll preview.
+            tier = 85
         if index == 0:
             combat_index = ('vitality', 'assault', 'fortitude', 'prayer').index(kind)
             total = sum(piece[combat_index] for piece in BASE_COMBAT[tier][job])
@@ -692,7 +704,7 @@ class WitchRestStore:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             saved = self.db.execute('''SELECT data FROM rpg_witch_rest_upgrade_receipts
-                WHERE instance_id=? AND target_tier=90''', (instance_id,)).fetchone()
+                WHERE instance_id=? AND target_tier=85''', (instance_id,)).fetchone()
             if saved:
                 return json.loads(saved[0])
             row = self.db.execute('''SELECT item_id FROM rpg_equipment_instances
@@ -706,9 +718,9 @@ class WitchRestStore:
             self._take_item(guild_id, user_id, f'witch_rest:{witch_id}:core', 12)
             self._take_item(guild_id, user_id, 'witch_rest:crystal', 1)
             self._take_gold(guild_id, user_id, 20_000, 'witch_rest_upgrade', str(instance_id))
-            target = row[0].replace(':t80:', ':t90:')
+            target = row[0].replace(':t80:', ':t85:')
             if target not in ITEMS:
-                raise CharacterError('找不到對應的 T90 裝備定義。')
+                raise CharacterError('找不到對應的 T85 裝備定義。')
             self.db.execute('UPDATE rpg_equipment_instances SET item_id=? WHERE instance_id=?',
                             (target, instance_id))
             prefix = self.db.execute('''SELECT affix_id,effect_key FROM rpg_instance_affixes
@@ -718,12 +730,12 @@ class WitchRestStore:
                 job = next(name for name, data in JOBS.items() if data[0] == slug)
                 kind, grade = prefix[0].split(':')[1:]
                 combat_index = ('vitality', 'assault', 'fortitude', 'prayer').index(kind)
-                total = sum(piece[combat_index] for piece in BASE_COMBAT[90][job])
+                total = sum(piece[combat_index] for piece in BASE_COMBAT[85][job])
                 value = round(total / .375 * (1 + int(grade)) / 100)
                 self.db.execute('''UPDATE rpg_instance_affixes SET rolled_value=?
                     WHERE instance_id=? AND affix_index=0''', (value, instance_id))
             result = {'instance_id': instance_id, 'item_id': target, 'gold': 20_000}
-            self.db.execute('INSERT INTO rpg_witch_rest_upgrade_receipts VALUES (?,90,?)',
+            self.db.execute('INSERT INTO rpg_witch_rest_upgrade_receipts VALUES (?,85,?)',
                             (instance_id, json.dumps(result)))
             return result
 
@@ -801,7 +813,7 @@ class WitchRestStore:
             item_id, witch_id = row
             grades = [int(row[0].rsplit(':', 1)[1]) for row in self.db.execute(
                 'SELECT affix_id FROM rpg_instance_affixes WHERE instance_id=?', (instance_id,))]
-            cores = 8 if ':t90:' in item_id else 4
+            cores = 8 if ':t85:' in item_id else 4
             pages = sum(2 if grade == 4 else 1 if grade == 3 else 0 for grade in grades)
             add_owned_item(self.db, guild_id, user_id, f'witch_rest:{witch_id}:core', cores)
             if pages:

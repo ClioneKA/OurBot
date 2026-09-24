@@ -883,7 +883,7 @@ class AlchemyDolls:
     def auto_cooking_candidates(self, raid, provisions, now=None):
         now = time.time() if now is None else now
         pool = raid.get('pool')
-        if raid.get('source') not in (None, 'bounty') or pool not in ('regular', 'mid', 'high'):
+        if raid.get('source') not in (None, 'bounty', 'divination') or pool not in ('regular', 'mid', 'high'):
             return []
         result = []
         for user, raw_config in self.db.execute('SELECT user_id,life_config FROM rpg_alchemy_dolls '
@@ -957,13 +957,21 @@ class AlchemyDolls:
         from core.rpg_expeditions import is_doll_expedition_active
         return [row for row in fishing.notifications_due(now)
                 if (not self.automates_fishing(row[0], row[1], row[3])
+                    or not self.can_automate_life(row[0], row[1])
                     or is_doll_expedition_active(self.db, row[0], row[1], now))]
 
     def farming_notifications_due(self, farming, now=None):
         from core.rpg_expeditions import is_doll_expedition_active
         return [row for row in farming.notifications_due(now)
                 if (not self.automates_farming(row[0], row[1], row[2])
+                    or not self.can_automate_life(row[0], row[1])
                     or is_doll_expedition_active(self.db, row[0], row[1], now))]
+
+    def can_automate_life(self, guild, user):
+        row = self.db.execute('''SELECT active_body,fuel FROM rpg_alchemy_dolls
+            WHERE guild_id=? AND user_id=?''', (guild, user)).fetchone()
+        return bool(row and row[0] and
+                    row[1] >= operation_fuel_cost(json.loads(row[0])))
 
     def auto_fishing_due(self, now=None):
         now = time.time() if now is None else now

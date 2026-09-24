@@ -266,7 +266,7 @@ class WitchRestWorkshopView(discord.ui.View):
         self.button('記憶強化後綴', 'improve:1', 1)
         self.button('指定前綴', 'direct:0', 2)
         self.button('指定後綴', 'direct:1', 2)
-        self.button('昇階 T90', 'upgrade', 2, discord.ButtonStyle.primary)
+        self.button('昇階 T85', 'upgrade', 2, discord.ButtonStyle.primary)
         self.button('分解', 'dismantle', 2, discord.ButtonStyle.danger)
         for label, action in (('合成魔女結晶', 'crystal'), ('合成高級記憶', 'memory'),
                               ('關閉', 'close')):
@@ -304,7 +304,7 @@ class WitchRestWorkshopView(discord.ui.View):
                                    f'{costs[1]["fragment"]}/{costs[1]["dust"]}/{costs[1]["gold"]:,}G\n'
                                    f'　記憶強化：{improve_text(suffix)}'))
             if ':t80:' in item['item_id']:
-                embed.add_field(name='T90 昇階費用', inline=False,
+                embed.add_field(name='T85 昇階費用', inline=False,
                                 value='同魔女魔力核心 ×12、凝聚魔女結晶 ×1、20,000G')
             _, _, _, slug, slot = item['item_id'].split(':')
             job = next(name for name, data in JOBS.items() if data[0] == slug)
@@ -342,12 +342,12 @@ class WitchRestWorkshopView(discord.ui.View):
                 return
             if action == 'dismantle':
                 item = self.item()
-                cores = 8 if ':t90:' in item['item_id'] else 4
+                cores = 8 if ':t85:' in item['item_id'] else 4
                 grades = [int(affix[1].rsplit(':', 1)[1]) for affix in item['affixes']]
                 pages = sum(2 if grade == 4 else 1 if grade == 3 else 0 for grade in grades)
                 await interaction.response.edit_message(
                     embed=self.embed(f'分解後無法復原；將取得魔力核心 ×{cores}、'
-                                     f'記憶殘頁 ×{pages}。T90 不返還魔女結晶。'),
+                                     f'記憶殘頁 ×{pages}。T85 不返還魔女結晶。'),
                     view=DismantleConfirmView(self))
                 return
             try:
