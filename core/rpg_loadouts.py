@@ -140,7 +140,7 @@ class Loadouts:
         raw_rules = data.get('rules')
         if not isinstance(raw_rules, list) or len(raw_rules) != 3:
             raise CharacterError('配置中的技能策略資料不完整。')
-        available_count = len(unlocked_skills(job, level))
+        available_count = len(unlocked_skills(job, level, self.characters.settings.elite_level))
         rules = []
         for raw in raw_rules:
             if not isinstance(raw, dict):

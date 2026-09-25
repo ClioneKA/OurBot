@@ -14,6 +14,19 @@ from core.settings import RPGSettings
 
 
 class SkillViewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_elite_skill_can_be_equipped_and_hp_condition_is_single_choice(self):
+        self.store.award_voice([(1, 1, level_floor(90))])
+        self.characters.change_job(1, 1, '僧侶')
+        self.view.job = '僧侶'
+        self.view.rebuild()
+        conditions = {option.value for option in self.view.children[2].options}
+        self.assertIn('self_hp_lte', conditions)
+        self.assertIn('ally_hp_lte', conditions)
+        self.assertFalse(conditions & {'self40', 'self60', 'ally50', 'ally70', 'ally80'})
+        await self.view.handle(self.interaction, 'equip', '8')
+        rule = self.view.current()
+        self.assertEqual(rule_skill('僧侶', rule).name, '晨禱祝福')
+
     async def test_basic_target_saved_separately_and_validated(self):
         rules = self.tactics.rules(1, 1, '民兵')
         await self.view.handle(self.interaction, 'slot', 'basic')
@@ -48,16 +61,16 @@ class SkillViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_controls_save_immediately_and_preserve_other_panel_changes(self):
         await self.view.handle(self.interaction, 'slot', '2')
         await self.view.handle(self.interaction, 'priority', '1')
-        await self.view.handle(self.interaction, 'condition_value', ('self40', 35))
+        await self.view.handle(self.interaction, 'condition_value', ('self_hp_lte', 35))
         await self.view.handle(self.interaction, 'target', 'self')
         await self.view.handle(self.interaction, 'toggle')
         rule = self.view.current()
-        self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (1, 'self40', 'self', False))
+        self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (1, 'self_hp_lte', 'self', False))
         self.assertEqual(rule.condition_value, 35)
-        self.tactics.configure(1, 1, '民兵', 2, 2, False, 'ally50', 'lowest')
+        self.tactics.configure(1, 1, '民兵', 2, 2, False, 'ally_hp_lte', 'lowest')
         await self.view.handle(self.interaction, 'toggle')
         rule = self.view.current()
-        self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (2, 'ally50', 'lowest', True))
+        self.assertEqual((rule.priority, rule.condition, rule.target, rule.enabled), (2, 'ally_hp_lte', 'lowest', True))
         self.assertEqual(rule.condition_value, 50)
         self.assertEqual(len(self.view.to_components()), 5)
 

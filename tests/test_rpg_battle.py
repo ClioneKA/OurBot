@@ -372,7 +372,8 @@ class BattleTests(unittest.TestCase):
     def test_preparation_is_a_visible_data_driven_skill_keyword(self):
         preparation = {skill.name for skills in SKILLS.values() for skill in skills
                        if skill.timing == PREPARATION_TIMING}
-        self.assertEqual(preparation, {'防禦', '破甲', '攻守架勢', '挑釁反擊', '護衛', '祝福'})
+        self.assertEqual(preparation, {'防禦', '破甲', '攻守架勢', '戰線重整',
+                                       '挑釁反擊', '護衛', '守望壁壘', '祝福', '晨禱祝福'})
         self.assertTrue(skill_description(SKILLS['騎士'][0]).startswith('【準備】'))
         self.assertFalse(skill_description(SKILLS['僧侶'][0]).startswith('【準備】'))
 

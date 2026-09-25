@@ -41,12 +41,54 @@ class ProgressionTests(unittest.TestCase):
         with self.assertRaises(CharacterError):
             self.tactics.equip(1, 1, '民兵', 1, 4)
 
+    def test_elite_skills_unlock_at_configured_stage_and_keep_three_slots(self):
+        elite = Tactics(self.store, elite_level=95)
+        self.store.award_voice([(1, 1, level_floor(95) - 1)])
+        for job in ('裝甲步兵', '騎士', '弓兵', '僧侶'):
+            self.assertEqual(len(elite.available(1, 1, job)), 5)
+            with self.assertRaises(CharacterError):
+                elite.equip(1, 1, job, 1, 6)
+        self.store.award_voice([(1, 1, 1)])
+        for job in ('裝甲步兵', '騎士', '弓兵', '僧侶'):
+            self.assertEqual(len(elite.available(1, 1, job)), 8)
+            elite.equip(1, 1, job, 1, 6)
+            elite.equip(1, 1, job, 2, 7)
+            elite.equip(1, 1, job, 3, 8)
+            self.assertEqual([rule_skill(job, rule).name for rule in elite.rules(1, 1, job)],
+                             [skill.name for skill in unlocked_skills(job, 95, 95)[5:]])
+            self.assertEqual(len(elite.rules(1, 1, job)), 3)
+
+    def test_hp_conditions_share_one_rule_and_keep_skill_defaults(self):
+        self.store.award_voice([(1, 1, level_floor(90))])
+        for job, skill_id, expected in (('裝甲步兵', 6, ('self_hp_lte', 60)),
+                                        ('騎士', 6, ('ally_hp_lte', 70)),
+                                        ('騎士', 8, ('ally_hp_lte', 70)),
+                                        ('僧侶', 7, ('ally_hp_lte', 80))):
+            self.tactics.equip(1, 1, job, 1, skill_id)
+            rule = next(r for r in self.tactics.rules(1, 1, job) if r.slot == 1)
+            self.assertEqual((rule.condition, rule.condition_value), expected)
+            self.tactics.configure(1, 1, job, 1, 1, True, rule.condition, rule.target, 37)
+            self.assertEqual(self.tactics.rules(1, 1, job)[0].condition_value, 37)
+            self.tactics.configure(1, 1, job, 1, 1, True, 'always', rule.target)
+            self.tactics.configure(1, 1, job, 1, 1, True, rule.condition, rule.target)
+            self.assertEqual(self.tactics.rules(1, 1, job)[0].condition_value, expected[1])
+
+    def test_legacy_hp_conditions_preserve_custom_thresholds(self):
+        for slot, condition, threshold in ((1, 'self60', 57), (2, 'ally70', 63),
+                                            (3, 'ally80', 76)):
+            with self.store.db:
+                self.store.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?,?,?,?,?,?,?,?,?,?)',
+                                      (1, 1, '僧侶', slot, slot, 1, condition, 'lowest', slot, threshold))
+        rules = self.tactics.rules(1, 1, '僧侶')
+        self.assertEqual([(r.condition, r.condition_value) for r in rules],
+                         [('self_hp_lte', 57), ('ally_hp_lte', 63), ('ally_hp_lte', 76)])
+
     def test_replacement_persistence_priority_and_isolation(self):
         self.store.award_voice([(1, 1, level_floor(20))])
         self.tactics.configure(1, 1, '僧侶', 3, 1, False, 'ally_debuff', 'debuffed')
         self.tactics.equip(1, 1, '僧侶', 3, 5)
         rules = Tactics(self.store).rules(1, 1, '僧侶')
-        self.assertEqual(rules[0], Rule(3, 1, False, 'ally50', 'lowest', 5, 50))
+        self.assertEqual(rules[0], Rule(3, 1, False, 'ally_hp_lte', 'lowest', 5, 50))
         self.tactics.configure(1, 1, '僧侶', 3, 2, True, 'always', 'self')
         rules = self.tactics.rules(1, 1, '僧侶')
         self.assertEqual(rules[1], Rule(3, 2, True, 'always', 'self', 5))
@@ -102,7 +144,7 @@ class ProgressionTests(unittest.TestCase):
                                      'PRIMARY KEY (guild_id, user_id, job, slot))')
                     store.db.execute("INSERT INTO rpg_tactics VALUES (1, 1, '弓兵', 1, 1, 0, 'self40', 'strongest')")
                 tactics = Tactics(store)
-                self.assertEqual(tactics.rules(1, 1, '弓兵')[0], Rule(1, 1, False, 'self40', 'strongest', None, 40))
+                self.assertEqual(tactics.rules(1, 1, '弓兵')[0], Rule(1, 1, False, 'self_hp_lte', 'strongest', None, 40))
                 self.assertEqual(len(Tactics(store).rules(1, 1, '弓兵')), 3)
             finally:
                 store.close()

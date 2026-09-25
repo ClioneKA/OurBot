@@ -9,9 +9,15 @@ from core.rpg import level_for
 from core import rpg_maze_traits as maze_traits
 
 
-CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 指定比例',
+CONDITIONS = {'always': '可用就施放',
+              'self_hp_lte': '自身 HP ≤ 指定比例',
+              'ally_hp_lte': '隊伍有人 HP ≤ 指定比例',
+              'self40': '自身 HP ≤ 指定比例',
+              'self60': '自身 HP ≤ 指定比例',
               'ally50': '隊伍有人 HP ≤ 指定比例', 'allies_injured': '受傷隊友數量 ≥ 指定人數',
+              'ally70': '隊伍有人 HP ≤ 指定比例', 'ally80': '隊伍有人 HP ≤ 指定比例',
               'enemies3': '存活敵人數量 ≥ 指定數量',
+              'enemies2': '存活敵人數量 ≥ 指定數量',
               'enemy_hp_lte': '任一敵人 HP ≤ 指定比例',
               'enemy_hp_gte': '任一敵人 HP ≥ 指定比例',
               'round_gte': '戰鬥回合 ≥ 指定回合',
@@ -21,12 +27,24 @@ CONDITIONS = {'always': '可用就施放', 'self40': '自身 HP ≤ 指定比例
               'enemy_broken': '敵人處於破甲',
               'enemy_add': '非首領敵人存活',
               'ally_debuff_stacks': '隊友疊層負面狀態 ≥ 指定層數',
-              'mechanic_target': '機制目標出現'}
+              'mechanic_target': '機制目標出現',
+              'own_erosion': '敵人有自己施加的毒箭侵蝕'}
+LEGACY_HP_CONDITIONS = {'self40': 'self_hp_lte', 'self60': 'self_hp_lte',
+                        'ally50': 'ally_hp_lte', 'ally70': 'ally_hp_lte',
+                        'ally80': 'ally_hp_lte'}
+VISIBLE_CONDITIONS = {key: label for key, label in CONDITIONS.items()
+                      if key not in LEGACY_HP_CONDITIONS}
 CONDITION_LIMITS = {
+    'self_hp_lte': (1, 100, 40, '%'),
+    'ally_hp_lte': (1, 100, 50, '%'),
     'self40': (1, 100, 40, '%'),
+    'self60': (1, 100, 60, '%'),
     'ally50': (1, 100, 50, '%'),
+    'ally70': (1, 100, 70, '%'),
+    'ally80': (1, 100, 80, '%'),
     'allies_injured': (1, 20, 2, ' 人'),
     'enemies3': (1, 3, 3, ' 隻'),
+    'enemies2': (1, 3, 2, ' 隻'),
     'enemy_hp_lte': (1, 100, 30, '%'),
     'enemy_hp_gte': (1, 100, 70, '%'),
     'round_gte': (1, 30, 5, ' 回合'),
@@ -95,8 +113,10 @@ PASSIVES = {
 }
 
 DAMAGE_EFFECTS = {'strike', 'break', 'cleave', 'crush', 'knight_charge', 'shield_bash',
-                  'double', 'triple', 'area', 'hindering_shot', 'poison_arrow', 'holy_light'}
-HEALING_EFFECTS = {'heal', 'group_heal', 'holy_light'}
+                  'double', 'triple', 'area', 'hindering_shot', 'poison_arrow', 'holy_light',
+                  'blood_counter', 'formation_cleave', 'adaptive_charge', 'judgement_charge',
+                  'double_poison', 'plague_volley', 'erosion_arrow', 'chorus_light'}
+HEALING_EFFECTS = {'heal', 'group_heal', 'holy_light', 'grace_wave', 'chorus_light'}
 HYMN_HEALING_EFFECTS = {'heal', 'group_heal'}
 
 
@@ -120,25 +140,37 @@ SKILLS = {
                  Skill('攻守架勢', 'stance', 4, '自身減傷 35%、攻擊提升 20%，持續至下一回合結束', 'self40',
                        timing=PREPARATION_TIMING),
                  Skill('橫掃斬', 'cleave', 5, '對全體敵人造成 120% 傷害'),
-                 Skill('重裝猛擊', 'crush', 5, '對單一敵人造成 220% 傷害')),
+                 Skill('重裝猛擊', 'crush', 5, '對單一敵人造成 220% 傷害'),
+                 Skill('戰線重整', 'battle_reset', 5, '淨化自身一項負面狀態並恢復 8% 最大 HP', 'self60', timing=PREPARATION_TIMING),
+                 Skill('浴血回斬', 'blood_counter', 5, '造成 210% 傷害；命中且自身 HP ≤ 60% 時恢復 8% 最大 HP'),
+                 Skill('裂陣斬', 'formation_cleave', 6, '全體敵人各受 130% 傷害；指定目標命中後破甲', 'enemies2')),
     '騎士': (Skill('挑釁反擊', 'taunt', 4, '吸引敵方單體攻擊；受到直接攻擊後對攻擊者造成 100% 傷害，持續至下一回合結束',
                    timing=PREPARATION_TIMING),
              Skill('護衛', 'guard', 4, '全隊防禦增加施放者自身防禦的 100%，並免疫可淨化負面狀態，持續至下一回合結束', 'ally50',
                    timing=PREPARATION_TIMING),
              Skill('騎士衝鋒', 'knight_charge', 4, '以自身最大 HP 造成 50% 單體傷害'),
              Skill('盾擊', 'shield_bash', 5, '造成 120% 傷害，命中後打斷蓄力，並有 50% 機率暈眩至下一回合結束（跳過一次行動）'),
-             Skill('重整旗鼓', 'rally', 5, '恢復自身最大 HP 的 50%', 'self40')),
+             Skill('重整旗鼓', 'rally', 5, '恢復自身最大 HP 的 50%', 'self40'),
+             Skill('守望壁壘', 'watch_bulwark', 6, '全隊防禦 +60%、獲得 8% 最大 HP 護盾並免疫負面狀態', 'ally70', timing=PREPARATION_TIMING),
+             Skill('變式盾衝', 'adaptive_charge', 4, '以自身最大 HP 造成 50% 傷害；命中時交替視為盾擊與衝鋒'),
+             Skill('制裁衝鋒', 'judgement_charge', 6, '以自身最大 HP 造成 60% 傷害；命中後治療最受傷隊友', 'ally70')),
     '弓兵': (Skill('連射', 'double', 3, '兩次 90% 傷害，各自判定命中'),
              Skill('妨害射擊', 'hindering_shot', 4, '造成 120% 傷害，命中後打斷蓄力'),
              Skill('箭雨', 'area', 5, '對所有敵人各造成三次 40% 傷害', 'enemies3'),
              Skill('三連矢', 'triple', 5, '對單一敵人連射三次，每次 85% 傷害，分別判定命中'),
-             Skill('毒箭', 'poison_arrow', 4, '造成 110% 傷害；命中後於後續兩回合各造成 70% 攻擊的無視防禦傷害，每支毒箭分開計算')),
+             Skill('毒箭', 'poison_arrow', 4, '造成 110% 傷害；命中後於後續兩回合各造成 70% 攻擊的無視防禦傷害，每支毒箭分開計算'),
+             Skill('雙重毒箭', 'double_poison', 5, '連射兩次 75% 傷害；每次命中附加兩回合 45% 攻擊的侵蝕'),
+             Skill('疫羽散射', 'plague_volley', 6, '全體敵人各受三次 30% 傷害；命中者附加兩回合 35% 攻擊的侵蝕', 'enemies2'),
+             Skill('催蝕箭', 'erosion_arrow', 5, '造成 200% 傷害；命中後提前結算自己最早的一次侵蝕', 'own_erosion')),
     '僧侶': (Skill('治療', 'heal', 3, '恢復一名隊友生命', 'ally50'),
              Skill('祝福', 'bless', 4, '提升一名隊友攻擊 40%，持續至施放後第 2 回合結束（共 3 回合）',
                    timing=PREPARATION_TIMING),
              Skill('淨化', 'cleanse', 3, '移除一名隊友的中毒、毒箭侵蝕、破甲、暈眩、虛弱與腐敗', 'ally_debuff'),
              Skill('群體治療', 'group_heal', 5, '恢復全體存活隊友各 65% 治療量的 HP', 'ally50'),
-             Skill('聖光', 'holy_light', 5, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50')),
+             Skill('聖光', 'holy_light', 5, '對全體敵人造成 90% 傷害，並恢復一名隊友 70% 治療量的 HP', 'ally50'),
+             Skill('恩典波紋', 'grace_wave', 6, '全隊恢復 50% 治療量；下回合再恢復 10%', 'allies_injured'),
+             Skill('合聲聖光', 'chorus_light', 5, '全體敵人各受 90% 傷害；最受傷隊友恢復 70% 治療量', 'ally80'),
+             Skill('晨禱祝福', 'morning_bless', 6, '全隊攻擊 +20%，持續至下一回合結束', timing=PREPARATION_TIMING)),
 }
 DOLL_SKILL_SPECS = {
     'power_strike': ('動力重擊', 'strike', 3, '造成 160% 傷害', 'always', 'normal'),
@@ -170,16 +202,21 @@ for key, spec in DOLL_SKILL_SPECS.items():
                                   condition, timing, potency, cleanse_count, False))
 SKILLS['煉金人偶'] = tuple(_doll_skills)
 ALLY_EFFECTS = {'heal', 'guard', 'bless', 'cleanse', 'group_heal', 'holy_light',
+                'battle_reset', 'watch_bulwark', 'grace_wave', 'chorus_light', 'morning_bless',
                 'doll_counter', 'doll_rally'}
 FIXED_TARGETS = {'guard': '全隊', 'group_heal': '全隊', 'area': '全體敵人',
-                 'cleave': '全體敵人', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
+                 'cleave': '全體敵人', 'plague_volley': '全體敵人',
+                 'watch_bulwark': '全隊', 'grace_wave': '全隊', 'morning_bless': '全隊',
+                 'battle_reset': '自己', 'stance': '自己', 'taunt': '自己', 'rally': '自己'}
 # Defense is a role property of the target. Monsters and non-tank professions
 # retain the original coefficient.
 DEFENSE_EFFECTIVENESS = {'裝甲步兵': 0.40, '騎士': 0.45}
 
 
-def unlocked_skills(job, level):
-    return SKILLS[job] if level >= 20 else SKILLS[job][:3]
+def unlocked_skills(job, level, elite_level=90):
+    if job in PASSIVES and level >= elite_level:
+        return SKILLS[job]
+    return SKILLS[job][:5] if level >= 20 else SKILLS[job][:3]
 
 
 def rule_skill(job, rule):
@@ -194,7 +231,17 @@ def default_target(skill):
         return 'debuffed'
     if skill.effect == 'bless':
         return 'strongest'
+    if skill.effect == 'formation_cleave':
+        return 'boss'
+    if skill.effect == 'battle_reset':
+        return 'self'
     return 'lowest'
+
+
+def default_condition_threshold(skill, selected_condition):
+    if LEGACY_HP_CONDITIONS.get(skill.condition, skill.condition) == selected_condition:
+        return condition_value(skill.condition)
+    return condition_value(selected_condition)
 
 
 def condition_value(condition, value=None):
@@ -214,10 +261,16 @@ def condition_text(condition, value=None):
     threshold = condition_value(condition, value)
     suffix = CONDITION_LIMITS[condition][3]
     labels = {
+        'self_hp_lte': f'自身 HP ≤ {threshold}{suffix}',
+        'ally_hp_lte': f'隊伍有人 HP ≤ {threshold}{suffix}',
         'self40': f'自身 HP ≤ {threshold}{suffix}',
+        'self60': f'自身 HP ≤ {threshold}{suffix}',
         'ally50': f'隊伍有人 HP ≤ {threshold}{suffix}',
+        'ally70': f'隊伍有人 HP ≤ {threshold}{suffix}',
+        'ally80': f'隊伍有人 HP ≤ {threshold}{suffix}',
         'allies_injured': f'受傷隊友數量 ≥ {threshold}{suffix}',
         'enemies3': f'存活敵人數量 ≥ {threshold}{suffix}',
+        'enemies2': f'存活敵人數量 ≥ {threshold}{suffix}',
         'enemy_hp_lte': f'任一敵人 HP ≤ {threshold}{suffix}',
         'enemy_hp_gte': f'任一敵人 HP ≥ {threshold}{suffix}',
         'round_gte': f'戰鬥回合 ≥ {threshold}',
@@ -238,14 +291,16 @@ class Rule:
 
 
 def default_rules(job):
-    return [Rule(i, i, True, skill.condition, default_target(skill),
+    return [Rule(i, i, True, LEGACY_HP_CONDITIONS.get(skill.condition, skill.condition),
+                 default_target(skill),
                  condition_value=condition_value(skill.condition))
             for i, skill in enumerate(SKILLS[job][:3], 1)]
 
 
 class Tactics:
-    def __init__(self, store):
+    def __init__(self, store, elite_level=90):
         self.store = store
+        self.elite_level = elite_level
         self.db = store.db
         with self.db:
             self.db.execute('''CREATE TABLE IF NOT EXISTS rpg_tactics (
@@ -277,7 +332,7 @@ class Tactics:
                             (guild, user, job, target))
 
     def available(self, guild, user, job):
-        return unlocked_skills(job, level_for(self.store.xp(guild, user)))
+        return unlocked_skills(job, level_for(self.store.xp(guild, user)), self.elite_level)
 
     def available_passives(self, guild, user, job):
         if job not in PASSIVES or level_for(self.store.xp(guild, user)) < 50:
@@ -321,6 +376,10 @@ class Tactics:
                         and legacy.target == 'self'):
                     saved[slot] = Rule(legacy.slot, legacy.priority, legacy.enabled,
                                        'always', 'lowest', legacy.skill_id, None)
+        saved = {slot: Rule(rule.slot, rule.priority, rule.enabled,
+                            LEGACY_HP_CONDITIONS.get(rule.condition, rule.condition),
+                            rule.target, rule.skill_id, rule.condition_value)
+                 for slot, rule in saved.items()}
         return sorted([saved.get(rule.slot, rule) for rule in default_rules(job)], key=lambda rule: rule.priority)
 
     def configure(self, guild, user, job, slot, priority, enabled, condition, target, threshold=None):
@@ -330,9 +389,11 @@ class Tactics:
             raise CharacterError('無效的自動施放設定。')
         rules = self.rules(guild, user, job)
         current = next(rule for rule in rules if rule.slot == slot)
-        threshold = condition_value(condition,
-                                    current.condition_value if threshold is None and condition == current.condition else threshold)
         skill = rule_skill(job, current)
+        if threshold is None:
+            threshold = (current.condition_value if condition == current.condition else
+                         default_condition_threshold(skill, condition))
+        threshold = condition_value(condition, threshold)
         if target == 'self' and skill.effect not in ALLY_EFFECTS | {'stance', 'taunt', 'rally'}:
             raise CharacterError('攻擊技能不能以自己為目標。')
         if target == 'debuffed' and skill.effect != 'cleanse':
@@ -358,7 +419,7 @@ class Tactics:
         if job not in SKILLS or slot not in (1, 2, 3):
             raise CharacterError('無效的職業或技能槽。')
         if type(skill_id) is not int or not 1 <= skill_id <= len(self.available(guild, user, job)):
-            raise CharacterError('技能尚未解鎖；進階技能需要 Lv.20。')
+            raise CharacterError(f'技能尚未解鎖；進階技能需要 Lv.20，精銳技能需要 Lv.{self.elite_level}。')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             rules = self.rules(guild, user, job)
@@ -369,7 +430,8 @@ class Tactics:
                 raise CharacterError('此技能已裝備於其他格，請先替換該格技能。')
             skill = SKILLS[job][skill_id - 1]
             self.db.execute('INSERT OR REPLACE INTO rpg_tactics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                            (guild, user, job, slot, current.priority, int(current.enabled), skill.condition,
+                            (guild, user, job, slot, current.priority, int(current.enabled),
+                             LEGACY_HP_CONDITIONS.get(skill.condition, skill.condition),
                              default_target(skill), skill_id, condition_value(skill.condition)))
 
 
@@ -944,7 +1006,7 @@ class Battle:
                                    passive_trigger=False)
                 self.log.append(f'{actor.name} 消耗 {revenge} 層復仇，傷害提高 {revenge * 12}%、恢復 {amount} HP。')
 
-        if self.passive(actor, '騎士', 2) and effect == 'guard' and state.get('watch', 0) >= 2:
+        if self.passive(actor, '騎士', 2) and effect in ('guard', 'watch_bulwark') and state.get('watch', 0) >= 2:
             state['watch'] = 0
             context['empowered_guard'] = True
             for ally in self.living(actor.team):
@@ -954,7 +1016,10 @@ class Battle:
                 ally.effect_sources['watch_guard'] = actor.user_id
                 self.log.append(f'{ally.name} 受到守望誓約保護，恢復 {amount} HP 並獲得 10% 減傷。')
 
-        if self.passive(actor, '騎士', 3) and effect in ('knight_charge', 'shield_bash'):
+        if effect == 'adaptive_charge':
+            context['lance_effect'] = ('knight_charge' if state.get('lance_last') == 'shield_bash'
+                                       else 'shield_bash')
+        if self.passive(actor, '騎士', 3) and effect in ('knight_charge', 'shield_bash', 'adaptive_charge', 'judgement_charge'):
             layers = min(5, state.get('lance_stacks', 0))
             context['multiplier'] *= 1 + layers * .1
 
@@ -965,7 +1030,7 @@ class Battle:
             self.log.append(f'{actor.name} 消耗 3 層洞察，本次傷害行動必定命中且傷害提高 40%！')
 
         if self.passive(actor, '僧侶', 3):
-            if effect == 'holy_light':
+            if effect in ('holy_light', 'chorus_light'):
                 discipline = state.pop('discipline', 0)
                 radiance = state.pop('radiance', 0)
                 context['multiplier'] *= 1 + discipline * .15
@@ -1069,12 +1134,16 @@ class Battle:
             if skill.timing == PREPARATION_TIMING:
                 state['guard_stance'] = min(2, state.get('guard_stance', 0) + 1)
         if (self.passive(actor, '騎士', 3) and context['hits']
-                and effect in ('shield_bash', 'knight_charge')):
+                and effect in ('shield_bash', 'knight_charge', 'adaptive_charge', 'judgement_charge')):
+            virtual_effect = (context['lance_effect'] if effect == 'adaptive_charge' else
+                              'knight_charge' if effect == 'judgement_charge' else effect)
             last = state.get('lance_last')
-            if last is not None and last != effect:
+            if last is not None and last != virtual_effect:
                 state['lance_stacks'] = min(5, state.get('lance_stacks', 0) + 1)
                 self.log.append(f'{actor.name} 的槍盾連攜增加至 {state["lance_stacks"]}/5 層。')
-            state['lance_last'] = effect
+            if effect == 'adaptive_charge':
+                state['lance_stacks'] = min(5, state.get('lance_stacks', 0) + 1)
+            state['lance_last'] = virtual_effect
 
         if self.passive(actor, '僧侶', 1) and effect in HEALING_EFFECTS and context['heals']:
             grace = state.get('grace', 0)
@@ -1097,9 +1166,9 @@ class Battle:
         if self.passive(actor, '僧侶', 2) and state.get('hymn_procs', 0) < 3:
             # Drop obsolete cleansing verses from pre-change battle snapshots.
             verses = set(state.get('hymn_verses', [])) & {'mercy', 'courage', 'offense'}
-            if effect in HYMN_HEALING_EFFECTS and context['heals']:
+            if (effect in HYMN_HEALING_EFFECTS or effect == 'chorus_light') and context['heals']:
                 verses.add('mercy')
-            if effect == 'bless' and context.get('hymn_bless'):
+            if effect in ('bless', 'morning_bless') and context.get('hymn_bless'):
                 verses.add('courage')
             if context['damaging']:
                 verses.add('offense')
@@ -1176,13 +1245,13 @@ class Battle:
         target.combat_stats['healing_received'] += amount
         return amount
 
-    def _gain_watch(self, protected):
+    def _gain_watch(self, protected, source_effect='guard'):
         for knight in self.living(protected.team):
             source_watch = knight.status_stacks.get('crystal_guardian_oath', 0)
             if (knight is protected or not (self.passive(knight, '騎士', 2) or source_watch)
-                    or not protected.has('guard', self.round)):
+                    or not protected.has(source_effect, self.round)):
                 continue
-            source_id = protected.effect_sources.get('guard')
+            source_id = protected.effect_sources.get(source_effect)
             if source_id is not None and source_id != knight.user_id:
                 continue
             state = knight.passive_state
@@ -1227,6 +1296,7 @@ class Battle:
             state['revenge'] = min(3, state.get('revenge', 0) + 1)
             self.log.append(f'{target.name} 的復仇增加至 {state["revenge"]}/3 層。')
         self._gain_watch(target)
+        self._gain_watch(target, 'watch_defense')
 
     def maybe_eat(self, target):
         if (target.team != 0 or target.food_used or not target.food_name or target.hp <= 0
@@ -1258,6 +1328,17 @@ class Battle:
                 requested -= absorbed
                 if absorbed:
                     self.log.append(f'{victim.name} 的底色護幕吸收 {absorbed} 傷害。')
+            if direct and victim.has('watch_shield', self.round):
+                shield = victim.status_stacks.get('watch_shield', 0)
+                absorbed = min(shield, max(0, int(requested)))
+                victim.status_stacks['watch_shield'] = shield - absorbed
+                requested -= absorbed
+                if absorbed:
+                    self.log.append(f'{victim.name} 的守望護盾吸收 {absorbed} 傷害。')
+                    source = self.effect_source(victim, 'watch_shield')
+                    if source is not None and source is not victim:
+                        source.combat_stats['support_taken'] += absorbed
+                    self._gain_watch(victim, 'watch_shield')
             if (victim.team == 1 and victim.is_boss
                     and self.mechanics.get('maze_final')
                     and self.mechanics.get('maze_final_shield', 0) > 0):
@@ -1380,6 +1461,7 @@ class Battle:
         if target.has('immunity', self.round):
             self.log.append(f'{target.name} 受到【護衛】保護，免疫負面狀態。')
             self._gain_watch(target)
+            self._gain_watch(target, 'watch_defense')
             return False
         if source is not None and source.team == 0 and target.team != source.team and effect in ('poison', 'weak'):
             until += source.status_stacks.get('maze_debuff_duration_bonus', 0)
@@ -1398,6 +1480,55 @@ class Battle:
         layers = min(5, target.status_stacks.get('passive_toxicity', {}).get(key, 0))
         return max(1, damage * (100 + layers * 30) // 100)
 
+    def add_poison_arrow(self, actor, target, percent):
+        if target.hp <= 0:
+            return
+        if target.job == '逆潮法陣':
+            self.log.append(f'{target.name} 免疫毒箭侵蝕。')
+            return
+        if target.has('immunity', self.round):
+            self.log.append(f'{target.name} 受到【護衛】保護，免疫毒箭侵蝕。')
+            self._gain_watch(target)
+            return
+        attack = actor.stats['攻擊']
+        attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
+        attack *= 0.8 if actor.has('weak', self.round) else 1
+        attack *= self.damage_dealt_multiplier(actor) * self.debuff_damage_multiplier(actor, target)
+        bonus = (actor.bless_attack_percent if actor.has('bless', self.round) else 0)
+        bonus += 20 if actor.has('morning_bless', self.round) else 0
+        attack *= 1 + bonus / 100
+        duration = 2 + (actor.status_stacks.get('maze_debuff_duration_bonus', 0)
+                        if actor.team == 0 and target.team != actor.team else 0)
+        target.status_stacks.setdefault('poison_arrows', []).append({
+            'source_id': actor.user_id, 'damage': max(1, int(attack * percent / 100)),
+            'next_round': self.round + 1, 'remaining': duration,
+        })
+        from core import rpg_witch_embroideries
+        rpg_witch_embroideries.debuff_applied(self, target, actor)
+        self.log.append(f'{target.name} 遭毒箭侵蝕，後續 {duration} 回合將受到無視防禦傷害。')
+
+    def _tick_poison_stack(self, target, stack):
+        source_id = stack.get('source_id')
+        source = (None if source_id is None else
+                  next((f for f in self.fighters if f.user_id == source_id), None))
+        damage = self.toxic_damage(source, target, max(1, int(stack['damage'])))
+        actual, partner, partner_actual = self.apply_damage(target, damage)
+        total = actual + partner_actual
+        if source is not None and source is not target:
+            source.combat_stats['damage_dealt'] += total
+            source.combat_stats['direct_damage'] += total
+            source.combat_stats['knockouts'] += int(actual and target.hp == 0)
+            if partner is not None:
+                source.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
+            if self.passive(source, '弓兵', 2) and total:
+                toxicity = target.status_stacks.setdefault('passive_toxicity', {})
+                key = str(source.user_id if source.user_id is not None else id(source))
+                toxicity[key] = min(5, toxicity.get(key, 0) + 1)
+                self.log.append(f'{target.name} 的毒性增加至 {toxicity[key]}/5 層。')
+        stack['remaining'] -= 1
+        stack['next_round'] += 1
+        self.log.append(f'{target.name} 受到毒箭侵蝕，損失 {total} HP。')
+
     def tick_poison_arrows(self, target):
         """Resolve every independently tracked poison-arrow payload once per turn."""
         stacks = target.status_stacks.get('poison_arrows', [])
@@ -1406,27 +1537,7 @@ class Battle:
             if self.round < stack['next_round']:
                 remaining.append(stack)
                 continue
-            source_id = stack.get('source_id')
-            source = (None if source_id is None else
-                      next((f for f in self.fighters if f.user_id == source_id), None))
-            damage = max(1, int(stack['damage']))
-            damage = self.toxic_damage(source, target, damage)
-            actual, partner, partner_actual = self.apply_damage(target, damage)
-            total = actual + partner_actual
-            if source is not None and source is not target:
-                source.combat_stats['damage_dealt'] += total
-                source.combat_stats['direct_damage'] += total
-                source.combat_stats['knockouts'] += int(actual and target.hp == 0)
-                if partner is not None:
-                    source.combat_stats['knockouts'] += int(partner_actual and partner.hp == 0)
-                if self.passive(source, '弓兵', 2) and total:
-                    toxicity = target.status_stacks.setdefault('passive_toxicity', {})
-                    key = str(source.user_id if source.user_id is not None else id(source))
-                    toxicity[key] = min(5, toxicity.get(key, 0) + 1)
-                    self.log.append(f'{target.name} 的毒性增加至 {toxicity[key]}/5 層。')
-            stack['remaining'] -= 1
-            stack['next_round'] += 1
-            self.log.append(f'{target.name} 受到毒箭侵蝕，損失 {total} HP。')
+            self._tick_poison_stack(target, stack)
             if stack['remaining'] > 0:
                 remaining.append(stack)
             if target.hp <= 0:
@@ -1540,6 +1651,10 @@ class Battle:
         return (max(0, int(fighter.status_stacks.get('corruption', 0)))
                 + max(0, int(fighter.status_stacks.get('drowning_mark', 0))) + len(arrows))
 
+    def has_cleansable_debuff(self, fighter):
+        return (any(fighter.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
+                or bool(self.cleansable_stack_count(fighter)))
+
     def select(self, actor):
         allies, enemies = self.living(actor.team), self.living(1 - actor.team)
         rules = sorted(actor.rules, key=lambda r: r.priority)
@@ -1557,16 +1672,16 @@ class Battle:
             if not rule.enabled or self.round < actor.ready.get(rule.slot, 0):
                 continue
             taunters = [f for f in enemies if f.has('taunt', self.round)]
-            targetable_enemies = (enemies if skill.effect in ('area', 'cleave', 'holy_light')
+            targetable_enemies = (enemies if skill.effect in ('area', 'cleave', 'holy_light', 'formation_cleave', 'plague_volley', 'chorus_light')
                                   else taunters or enemies)
             threshold = condition_value(rule.condition, rule.condition_value)
-            if rule.condition == 'self40' and actor.hp * 100 > actor.stats['HP'] * threshold:
+            if rule.condition in ('self_hp_lte', 'self40', 'self60') and actor.hp * 100 > actor.stats['HP'] * threshold:
                 continue
-            if rule.condition == 'ally50' and not any(f.hp * 100 <= f.stats['HP'] * threshold for f in allies):
+            if rule.condition in ('ally_hp_lte', 'ally50', 'ally70', 'ally80') and not any(f.hp * 100 <= f.stats['HP'] * threshold for f in allies):
                 continue
             if rule.condition == 'allies_injured' and sum(f.hp < f.stats['HP'] for f in allies) < threshold:
                 continue
-            if rule.condition == 'enemies3' and len(enemies) < threshold:
+            if rule.condition in ('enemies3', 'enemies2') and len(enemies) < threshold:
                 continue
             condition_enemies = targetable_enemies
             if rule.condition == 'enemy_hp_lte':
@@ -1585,9 +1700,13 @@ class Battle:
                 condition_enemies = [f for f in targetable_enemies if not f.is_boss]
             elif rule.condition == 'mechanic_target':
                 condition_enemies = [f for f in targetable_enemies if self.mechanic_priority(f)]
+            elif rule.condition == 'own_erosion':
+                condition_enemies = [f for f in targetable_enemies if any(
+                    stack.get('source_id') == actor.user_id
+                    for stack in f.status_stacks.get('poison_arrows', ()))]
             if rule.condition in ('enemy_hp_lte', 'enemy_hp_gte', 'enemy_charging',
                                   'enemy_guard', 'enemy_broken', 'enemy_add',
-                                  'mechanic_target') and not condition_enemies:
+                                  'mechanic_target', 'own_erosion') and not condition_enemies:
                 continue
             if rule.condition == 'round_gte' and self.round < threshold:
                 continue
@@ -1602,11 +1721,11 @@ class Battle:
             candidates = allies if skill.effect in ALLY_EFFECTS else enemies
             if skill.effect not in ALLY_EFFECTS:
                 candidates = condition_enemies
-            elif rule.condition == 'ally50' and skill.effect in ('heal', 'holy_light'):
+            elif rule.condition in ('ally_hp_lte', 'ally50', 'ally70', 'ally80') and skill.effect in ('heal', 'holy_light', 'chorus_light'):
                 candidates = [f for f in candidates if f.hp * 100 <= f.stats['HP'] * threshold]
             elif rule.condition == 'ally_debuff_stacks':
                 candidates = [f for f in candidates if self.cleansable_stack_count(f) >= threshold]
-            if skill.effect in ('heal', 'group_heal'):
+            if skill.effect in ('heal', 'group_heal', 'grace_wave'):
                 candidates = [f for f in candidates if f.hp < f.stats['HP']]
             elif skill.effect == 'cleanse':
                 candidates = [f for f in candidates if any(f.has(effect, self.round) for effect in ('poison', 'break', 'stun', 'weak'))
@@ -1614,13 +1733,18 @@ class Battle:
                               or f.status_stacks.get('poison_arrows')]
             elif skill.effect == 'bless':
                 candidates = [f for f in candidates if not f.has(skill.effect, self.round)]
-            if skill.effect == 'group_heal':
+            if skill.effect in ('group_heal', 'grace_wave'):
                 target = actor if candidates else None
+            elif skill.effect == 'battle_reset':
+                target = actor if (actor.hp < actor.stats['HP'] or self.has_cleansable_debuff(actor)) else None
             elif skill.effect == 'rally':
                 target = actor if actor.hp < actor.stats['HP'] else None
-            elif skill.effect == 'guard':
+            elif skill.effect in ('guard', 'watch_bulwark'):
                 bonus = max(1, actor.stats['防禦'])
-                target = actor if any(not f.has('guard', self.round) or f.guard_bonus < bonus for f in allies) else None
+                target = actor if (skill.effect == 'watch_bulwark' or
+                                   any(not f.has('guard', self.round) or f.guard_bonus < bonus for f in allies)) else None
+            elif skill.effect == 'morning_bless':
+                target = actor if any(not f.has('morning_bless', self.round + 1) for f in allies) else None
             elif skill.effect in ('stance', 'taunt'):
                 target = actor if not actor.has(skill.effect, self.round) else None
             else:
@@ -1682,11 +1806,15 @@ class Battle:
                         * self.direct_damage_multiplier(actor)
                         * self.debuff_damage_multiplier(actor, target)
                         * self.crystal_damage_multiplier(actor, target))
-        attack = (paint_attack * (1 + actor.bless_attack_percent / 100 if blessed else 1)
+        single_bless_percent = actor.bless_attack_percent if blessed else 0
+        morning_percent = 20 if actor.has('morning_bless', self.round) else 0
+        attack = (paint_attack * (1 + (single_bless_percent + morning_percent) / 100)
                   * maze_traits.damage_multiplier(actor, self.round))
         base_defense = target.stats['防禦']
-        if target.has('guard', self.round):
-            base_defense += target.guard_bonus
+        guard_bonus = target.guard_bonus if target.has('guard', self.round) else 0
+        watch_bonus = (target.status_stacks.get('watch_defense_bonus', 0)
+                       if target.has('watch_defense', self.round) else 0)
+        base_defense += max(guard_bonus, watch_bonus)
         broken = target.has('break', self.round)
         break_percent = (target.status_stacks.get('break_defense_percent', 80)
                          if target.status_stacks.get('break_defense_until') == target.effects.get('break')
@@ -1752,9 +1880,10 @@ class Battle:
         before_support = mitigation_damage(attack / .8 if weak else attack, unguarded_defense)
         after_weak = mitigation_damage(attack, unguarded_defense)
         after_guard = mitigation_damage(attack, defense)
+        defense_effect = 'watch_defense' if watch_bonus > guard_bonus else 'guard'
         for affected, effect, prevented in (
                 (actor, 'weak', before_support - after_weak),
-                (target, 'guard', after_weak - after_guard),
+                (target, defense_effect, after_weak - after_guard),
                 (target, 'watch_guard', after_guard - damage)):
             source = self.effect_source(affected, effect) if affected.has(effect, self.round) else None
             if source is not None and source is not target and source.team == target.team:
@@ -1764,7 +1893,10 @@ class Battle:
         base_actual = min(target.hp, base_damage)
         broken_actual = min(target.hp, broken_damage)
         break_assist = max(0, broken_actual - base_actual) if broken else 0
-        bless_assist = max(0, pre_vulnerable_actual - broken_actual) if blessed else 0
+        buff_assist = max(0, pre_vulnerable_actual - broken_actual)
+        total_buff = single_bless_percent + morning_percent
+        bless_assist = (buff_assist * single_bless_percent // total_buff if total_buff else 0)
+        morning_assist = buff_assist - bless_assist if total_buff else 0
         vulnerable_assist = max(0, actual_damage - pre_vulnerable_actual) if vulnerable else 0
         target_hp_before = target.hp
         target_actual, partner, partner_actual = self.apply_damage(target, damage, direct=True)
@@ -1778,6 +1910,7 @@ class Battle:
         self._maze_final_hit(actor, target, target_hp_before, actual_damage)
         remaining_credit = actual_damage
         for effect, amount, affected in (('break', break_assist, target), ('bless', bless_assist, actor),
+                                         ('morning_bless', morning_assist, actor),
                                          ('vulnerable', vulnerable_assist, target)):
             amount = min(amount, remaining_credit)
             if not amount:
@@ -2541,7 +2674,25 @@ class Battle:
         self.log.append(f'{actor.name} 使用【{skill.name}】')
         effect = skill.effect
         potency = skill.potency_percent
-        if effect in ('group_heal', 'rally', 'doll_rally'):
+        if effect == 'battle_reset':
+            removed = self.clear_negative_effects(actor, 1)
+            amount = self.heal(actor, actor, actor.stats['HP'] * 8 // 100)
+            self.log.append(f'{actor.name} 重整戰線，移除 {removed} 項負面狀態並恢復 {amount} HP。')
+        elif effect == 'grace_wave':
+            pending = actor.stats['治療量'] * 10 // 100
+            for ally in self.living(actor.team):
+                amount = self.heal(actor, ally, actor.stats['治療量'] * 50 // 100)
+                ally.status_stacks.setdefault('grace_waves', []).append({
+                    'round': self.round + 1, 'amount': pending, 'source_id': actor.user_id})
+                self.log.append(f'{ally.name} 受到恩典波紋，恢復 {amount} HP。')
+        elif effect == 'morning_bless':
+            for ally in self.living(actor.team):
+                ally.effects['morning_bless'] = max(ally.effects.get('morning_bless', 0), self.round + 1)
+                ally.effect_sources['morning_bless'] = actor.user_id
+            if self._passive_action is not None:
+                self._passive_action['hymn_bless'] = True
+            self.log.append(f'全隊攻擊提高 20%，持續至第 {self.round + 1} 回合結束。')
+        elif effect in ('group_heal', 'rally', 'doll_rally'):
             targets = (self.living(actor.team) if effect == 'group_heal'
                        else [target if effect == 'doll_rally' else actor])
             healing = (actor.stats['治療量'] * 65 // 100 if effect == 'group_heal'
@@ -2555,12 +2706,15 @@ class Battle:
             healing = healing * potency // 100
             amount = self.heal(actor, target, healing)
             self.log.append(f'{target.name} 恢復 {amount} HP')
-        elif effect == 'holy_light':
+        elif effect in ('holy_light', 'chorus_light'):
             for enemy in self.living(1 - actor.team):
                 if actor.hp > 0 and enemy.hp > 0:
                     self.hit(actor, enemy, 0.9, attack_scope='group')
-            amount = self.heal(actor, target, actor.stats['治療量'] * 70 // 100)
-            self.log.append(f'{target.name} 恢復 {amount} HP')
+            injured = [ally for ally in self.living(actor.team) if ally.hp < ally.stats['HP']]
+            healed = min(injured, key=lambda ally: ally.hp / ally.stats['HP']) if effect == 'chorus_light' and injured else target
+            if healed and healed.hp > 0:
+                amount = self.heal(actor, healed, actor.stats['治療量'] * 70 // 100)
+                self.log.append(f'{healed.name} 恢復 {amount} HP')
         elif effect == 'cleanse':
             removed = self.clear_negative_effects(target, skill.cleanse_count)
             removed += bool(target.status_stacks.get('source_erosion'))
@@ -2572,10 +2726,18 @@ class Battle:
                                    passive_trigger=False)
                 self.log.append(f'{target.name} 因【洗彩療癒】恢復 {amount} HP。')
             self.log.append(f'移除 {target.name} 的負面狀態')
-        elif effect == 'guard':
-            bonus = max(1, actor.stats['防禦'] * potency // 100)
+        elif effect in ('guard', 'watch_bulwark'):
+            bonus = max(1, actor.stats['防禦'] * potency * (60 if effect == 'watch_bulwark' else 100) // 10000)
             for ally in self.living(actor.team):
-                if not ally.has('guard', self.round) or ally.guard_bonus < bonus:
+                if effect == 'watch_bulwark':
+                    current_bonus = (ally.status_stacks.get('watch_defense_bonus', 0)
+                                     if ally.has('watch_defense', self.round) else 0)
+                    ally.effects['watch_defense'] = self.round + 1
+                    ally.status_stacks['watch_defense_bonus'] = max(current_bonus, bonus)
+                    if bonus >= current_bonus:
+                        ally.effect_sources['watch_defense'] = actor.user_id
+                    self.log.append(f'{ally.name} 受守望壁壘保護，防禦加成 +{bonus}。')
+                elif not ally.has('guard', self.round) or ally.guard_bonus < bonus:
                     ally.guard_bonus = bonus
                     ally.effects['guard'] = self.round + 1
                     if skill.guard_immunity:
@@ -2584,6 +2746,15 @@ class Battle:
                         ally.effect_sources['guard'] = actor.user_id
                     immunity = ' 並免疫負面狀態' if skill.guard_immunity else ''
                     self.log.append(f'{ally.name} 防禦 +{bonus}{immunity}至第 {self.round + 1} 回合結束')
+                if effect == 'watch_bulwark':
+                    ally.effects['immunity'] = max(ally.effects.get('immunity', 0), self.round + 1)
+                    shield = max(1, actor.stats['HP'] * 8 // 100)
+                    remaining = (ally.status_stacks.get('watch_shield', 0)
+                                 if ally.has('watch_shield', self.round) else 0)
+                    ally.status_stacks['watch_shield'] = max(remaining, shield)
+                    ally.effects['watch_shield'] = self.round + 1
+                    if shield >= remaining:
+                        ally.effect_sources['watch_shield'] = actor.user_id
         elif effect in ('bless', 'stance', 'taunt', 'doll_counter'):
             saved_effect = 'taunt' if effect == 'doll_counter' else effect
             target.effects[saved_effect] = self.round + (2 if effect == 'bless' else 1)
@@ -2601,6 +2772,24 @@ class Battle:
             self.log.append(f'{target.name} 獲得效果，持續至第 {target.effects[saved_effect]} 回合結束')
         elif effect == 'knight_charge':
             self.hit(actor, target, 0.5, attack_override=actor.stats['HP'])
+        elif effect in ('formation_cleave', 'plague_volley'):
+            for enemy in self.living(1 - actor.team):
+                landed = False
+                for _ in range(3 if effect == 'plague_volley' else 1):
+                    if actor.hp <= 0 or enemy.hp <= 0:
+                        break
+                    landed |= self.hit(actor, enemy, (0.3 if effect == 'plague_volley' else 1.3)
+                                       * potency / 100, attack_scope='group')
+                if effect == 'plague_volley' and landed:
+                    self.add_poison_arrow(actor, enemy, 35)
+                if effect == 'formation_cleave' and enemy is target and landed and enemy.hp > 0:
+                    if self.apply_debuff(enemy, 'break', self.round + 1, actor):
+                        enemy.status_stacks['break_defense_percent'] = 80
+                        enemy.status_stacks['break_defense_until'] = enemy.effects.get('break')
+        elif effect == 'double_poison':
+            for _ in range(2):
+                if actor.hp > 0 and target.hp > 0 and self.hit(actor, target, 0.75 * potency / 100):
+                    self.add_poison_arrow(actor, target, 45)
         elif effect in ('area', 'cleave'):
             for enemy in self.living(1 - actor.team):
                 if actor.hp > 0 and enemy.hp > 0:
@@ -2614,35 +2803,45 @@ class Battle:
                     self.hit(actor, target, (0.85 if effect == 'triple' else 0.9) * potency / 100)
         else:
             power = {'strike': 1.6, 'hindering_shot': 1.2, 'crush': 2.2,
+                     'blood_counter': 2.1, 'erosion_arrow': 2.0,
                      'shield_bash': 1.2, 'poison_arrow': 1.1}.get(effect, 1)
-            hit = self.hit(actor, target, power * potency / 100)
+            override = (actor.stats['HP'] if effect in ('adaptive_charge', 'judgement_charge')
+                        else None)
+            if effect == 'adaptive_charge':
+                power = 0.5
+            elif effect == 'judgement_charge':
+                power = 0.6
+            hit = self.hit(actor, target, power * potency / 100, attack_override=override)
+            if hit and effect == 'blood_counter' and actor.hp * 100 <= actor.stats['HP'] * 60:
+                amount = self.heal(actor, actor, actor.stats['HP'] * 8 // 100)
+                self.log.append(f'{actor.name} 浴血回斬恢復 {amount} HP。')
+            if hit and effect == 'judgement_charge':
+                injured = [ally for ally in self.living(actor.team) if ally.hp < ally.stats['HP']]
+                if injured:
+                    ally = min(injured, key=lambda f: f.hp / f.stats['HP'])
+                    amount = self.heal(actor, ally, actor.stats['HP'] * 8 // 100)
+                    self.log.append(f'{ally.name} 因制裁衝鋒恢復 {amount} HP。')
+            if hit and effect == 'erosion_arrow' and target.hp > 0:
+                stacks = target.status_stacks.get('poison_arrows', [])
+                owned = [stack for stack in stacks if stack.get('source_id') == actor.user_id]
+                if owned:
+                    earliest = min(owned, key=lambda stack: stack['next_round'])
+                    self._tick_poison_stack(target, earliest)
+                    if earliest['remaining'] <= 0 or target.hp <= 0:
+                        stacks.remove(earliest)
+                    if target.hp <= 0:
+                        stacks.clear()
+                    if not stacks:
+                        target.status_stacks.pop('poison_arrows', None)
             if hit and effect == 'break' and target.hp > 0:
                 if self.apply_debuff(target, 'break', self.round + 1, actor):
                     target.status_stacks['break_defense_percent'] = 80 * potency // 100
                     target.status_stacks['break_defense_until'] = target.effects.get('break')
             if hit and effect == 'poison_arrow' and target.hp > 0:
-                if target.job == '逆潮法陣':
-                    self.log.append(f'{target.name} 免疫毒箭侵蝕。')
-                elif target.has('immunity', self.round):
-                    self.log.append(f'{target.name} 受到【護衛】保護，免疫毒箭侵蝕。')
-                else:
-                    attack = actor.stats['攻擊']
-                    attack *= 1.2 if actor.job == '裝甲步兵' and actor.has('stance', self.round) else 1
-                    attack *= 0.8 if actor.has('weak', self.round) else 1
-                    attack *= (self.damage_dealt_multiplier(actor)
-                               * self.debuff_damage_multiplier(actor, target))
-                    attack *= (1 + actor.bless_attack_percent / 100
-                               if actor.has('bless', self.round) else 1)
-                    duration = 2 + (actor.status_stacks.get('maze_debuff_duration_bonus', 0)
-                                    if actor.team == 0 and target.team != actor.team else 0)
-                    target.status_stacks.setdefault('poison_arrows', []).append({
-                        'source_id': actor.user_id, 'damage': max(1, int(attack * 0.7)),
-                        'next_round': self.round + 1, 'remaining': duration,
-                    })
-                    from core import rpg_witch_embroideries
-                    rpg_witch_embroideries.debuff_applied(self, target, actor)
-                    self.log.append(f'{target.name} 遭毒箭侵蝕，後續 {duration} 回合將受到無視防禦傷害。')
-            if hit and target.hp > 0 and effect in ('shield_bash', 'hindering_shot'):
+                self.add_poison_arrow(actor, target, 70)
+            if hit and target.hp > 0 and (effect in ('shield_bash', 'hindering_shot') or
+                                          effect == 'adaptive_charge' and
+                                          (self._passive_action or {}).get('lance_effect') == 'shield_bash'):
                 if (target.job in ('赤雷', '蒼炎') and self.mechanics.get('twin_revive_job')
                         and not self.mechanics.get('twin_revive_delayed')):
                     self.mechanics['twin_revive_round'] += 1
@@ -2707,6 +2906,20 @@ class Battle:
             return
         self.round += 1
         self.log.append(f'── 第 {self.round} 回合 ──')
+        for ally in self.living(0):
+            pending = ally.status_stacks.pop('grace_waves', [])
+            later = []
+            for wave in pending:
+                if wave['round'] > self.round:
+                    later.append(wave)
+                    continue
+                source = next((f for f in self.fighters
+                               if f.user_id == wave.get('source_id')), None)
+                if source and ally.hp < ally.stats['HP']:
+                    amount = self.heal(source, ally, wave['amount'], passive_trigger=False)
+                    self.log.append(f'{ally.name} 的恩典波紋延遲恢復 {amount} HP。')
+            if later:
+                ally.status_stacks['grace_waves'] = later
         self.process_twin_revival()
         order = [f for f in self.fighters if f.hp > 0]
         self.rng.shuffle(order)  # Equal speed uses seeded random tie-breaking.

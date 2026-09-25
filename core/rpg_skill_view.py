@@ -5,9 +5,9 @@ from core.rpg_menu import add_back, add_favorite_toggle, navigate, remember_curr
 
 import discord
 
-from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
+from core.rpg_battle import (CONDITIONS, CONDITION_LIMITS, VISIBLE_CONDITIONS, TARGETS, ALLY_EFFECTS, FIXED_TARGETS,
                              BASIC_TARGETS, OFFENSIVE_TARGETS, condition_text, passive_description, rule_skill,
-                             skill_description)
+                             skill_description, default_condition_threshold)
 from core.rpg_character import CharacterError
 from core.rpg_equipment_view import PanelSelect
 
@@ -16,9 +16,10 @@ class ConditionValueModal(discord.ui.Modal):
     def __init__(self, panel, condition):
         super().__init__(title='設定施放條件')
         self.panel, self.condition = panel, condition
-        low, high, default, suffix = CONDITION_LIMITS[condition]
+        low, high, _, suffix = CONDITION_LIMITS[condition]
         rule = panel.current()
-        current = rule.condition_value if rule.condition == condition else default
+        current = (rule.condition_value if rule.condition == condition else
+                   default_condition_threshold(rule_skill(panel.job, rule), condition))
         self.threshold = discord.ui.TextInput(
             label=f'{CONDITIONS[condition]}（{low}–{high}{suffix}）'[:45],
             default=str(current), min_length=1, max_length=3)
@@ -109,7 +110,7 @@ class SkillView(discord.ui.View):
         self.add_item(PanelSelect('condition', row=2, placeholder='選擇施放條件', options=[
             discord.SelectOption(label=condition_text(key, rule.condition_value) if key == rule.condition else label,
                                  value=key, default=key == rule.condition)
-            for key, label in CONDITIONS.items()]))
+            for key, label in VISIBLE_CONDITIONS.items()]))
         fixed = f'固定目標：{FIXED_TARGETS[skill.effect]}' if skill.effect in FIXED_TARGETS else None
         targets = {key: label for key, label in TARGETS.items() if key != 'self' or skill.effect in ALLY_EFFECTS}
         if skill.effect != 'cleanse':
@@ -149,7 +150,7 @@ class SkillView(discord.ui.View):
         skill = rule_skill(self.job, self.current())
         embed.add_field(name='正在設定', value=f'槽 {self.slot}：{skill.name}', inline=False)
         if self.choosing_skill:
-            embed.add_field(name='更換技能', value='Lv.20 解鎖兩個進階技能；維持三格，同技能不能重複裝備。'
+            embed.add_field(name='更換技能', value='Lv.20 解鎖兩個進階技能，精銳晉升再解鎖三個技能；維持三格，同技能不能重複裝備。'
                             '更換後保留該格順位與開關，施放條件及目標恢復新技能預設值。', inline=False)
         if skill.effect == 'cleanse':
             embed.add_field(name='淨化目標規則', value='只選存活且中毒／破甲／暈眩的隊友（含自己）。選「有可淨化負面狀態的隊友」時，多人符合則選血量比例最低者；其他選項依原規則篩選。'
@@ -200,7 +201,8 @@ class SkillView(discord.ui.View):
                             remember_current_page(self)
                             self.choosing_skill = True
                     elif action == 'equip':
-                        if value not in tuple(str(i) for i in range(1, 6)):
+                        available = self.cog.tactics.available(self.guild_id, self.owner.id, self.job)
+                        if value not in tuple(str(i) for i in range(1, len(available) + 1)):
                             raise CharacterError('無效的技能。')
                         self.cog.tactics.equip(self.guild_id, self.owner.id, self.job, self.slot, int(value))
                         self.choosing_skill = False

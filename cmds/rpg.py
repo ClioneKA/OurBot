@@ -62,7 +62,7 @@ class RPG(commands.Cog):
         self.manual_room_lock = asyncio.Lock()
         self.menu_views = WeakSet()
         self.notification_views = WeakSet()
-        self.tactics = Tactics(self.store)
+        self.tactics = Tactics(self.store, self.settings.elite_level)
         self.loadouts = Loadouts(self.store, self.characters, self.tactics)
         self.ai_model = get_settings().ai.model
         self.raids = RaidService(self)

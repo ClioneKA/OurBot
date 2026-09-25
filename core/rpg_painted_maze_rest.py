@@ -13,11 +13,12 @@ from core.rpg_skill_view import SkillView
 
 class RestTactics:
     """Reuse normal skill validation without writing the player's global loadout."""
-    def __init__(self, repo, room_id, user_id, index):
+    def __init__(self, repo, room_id, user_id, index, elite_level=90):
         self.repo, self.room_id, self.user_id, self.index = repo, room_id, user_id, index
         self.db = sqlite3.connect(':memory:')
         self.level = 50
-        self.tactics = Tactics(SimpleNamespace(db=self.db, xp=lambda *_: level_floor(self.level)))
+        self.tactics = Tactics(SimpleNamespace(db=self.db, xp=lambda *_: level_floor(self.level)),
+                               elite_level)
         self.synchronize()
 
     def synchronize(self):
@@ -65,7 +66,9 @@ class RestTactics:
 class MazeSkillView(SkillView):
     def __init__(self, service, room, interaction):
         self.service, self.room_id, self.index = service, room['id'], room['boss_index']
-        self.rest_tactics = RestTactics(service.repo, room['id'], interaction.user.id, self.index)
+        self.rest_tactics = RestTactics(service.repo, room['id'], interaction.user.id,
+                                       self.index, getattr(getattr(service.cog, 'settings', None),
+                                                           'elite_level', 90))
         proxy = SimpleNamespace(tactics=self.rest_tactics,
             characters=SimpleNamespace(job=lambda *_: self.rest_tactics.job), skills_embed=self.skills_embed)
         super().__init__(proxy, interaction)
